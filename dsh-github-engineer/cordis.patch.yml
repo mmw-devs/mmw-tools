@@ -26,7 +26,7 @@
         announceToAgent: true
         enabled: true
 
-        githubOAuthClientId: "Iv1.REPLACE_ME_WITH_REAL_CLIENT_ID"
+        githubOAuthClientId: "Ov23liakpz9LHG1E0dE5"
         defaultScopes:
           - repo
           - workflow

@@ -16,6 +16,7 @@ open a **draft** PR (no auto-merge).
 
 - ✅ Bundle mounts under DSH 0.1.5+
 - ✅ `cordis.patch.yml` injects `repoBinding` + `githubOAuthClientId`
+- ✅ GitHub OAuth App registered (Device Flow enabled, Client ID pre-filled)
 - ✅ Spawns MCP server as a stdio child
 - ✅ Re-publishes MCP `tools/list` as `mcp__github_engineer__*` agents tools
 - ✅ `engineer_status` reports plugin state
@@ -44,14 +45,16 @@ The MCP probe tool `mcp__github_engineer__echo` should also appear.
 
 ## Configure
 
-Edit [`cordis.patch.yml`](cordis.patch.yml):
+The bundled [`cordis.patch.yml`](cordis.patch.yml) ships with:
 
-1. Replace `githubOAuthClientId` with the Client ID from
-   `https://github.com/settings/developers` (Device Flow enabled).
-   See [`docs/github-oauth-app-checklist.md`](../github-oauth-app-checklist.md).
-2. Adjust `repoBinding` for your repository. `allowlistPaths` is the
-   *only* set of paths the agent may modify.
-3. Set `defaultScopes`. Recommended: `repo`, `workflow`, `offline_access`.
+- `githubOAuthClientId` pre-filled with this repo's OAuth App
+  (Device Flow enabled). Reuse it as-is, or replace with your own
+  per [`docs/github-oauth-app-checklist.md`](../github-oauth-app-checklist.md).
+- `repoBinding` hard-bound to `mmw-devs/ffxiv-race-ops`. Adjust
+  `owner`/`name` and the `allowlistPaths`/`denylistPaths` to point at
+  a different repo.
+- `defaultScopes: [repo, workflow, offline_access]` — the minimum
+  scopes the plugin needs.
 
 ## Smoke test
 
