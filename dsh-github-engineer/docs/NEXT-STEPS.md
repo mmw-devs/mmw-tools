@@ -1,28 +1,54 @@
 # Next Steps
 
-## Current state (v0.2.0)
+## Current state (v0.3.0)
 
-✅ OAuth Device Flow state machine + token store complete:
+✅ Settings web panel complete:
 
-- `src/auth/token-store.ts` — mode 0600 JSON persistence
-- `src/auth/device-flow.ts` — Device Flow state machine + GitHub HTTP
-- `src/routes.ts` — 5 loopback routes (status, oauth/start, oauth/finish, oauth/refresh, revoke)
-- 4 agent tools: `engineer_oauth_start` / `_finish` / `_refresh` / `_revoke`
-- 60-second refresh watchdog
-- 25 unit tests pass for the token store
-- `pnpm check` (typecheck + namespace consistency) passes
-- See [`docs/OAUTH-FLOW.md`](OAUTH-FLOW.md) for end-user flow
+- `src/client/api.ts` — fetch wrapper around the loopback routes
+- `src/client/index.js` — plain-JS panel + `apply()` (no TSX; the
+  factory supplies React via `require`)
+- `scripts/build-client.mjs` — post-processor that wraps tsc's
+  `api.js` + the panel source in the `__ModuleLoader__` IIFE shape
+- `tsconfig.client.json` — separate tsc config for the client
+- `tests/client-bundle.test.mjs` — 16 shape checks against `lib/client.js`
+- `lib/client.js` registers a "GitHub Engineer" tab into the DSH
+  Settings page via `ctx.slots.inject("settings.section", …)`
+
+The panel currently surfaces:
+- Current auth status (login, scope, masked access_token expiry)
+- `[Connect GitHub]` button → starts Device Flow, shows user_code +
+  verification_uri inline
+- `[Refresh]` / `[Revoke]` / `[我已完成授权]` (polls for the user's
+  authorization result)
+
+### How the client bundle is built
+
+```
+src/client/api.ts ───┐
+                    ├─► pnpm exec tsc -p tsconfig.client.json
+                    │   outputs client-build/api.js
+                    │
+src/client/index.js ─┘   (plain JS, kept untouched by tsc)
+                         scripts/build-client.mjs
+                         strips imports + the trailing `export { … }`,
+                         prepends api.js (export keywords stripped),
+                         wraps in window.__ModuleLoader__.load({ factory })
+                         → lib/client.js
+```
+
+The factory body receives React + react/jsx-runtime from the DSH
+web loader via `require()` — this matches dsh-feishu-mcp's compiled
+client.js shape exactly.
+
+### Why we don't use tsdown
+
+`tsdown` 0.22.x and 0.23.x have ESM resolution bugs under Node 24 +
+pnpm (rolldown / ansis can't be resolved). Since `tsc -p
+tsconfig.client.json` produces clean ESM and the only bundler-shaped
+output we need is a small IIFE wrapper, `scripts/build-client.mjs`
+hand-rolls that step (~80 lines).
 
 ## Upcoming increments, in priority order
-
-## 2. Settings web panel
-
-- Add a React component for the Settings → GitHub Engineer page.
-- Wire it through `@deepseek-ai/dsh-client-ui-settings` slots
-  (inspect dsh-feishu-mcp's `src/settings.tsx` for the exact hook).
-- Surface: `[Connect GitHub]` button, login info, expiry, repo binding,
-  working dir, preflight cmd.
-- Calls the loopback routes added in v0.2.0.
 
 ## 3. Real MCP tools (1 → 7)
 
@@ -58,7 +84,7 @@ For each:
 ## 6. Publish
 
 - README.md + CHANGELOG.md + LICENSE (MIT).
-- Tag `v0.2.0` once settings panel lands.
+- Tag `v0.3.0` once `engineer_run` lands against a real OAuth App.
 - PR to `awesome-dsh-plugin/awesome-dsh-plugin`.
 - (Optional) publish to npm as `dsh-github-engineer`.
 

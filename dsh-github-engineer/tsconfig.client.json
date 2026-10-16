@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "outDir": "client-build",
+    "rootDir": "src/client",
+    "types": []
+  },
+  "include": ["src/client/api.ts"],
+  "exclude": [
+    "node_modules",
+    "lib",
+    "client-build",
+    "mcp-server",
+    "tests",
+    "src/index.ts",
+    "src/auth/**",
+    "src/routes.ts",
+    "src/agents-md-check.ts",
+    "src/const.ts",
+    "src/client/index.js"
+  ]
+}

@@ -76,6 +76,7 @@ const files = {
   mcpSrc: path.join(ROOT, "mcp-server", "src", "index.ts"),
   bundlePkg: path.join(ROOT, "package.json"),
   mcpPkg: path.join(ROOT, "mcp-server", "package.json"),
+  clientJs: path.join(ROOT, "lib", "client.js"),
 };
 
 const cordis = readCordisPatch(files.cordis);
@@ -84,6 +85,18 @@ const mcpConsts = readConstExports(files.mcpConstTs);
 const mcpInfo = readMcpServerInfo(files.mcpSrc, mcpConsts);
 const bundleName = readPackageName(files.bundlePkg);
 const mcpName = readPackageName(files.mcpPkg);
+
+/** True if lib/client.js exists AND registers an id matching
+ *  `dsh-github-engineer` via __ModuleLoader__. */
+function clientBundleShapeOk(file, pluginId) {
+  if (!existsSync(file)) return null;
+  const src = readFileSync(file, "utf8");
+  const loaderBody = src.match(
+    /window\.__ModuleLoader__\.load\(\s*\{([^}]+)\}/
+  );
+  if (!loaderBody) return false;
+  return new RegExp(`id:\\s*["']${pluginId}["']`).test(loaderBody[1]);
+}
 
 const checks = [
   {
@@ -121,6 +134,11 @@ const checks = [
       "mcp-server/src/const.ts PLUGIN_DISPLAY_NAME matches src/const.ts",
     actual: mcpConsts.PLUGIN_DISPLAY_NAME,
     expected: consts.PLUGIN_DISPLAY_NAME,
+  },
+  {
+    label: "lib/client.js exists and registers id=dsh-github-engineer",
+    actual: clientBundleShapeOk(files.clientJs, "dsh-github-engineer"),
+    expected: true,
   },
 ];
 
