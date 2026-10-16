@@ -1,21 +1,24 @@
 /**
- * dsh-github-engineer — bundle entry (skeleton v0.1.0).
+ * dsh-github-engineer — bundle entry.
  *
- * Two visible agent-facing surfaces plus one runtime guard:
+ * Layered architecture:
+ *   src/const.ts          → identifier constants (PLUGIN_ID etc.)
+ *   src/agents-md-check.ts → AGENTS.md drift fingerprint
+ *   src/auth/token-store.ts → ~/.dsh/dsh-github-engineer.json (mode 0600)
+ *   src/auth/device-flow.ts → Device Flow state machine + GitHub HTTP
+ *   src/routes.ts          → loopback HTTP routes
+ *   src/index.ts (this)   → cordis apply(): glues everything together
  *
- *   1. `engineer_status` — high-level tool reporting plugin state.
- *   2. `mcp__github_engineer__*` — auto-discovered from the MCP
- *      server child process.
- *   3. AGENTS.md drift check — fires once on bundle apply; warns if
- *      the cached `cordis.patch.yml` rules and the live AGENTS.md in
- *      the bound repo disagree. See docs/OPERATIONS-SYNC.md.
+ * Visible agent-facing surfaces:
+ *   1. engineer_status                       — high-level state report
+ *   2. engineer_oauth_start / _finish / _refresh / _revoke
+ *                                          — drive OAuth lifecycle
+ *   3. mcp__github-engineer__*                — auto-discovered MCP tools
  *
- * NOT in this skeleton (subsequent increments per docs/NEXT-STEPS.md):
- *   - OAuth Device Flow state machine
- *   - Token store / keychain
- *   - Settings web panel
- *   - repo_clone / repo_edit / pr_create / etc.
- *   - engineer_run high-level wrapper
+ * Runtime guards:
+ *   - AGENTS.md drift detection on bundle apply
+ *   - Watchdog timer that calls flow.ensureFresh() before access_token
+ *     expires (every 60s check; refresh when within 5 min of expiry)
  */
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -33,6 +36,9 @@ import {
   mcpServerEntryPath,
 } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
+import { TokenStore } from "./auth/token-store.js";
+import { DeviceFlow } from "./auth/device-flow.js";
+import { makeRoutes, API } from "./routes.js";
 
 /** Where MCP server lives — exposed for tests / docs. */
 export const pathToConnect = mcpServerEntryPath(import.meta.url);
@@ -80,7 +86,7 @@ function extendedEnv(): Record<string, string> {
 }
 
 /* ============================================================== */
-/*  engineer_status: high-level status tool                        */
+/*  Agent tools                                                    */
 /* ============================================================== */
 
 const STATUS_PARAMS = {} as const;
@@ -101,6 +107,21 @@ const STATUS_OUTPUT_SCHEMA = {
       items: { type: "string" as const },
     },
     mcpServerPath: { type: "string" as const },
+    auth: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        status: { type: "string" as const, required: true as const },
+        configured: { type: "boolean" as const, required: true as const },
+        login: { type: "string" as const },
+        scope: { type: "string" as const },
+        accessTokenMasked: { type: "string" as const },
+        accessTokenExpiresAt: { type: "number" as const },
+        refreshTokenExpiresAt: { type: "number" as const },
+        tokenUpdatedAt: { type: "string" as const },
+      },
+      required: true as const,
+    },
     agentsMdDrift: {
       type: "object" as const,
       additionalProperties: false as const,
@@ -127,16 +148,27 @@ const STATUS_OUTPUT_SCHEMA = {
   },
 };
 
+function formatExpiry(timestampMs: number): string {
+  if (timestampMs <= 0) return "永不过期";
+  const remaining = Math.max(0, timestampMs - Date.now());
+  const minutes = Math.floor(remaining / 60000);
+  if (minutes < 60) return `约 ${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  return `约 ${hours} 小时 ${minutes - hours * 60} 分钟`;
+}
+
 function makeStatusTool(deps: {
   oauthClientId: string;
   repo: Record<string, unknown>;
   scopes: string[];
   agentsMdDrift: ReturnType<typeof checkAgentsMd> | null;
+  store: TokenStore;
+  flow: DeviceFlow;
 }) {
   return defineTool({
     name: "engineer_status",
     description:
-      "查看 dsh-github-engineer 插件状态：是否已挂载、配置了哪个 repo binding 与 GitHub OAuth App ID、MCP server 路径、AGENTS.md 是否与 cordis.patch.yml 一致。不会泄露任何密钥。",
+      "查看 dsh-github-engineer 插件状态：OAuth 配置、token 状态、repo binding、AGENTS.md 漂移检查、当前授权阶段。不会泄露任何密钥。",
     parameters: STATUS_PARAMS,
     output: {
       schema: STATUS_OUTPUT_SCHEMA,
@@ -148,14 +180,31 @@ function makeStatusTool(deps: {
       const oauthMasked = deps.oauthClientId
         ? `${deps.oauthClientId.slice(0, 6)}****`
         : "(未设置 — 把 cordis.patch.yml 里的 githubOAuthClientId 换成真实的)";
-      const drift = deps.agentsMdDrift;
-      const driftLine = drift
-        ? drift.unavailable
-          ? `AGENTS.md drift: 暂无法拉取（首次连接 GitHub 后会自动校准）`
-          : drift.ok
-          ? `AGENTS.md drift: OK`
-          : `AGENTS.md drift: ⚠️ 不一致 — 详情见 dsh web 日志`
-        : `AGENTS.md drift: 未检查（OAuth 未完成）`;
+      const view = await deps.store.view();
+      const status = deps.flow.status();
+
+      const driftLine = deps.agentsMdDrift
+        ? deps.agentsMdDrift.unavailable
+          ? "AGENTS.md drift: 暂无法拉取（OAuth 未完成或仓库不可匿名访问）"
+          : deps.agentsMdDrift.ok
+          ? "AGENTS.md drift: OK"
+          : "AGENTS.md drift: ⚠️ 不一致 — 详情见 dsh web 日志"
+        : "AGENTS.md drift: 未检查";
+
+      const authLines: string[] = [`Auth 状态: ${status}`];
+      if (status === "authorized") {
+        authLines.push(`登录身份: ${view.login || "(unknown)"}`);
+        authLines.push(`Scopes: ${view.scope || "(none)"}`);
+        authLines.push(`access_token 剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
+        authLines.push(`refresh_token 剩余: ${formatExpiry(view.refreshTokenExpiresAt)}`);
+      } else if (status === "reauth_needed") {
+        authLines.push("⚠️ access_token 失效 — 调用 engineer_oauth_start 重新授权");
+      } else if (status === "device_pending") {
+        authLines.push("用户正在浏览器完成授权 — 调用 engineer_oauth_finish 轮询");
+      } else {
+        authLines.push("调用 engineer_oauth_start 发起 Device Flow");
+      }
+
       return {
         ok: true,
         message:
@@ -165,8 +214,9 @@ function makeStatusTool(deps: {
           `Allowed paths: ${Array.isArray(deps.repo.allowlistPaths) ? deps.repo.allowlistPaths.join(", ") : "(空)"}\n` +
           `Default scopes: ${deps.scopes.join(" ") || "(空)"}\n` +
           `MCP server entry: ${pathToConnect}\n` +
-          `${driftLine}\n` +
-          `\n下一步：实现 OAuth Device Flow（见 docs/NEXT-STEPS.md）。`,
+          `\n--- Auth ---\n${authLines.join("\n")}\n` +
+          `\n--- AGENTS.md ---\n${driftLine}\n` +
+          `\n下一步：实现 OAuth Device Flow 后调用 engineer_oauth_start。`,
         pluginId: PLUGIN_ID,
         oauthClientIdMasked: deps.oauthClientId
           ? `${deps.oauthClientId.slice(0, 6)}****`
@@ -176,13 +226,148 @@ function makeStatusTool(deps: {
         baseBranch: String(deps.repo.baseBranch ?? "main"),
         defaultScopes: deps.scopes,
         mcpServerPath: pathToConnect,
-        agentsMdDrift: drift ?? {
+        auth: {
+          status,
+          configured: view.configured,
+          login: view.login,
+          scope: view.scope,
+          accessTokenMasked: view.accessTokenMasked,
+          accessTokenExpiresAt: view.accessTokenExpiresAt,
+          refreshTokenExpiresAt: view.refreshTokenExpiresAt,
+          tokenUpdatedAt: view.tokenUpdatedAt,
+        },
+        agentsMdDrift: deps.agentsMdDrift ?? {
           ok: false,
           unavailable: true,
-          summary: "未检查（OAuth 未完成或首次启动）",
+          summary: "未检查",
           details: [],
         },
       };
+    },
+  });
+}
+
+/* OAuth agent tools — minimal parameter + output specs. */
+
+const OAUTH_START_OUTPUT = {
+  type: "object" as const,
+  additionalProperties: false as const,
+  properties: {
+    ok: { type: "boolean" as const, required: true as const },
+    message: { type: "string" as const, required: true as const },
+    userCode: { type: "string" as const },
+    verificationUri: { type: "string" as const },
+    expiresAt: { type: "number" as const },
+    interval: { type: "number" as const },
+  },
+};
+
+const OAUTH_SIMPLE_OUTPUT = {
+  type: "object" as const,
+  additionalProperties: false as const,
+  properties: {
+    ok: { type: "boolean" as const, required: true as const },
+    message: { type: "string" as const, required: true as const },
+  },
+};
+
+function makeOauthStartTool(flow: DeviceFlow) {
+  return defineTool({
+    name: "engineer_oauth_start",
+    description:
+      "发起 GitHub OAuth Device Flow：向 GitHub 申请一个 user_code，让用户在浏览器打开 https://github.com/login/device 输码完成授权。返回 userCode + verificationUri。后续用 engineer_oauth_finish 轮询结果。",
+    parameters: {},
+    output: {
+      schema: OAUTH_START_OUTPUT,
+      render(_args, value) {
+        const v = value as Record<string, unknown>;
+        const lines = [String(v.message ?? "")];
+        if (v.userCode && v.verificationUri) {
+          lines.push("", `user_code: ${v.userCode}`, `verification_uri: ${v.verificationUri}`);
+        }
+        return [{ type: "text", text: lines.join("\n") }];
+      },
+    },
+    async execute() {
+      try {
+        const pending = await flow.begin();
+        return {
+          ok: true,
+          message:
+            "已在 GitHub 发起 Device Flow。请让用户在浏览器打开下方 verification_uri 并输 user_code 完成授权。完成后用 engineer_oauth_finish 轮询结果。",
+          userCode: pending.userCode,
+          verificationUri: pending.verificationUri,
+          expiresAt: pending.expiresAt,
+          interval: pending.interval,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          message: "发起授权失败：" + (err instanceof Error ? err.message : String(err)),
+        };
+      }
+    },
+  });
+}
+
+function makeOauthFinishTool(flow: DeviceFlow) {
+  return defineTool({
+    name: "engineer_oauth_finish",
+    description:
+      "轮询 Device Flow 一次：检查用户是否已在浏览器完成授权；若已完成，保存 access_token/refresh_token；若用户还在授权中，返回 ok=false 并说明错误码（authorization_pending / slow_down / expired_token）。可重复调用直到 ok=true 或出错。",
+    parameters: {},
+    output: {
+      schema: OAUTH_SIMPLE_OUTPUT,
+      render(_args, value) {
+        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
+      },
+    },
+    async execute() {
+      const result = await flow.poll();
+      if (result.ok) {
+        return {
+          ok: true,
+          message: `授权完成。access_token 已保存（登录身份: ${result.tokens.login || "(unknown)"}，scope: ${result.tokens.scope || "(none)"}）。`,
+        };
+      }
+      return { ok: false, message: result.message };
+    },
+  });
+}
+
+function makeOauthRefreshTool(flow: DeviceFlow) {
+  return defineTool({
+    name: "engineer_oauth_refresh",
+    description:
+      "主动用 refresh_token 换一个新的 access_token。access_token 8 小时过期、refresh_token 6 个月过期；watchdog 会自动 refresh，本工具用于手动触发。",
+    parameters: {},
+    output: {
+      schema: OAUTH_SIMPLE_OUTPUT,
+      render(_args, value) {
+        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
+      },
+    },
+    async execute() {
+      return flow.refresh();
+    },
+  });
+}
+
+function makeOauthRevokeTool(flow: DeviceFlow) {
+  return defineTool({
+    name: "engineer_oauth_revoke",
+    description:
+      "清空所有 GitHub 凭据（access_token + refresh_token）。撤销后下一次操作需要重新发起 Device Flow。注意：这只是清本地副本；要撤销 GitHub 端的授权，用户需要去 https://github.com/settings/applications 自己撤销。",
+    parameters: {},
+    output: {
+      schema: OAUTH_SIMPLE_OUTPUT,
+      render(_args, value) {
+        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
+      },
+    },
+    async execute() {
+      await flow.clearAll();
+      return { ok: true, message: "凭据已清空。下一次需要调用 engineer_oauth_start 重新授权。" };
     },
   });
 }
@@ -200,6 +385,10 @@ interface BundleConfig {
 export function apply(
   ctx: {
     tools: { register: (d: unknown) => () => void };
+    webServer: {
+      port: number;
+      register: (route: { kind: "exact"; path: string; handler: (req: any, res: any) => Promise<void> }) => () => void;
+    };
     systemPrompt: {
       section: (s: { name: string; order: number; text: string }) => () => void;
     };
@@ -212,10 +401,17 @@ export function apply(
   const repo = config?.repoBinding ?? {};
   const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
 
-  // AGENTS.md drift detection — fire once on apply. We do not have a
-  // token yet at this point (OAuth hasn't run), so we attempt an
-  // anonymous read of the public repo. If it fails, we mark
-  // `unavailable: true` and let `engineer_status` surface that.
+  // Construct auth services.
+  const store = new TokenStore();
+  const flow = new DeviceFlow({ store, clientId: oauthClientId, scopes });
+
+  // Hydrate lastStatus before exposing it.
+  ctx.effect(() => {
+    void flow.hydrate();
+    return () => {};
+  }, "github-engineer: hydrate auth");
+
+  // AGENTS.md drift detection — fires once on apply.
   let agentsMdDrift: ReturnType<typeof checkAgentsMd> | null = null;
   ctx.effect(() => {
     const bindingLike: RepoBindingLike = {
@@ -233,26 +429,21 @@ export function apply(
           bindingLike.owner,
           bindingLike.name,
           String(repo.baseBranch ?? "main"),
-          null // no token yet
+          null
         );
         if (agentsMd === null) {
           agentsMdDrift = {
             ok: false,
             unavailable: true,
             details: [],
-            summary: `无法拉取 AGENTS.md：${bindingLike.owner}/${bindingLike.name}@${String(
-              repo.baseBranch ?? "main"
-            )}（OAuth 未完成或仓库不可匿名访问）`,
+            summary: `无法拉取 AGENTS.md：${bindingLike.owner}/${bindingLike.name}@${String(repo.baseBranch ?? "main")}`,
           };
           ctx.logger.warn(`github-engineer: ${agentsMdDrift.summary}`);
         } else {
           const check = checkAgentsMd(bindingLike, agentsMd);
           agentsMdDrift = check;
-          if (check.ok) {
-            ctx.logger.info(`github-engineer: ${check.summary}`);
-          } else {
-            ctx.logger.warn(`github-engineer: ${check.summary}`);
-          }
+          if (check.ok) ctx.logger.info(`github-engineer: ${check.summary}`);
+          else ctx.logger.warn(`github-engineer: ${check.summary}`);
         }
       } catch (err) {
         ctx.logger.error(
@@ -265,25 +456,74 @@ export function apply(
     return () => {};
   }, "github-engineer: agents-md drift");
 
-  // 1. Register the high-level agent tool.
+  // 1. Register the status tool.
   ctx.effect(() => {
-    return ctx.tools.register(makeStatusTool({ oauthClientId, repo, scopes, agentsMdDrift }));
+    return ctx.tools.register(
+      makeStatusTool({ oauthClientId, repo, scopes, agentsMdDrift, store, flow })
+    );
   }, "github-engineer: status tool");
 
-  // 2. Announce to the agent via a system prompt section.
+  // 2. Register the OAuth tools.
   ctx.effect(() => {
+    return ctx.tools.register(makeOauthStartTool(flow));
+  }, "github-engineer: oauth_start tool");
+
+  ctx.effect(() => {
+    return ctx.tools.register(makeOauthFinishTool(flow));
+  }, "github-engineer: oauth_finish tool");
+
+  ctx.effect(() => {
+    return ctx.tools.register(makeOauthRefreshTool(flow));
+  }, "github-engineer: oauth_refresh tool");
+
+  ctx.effect(() => {
+    return ctx.tools.register(makeOauthRevokeTool(flow));
+  }, "github-engineer: oauth_revoke tool");
+
+  // 3. Register loopback HTTP routes.
+  ctx.effect(() => {
+    const disposers = makeRoutes({ store, flow }).map((r) => ctx.webServer.register(r));
+    return () => disposers.forEach((d) => d());
+  }, "github-engineer: routes");
+
+  // 4. Announce to the agent via a system prompt section.
+  ctx.effect(() => {
+    const paths = Object.values(API).join(", ");
     return ctx.systemPrompt.section({
       name: `plugin:${PLUGIN_ID}`,
       order: SYSTEM_PROMPT_SECTION_ORDER,
       text:
         `本机已安装 ${PLUGIN_DISPLAY_NAME} 插件（GitHub 仓库工程脚手架，plugin_id=${PLUGIN_ID}）。` +
-        "骨架阶段：仅提供 engineer_status 工具与一个 mcp__github-engineer__echo 探针工具。" +
-        "完整功能（OAuth Device Flow + 拉仓库 + 改 public/data.json + 推 content/* 分支 + 开 PR + 本地 npm run validate 强校验）" +
-        "在后续增量中实现。",
+        "Agent tools: engineer_status（查看状态）、engineer_oauth_start（发起 Device Flow）、" +
+        "engineer_oauth_finish（轮询 token）、engineer_oauth_refresh（主动刷新）、engineer_oauth_revoke（撤销）。" +
+        `Loopback HTTP routes: ${paths}。`,
     });
   }, "github-engineer: section");
 
-  // 3. Spawn the MCP server and re-publish its tools.
+  // 5. Refresh watchdog — every 60s, refresh access_token if it's
+  //    expiring within 5 minutes.
+  ctx.effect(() => {
+    const handle = setInterval(() => {
+      void (async () => {
+        try {
+          const refreshed = await flow.ensureFresh();
+          if (refreshed) {
+            ctx.logger.info(`github-engineer: access_token auto-refreshed`);
+          }
+        } catch (err) {
+          ctx.logger.error(
+            `github-engineer: refresh watchdog threw: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      })();
+    }, 60_000);
+    handle.unref();
+    return () => clearInterval(handle);
+  }, "github-engineer: refresh watchdog");
+
+  // 6. Spawn the MCP server and re-publish its tools.
   ctx.effect(() => {
     if (!existsSync(pathToConnect)) {
       ctx.logger.warn(
@@ -317,25 +557,14 @@ export function apply(
             defineTool({
               name: publicName,
               description: tool.description ?? "",
-              // The MCP server's inputSchema is raw JSON Schema. The dsh-tools
-              // `defineTool` accepts author-facing spec (a typed map); we
-              // mark this as `json` to forward whatever the model sends.
               parameters: {
-                __mcp_raw: {
-                  type: "json",
-                  required: true,
-                },
+                __mcp_raw: { type: "json", required: true },
               } as never,
               output: {
                 schema: { type: "json" },
                 render(_args, value) {
                   const v = (value ?? {}) as Record<string, unknown>;
-                  return [
-                    {
-                      type: "text" as const,
-                      text: extractText(v.content, tool.name),
-                    },
-                  ];
+                  return [{ type: "text" as const, text: extractText(v.content, tool.name) }];
                 },
               },
               async execute(args, exec) {
@@ -343,10 +572,7 @@ export function apply(
                 const result = (await client.request(
                   {
                     method: "tools/call",
-                    params: {
-                      name: tool.name,
-                      arguments: forwardArgs,
-                    },
+                    params: { name: tool.name, arguments: forwardArgs },
                   },
                   undefined as never,
                   { signal: exec.signal, timeout: 30_000 }
@@ -354,9 +580,7 @@ export function apply(
                 if (result.isError === true) {
                   throw new Error(extractText(result.content, tool.name));
                 }
-                return {
-                  content: Array.isArray(result.content) ? result.content : [],
-                };
+                return { content: Array.isArray(result.content) ? result.content : [] };
               },
             })
           );
@@ -384,7 +608,13 @@ export async function ensureWorkspace(_dir: string): Promise<void> {
   await mkdir(_dir, { recursive: true });
 }
 
-// Re-export the cordis service identifier so consumers (tests, scripts)
-// can import it without re-typing the literal.
+// Re-export the cordis service identifier so consumers can import it.
 export const name = PLUGIN_ID;
 export const inject = CORDIS_INJECT;
+
+// Re-export auth internals for tests and the upcoming MCP bridge.
+// (The MCP child process imports from this same bundle via the lib
+//  entry — see NEXT-STEPS.md "Settings web panel".)
+export { TokenStore } from "./auth/token-store.js";
+export { DeviceFlow } from "./auth/device-flow.js";
+export { makeRoutes, API } from "./routes.js";

@@ -1,10 +1,10 @@
 # dsh-github-engineer
 
-> **Skeleton status: v0.1.0**. The bundle mounts, exposes one agent
-> tool (`engineer_status`) and one MCP probe tool
-> (`mcp__github_engineer__echo`). Real OAuth, repo access, AGENTS.md
-> auto-load, and the `engineer_run` wrapper land in subsequent
-> increments per [`docs/dsh-github-engineer-design.md`](../dsh-github-engineer-design.md).
+> **Status: v0.2.0 (OAuth complete)**. Bundle mounts, exposes six
+> agent tools (`engineer_status` + 4 OAuth tools + the MCP probe
+> `mcp__github-engineer__echo`). Repo access, AGENTS.md auto-load,
+> and the `engineer_run` wrapper land in subsequent increments per
+> [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md).
 
 DeepSeek Harness plugin: connects the DSH agent to a **single configured
 GitHub repository** via personal OAuth Device Flow, lets it read
@@ -18,15 +18,26 @@ open a **draft** PR (no auto-merge).
 - ✅ `cordis.patch.yml` injects `repoBinding` + `githubOAuthClientId`
 - ✅ GitHub OAuth App registered (Device Flow enabled, Client ID pre-filled)
 - ✅ Spawns MCP server as a stdio child
-- ✅ Re-publishes MCP `tools/list` as `mcp__github_engineer__*` agents tools
-- ✅ `engineer_status` reports plugin state
-- 🚧 OAuth Device Flow state machine
-- 🚧 Token store (OS keychain / DSH encrypted storage)
-- 🚧 Web settings panel
+- ✅ Re-publishes MCP `tools/list` as `mcp__github-engineer__*` agents tools
+- ✅ OAuth Device Flow state machine + token store (incremental `v0.2.0`)
+- ✅ 4 loopback HTTP routes (`/api/github-engineer/{status,oauth/start,oauth/finish,oauth/refresh,revoke}`)
+- ✅ AGENTS.md drift detection at bundle apply
+- ✅ Plugin-namespace consistency CI check (`pnpm check`)
+- 🚧 Web settings panel (React UI)
 - 🚧 `repo_clone` / `repo_read` / `repo_search` / `repo_edit` / `pr_create` / `pr_list`
 - 🚧 `engineer_run` high-level wrapper
-- 🚧 AGENTS.md auto-load + allowlist/denylist hard guards
-- 🚧 `npm run validate` pre-flight
+- 🚧 Real pre-flight enforcement (`npm run validate`)
+
+## Agent tools
+
+| Tool | Purpose |
+|---|---|
+| `engineer_status` | Public state: auth status, repo binding, AGENTS.md drift |
+| `engineer_oauth_start` | Begin Device Flow, return user_code + verification_uri |
+| `engineer_oauth_finish` | Poll once for the user's authorization result |
+| `engineer_oauth_refresh` | Force-refresh the access token (auto-refresh runs every 60s) |
+| `engineer_oauth_revoke` | Wipe local credentials (revoke on GitHub side is separate) |
+| `mcp__github-engineer__echo` | Probe tool; replaced by real repo tools in the next increment |
 
 ## Install (development)
 
@@ -41,7 +52,7 @@ dsh plugin --profile web add link:/path/to/dsh-github-engineer
 
 In a DSH conversation, ask the agent to call `engineer_status` — it
 should report `dsh-github-engineer 已挂载` and the bound repository.
-The MCP probe tool `mcp__github_engineer__echo` should also appear.
+Then drive the OAuth flow per [`docs/OAUTH-FLOW.md`](docs/OAUTH-FLOW.md).
 
 ## Configure
 
@@ -56,14 +67,13 @@ The bundled [`cordis.patch.yml`](cordis.patch.yml) ships with:
 - `defaultScopes: [repo, workflow, offline_access]` — the minimum
   scopes the plugin needs.
 
-## Smoke test
+## Tests
 
 ```sh
-pnpm exec node tests/smoke.mjs
+pnpm exec node tests/smoke.mjs          # MCP server end-to-end
+pnpm exec node tests/token-store.test.mjs  # token store unit tests
+pnpm check                              # typecheck + namespace consistency
 ```
-
-Spawns the MCP server directly, lists its tools, calls `echo`, and
-checks the response.
 
 ## License
 

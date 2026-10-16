@@ -1,25 +1,19 @@
-# Next Steps (After the Skeleton Boots)
+# Next Steps
 
-The skeleton (`v0.1.0`) proves:
-- The bundle mounts under DSH 0.1.5+.
-- `cordis.patch.yml` injects the config the bundle reads.
-- `apply(ctx, config)` registers an agent tool and a system-prompt section.
-- The MCP server spawns via stdio and its `tools/list` is re-published.
+## Current state (v0.2.0)
 
-The next increments, in priority:
+✅ OAuth Device Flow state machine + token store complete:
 
-## 1. OAuth Device Flow + token store
+- `src/auth/token-store.ts` — mode 0600 JSON persistence
+- `src/auth/device-flow.ts` — Device Flow state machine + GitHub HTTP
+- `src/routes.ts` — 5 loopback routes (status, oauth/start, oauth/finish, oauth/refresh, revoke)
+- 4 agent tools: `engineer_oauth_start` / `_finish` / `_refresh` / `_revoke`
+- 60-second refresh watchdog
+- 25 unit tests pass for the token store
+- `pnpm check` (typecheck + namespace consistency) passes
+- See [`docs/OAUTH-FLOW.md`](OAUTH-FLOW.md) for end-user flow
 
-- Files to add: `src/auth/device-flow.ts`, `src/auth/token-store.ts`, `src/auth/oauth.ts`.
-- Persistence path: `~/.dsh/dsh-github-engineer.json` mode 0600 (mirror
-  dsh-feishu-mcp `src/store.ts`).
-- Routes to add (loopback-only):
-  - `POST /api/github-engineer/oauth/start` → returns `user_code` + `verification_uri`
-  - `GET  /api/github-engineer/oauth/callback` → browser redirect target
-  - `POST /api/github-engineer/oauth/finish` → exchange code → tokens
-  - `POST /api/github-engineer/oauth/refresh` → use refresh_token
-- High-level tools: `engineer_oauth_start`, `engineer_oauth_finish`, `engineer_oauth_refresh`.
-- Watchdog: refresh 5 min before expiry; reconnect MCP with new `GHOST_TOKEN`.
+## Upcoming increments, in priority order
 
 ## 2. Settings web panel
 
@@ -28,8 +22,9 @@ The next increments, in priority:
   (inspect dsh-feishu-mcp's `src/settings.tsx` for the exact hook).
 - Surface: `[Connect GitHub]` button, login info, expiry, repo binding,
   working dir, preflight cmd.
+- Calls the loopback routes added in v0.2.0.
 
-## 3. Real MCP tools (6 → 7)
+## 3. Real MCP tools (1 → 7)
 
 Add `repo_status`, `repo_clone`, `repo_pull`, `repo_read`,
 `repo_search`, `repo_edit`, `pr_create` to `mcp-server/src/tools/`.
@@ -41,6 +36,7 @@ For each:
 - Run `preflight.cmd` before every commit.
 - Surface errors as `isError: true` MCP responses with informative
   text — the bundle's `extractText` will preserve them.
+- Use Octokit (`@octokit/rest`) for `pr_create` (no `gh` subprocess).
 
 ## 4. `engineer_run` wrapper
 
@@ -62,7 +58,7 @@ For each:
 ## 6. Publish
 
 - README.md + CHANGELOG.md + LICENSE (MIT).
-- Tag `v0.1.0` once `engineer_run` lands against a real OAuth App.
+- Tag `v0.2.0` once settings panel lands.
 - PR to `awesome-dsh-plugin/awesome-dsh-plugin`.
 - (Optional) publish to npm as `dsh-github-engineer`.
 
