@@ -1,0 +1,23 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Editor temp / scratch
+*.swp
+*.swo
+
+# Local secrets — never commit
+.env
+.env.local
+*.pem
+*.key
+
+# pnpm cache (if any)
+.pnpm-store/
+
+# Build artefacts that ship with subprojects
+# (subprojects have their own .gitignore; this is for top-level accidents only)

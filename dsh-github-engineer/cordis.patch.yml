@@ -1,0 +1,57 @@
+# dsh-github-engineer bundle patch
+#
+# Inserts the plugin row into the profile roster. The bundle is loaded
+# as a profile bundle layer (declared by the dsh.bundle.patch field in
+# package.json).
+#
+# Activate:
+#   dsh plugin --profile web add link:/path/to/dsh-github-engineer
+#   # then restart `dsh web`
+#
+# githubOAuthClientId — your GitHub OAuth App's Client ID. Register at
+#   https://github.com/settings/developers → New OAuth App, then enable
+#   Device Flow. See docs/github-oauth-app-checklist.md.
+#
+# defaultScopes — the OAuth scopes requested during Device Flow.
+#   Keep `repo` for branch pushes + PR; add `workflow` to fire Actions;
+#   add `offline_access` to receive a refresh token.
+#
+# repoBinding — the SINGLE repository this plugin operates on. Editing
+#   this does not affect GitHub; it is purely a client-side guard rail.
+
+- insert:
+    - id: github-engineer
+      name: dsh-github-engineer
+      config:
+        announceToAgent: true
+        enabled: true
+
+        githubOAuthClientId: "Iv1.REPLACE_ME_WITH_REAL_CLIENT_ID"
+        defaultScopes:
+          - repo
+          - workflow
+          - offline_access
+
+        repoBinding:
+          owner: mmw-devs
+          name: ffxiv-race-ops
+          baseBranch: main
+          branchPrefix: content/
+          allowlistPaths:
+            - public/data.json
+          denylistPaths:
+            - .github/workflows/**
+            - schema/**
+            - scripts/**
+            - constants.js
+            - AGENTS.md
+            - README.md
+            - .pi/**
+            - dist/**
+          preflight:
+            enabled: true
+            cmd: npm run validate
+            timeoutSeconds: 60
+          pr:
+            defaultDraft: true
+            titlePrefix: "[ops]"

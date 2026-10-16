@@ -1,0 +1,15 @@
+node_modules/
+lib/
+*.log
+.DS_Store
+.env
+.env.local
+*.tsbuildinfo
+
+# Local secrets — never commit
+*.pem
+.dsh-github-engineer.json
+
+# Editor
+.vscode/
+.idea/
