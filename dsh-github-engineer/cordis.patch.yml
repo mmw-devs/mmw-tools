@@ -18,6 +18,23 @@
 #
 # repoBinding — the SINGLE repository this plugin operates on. Editing
 #   this does not affect GitHub; it is purely a client-side guard rail.
+#
+# ⚠️  SSOT WARNING — MIRRORED FACTS
+# ─────────────────────────────────
+# The following fields MIRROR facts in
+# `mmw-devs/ffxiv-race-ops/AGENTS.md`:
+#
+#     cordis.patch.yml field       AGENTS.md source
+#     ───────────────────────     ──────────────────────────────────
+#     repoBinding.allowlistPaths  "唯一允许修改: public/data.json"
+#     repoBinding.denylistPaths   derived from the "不可改动" list
+#     repoBinding.branchPrefix    "content/* 分支前缀"
+#     preflight.cmd               "本地校验: npm run validate"
+#
+# The plugin's `engineer_run` tool fetches AGENTS.md at startup and
+# compares it to these fields. A mismatch logs a WARNING but does NOT
+# block execution — AGENTS.md is the authority; this file is the cache.
+# See docs/OPERATIONS-SYNC.md for the maintenance contract.
 
 - insert:
     - id: github-engineer

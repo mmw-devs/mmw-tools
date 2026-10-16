@@ -24,7 +24,9 @@
     "build": "tsc -p tsconfig.build.json",
     "watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/smoke.mjs",
+    "check:namespace": "node scripts/check-namespace-consistency.mjs",
+    "check": "pnpm typecheck && pnpm check:namespace"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -43,6 +45,8 @@
     "lib",
     "mcp-server",
     "cordis.patch.yml",
+    "scripts",
+    "docs",
     "README.md",
     "LICENSE"
   ],

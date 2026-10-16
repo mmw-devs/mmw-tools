@@ -1,53 +1,46 @@
 /**
  * dsh-github-engineer — bundle entry (skeleton v0.1.0).
  *
- * The skeleton only does two things:
+ * Two visible agent-facing surfaces plus one runtime guard:
  *
- *   1. Register one agent-side tool, `engineer_status`, that reports
- *      whether the plugin loaded and which OAuth App + repo binding it
- *      is wired to.
+ *   1. `engineer_status` — high-level tool reporting plugin state.
+ *   2. `mcp__github_engineer__*` — auto-discovered from the MCP
+ *      server child process.
+ *   3. AGENTS.md drift check — fires once on bundle apply; warns if
+ *      the cached `cordis.patch.yml` rules and the live AGENTS.md in
+ *      the bound repo disagree. See docs/OPERATIONS-SYNC.md.
  *
- *   2. Spawn the MCP server (currently a one-tool echo server) as a
- *      stdio child and re-publish its `tools/list` as agent tools
- *      under the `mcp__github_engineer__` namespace.
- *
- * NOT in this skeleton (subsequent increments):
+ * NOT in this skeleton (subsequent increments per docs/NEXT-STEPS.md):
  *   - OAuth Device Flow state machine
- *   - token store / keychain
- *   - settings web panel
+ *   - Token store / keychain
+ *   - Settings web panel
  *   - repo_clone / repo_edit / pr_create / etc.
  *   - engineer_run high-level wrapper
- *
- * See docs/dsh-github-engineer-design.md for the full plan.
  */
-import { defineTool, type InferArgs, type InferValue } from "@deepseek-ai/dsh-tools";
+import { defineTool } from "@deepseek-ai/dsh-tools";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import {
+  PLUGIN_ID,
+  PLUGIN_DISPLAY_NAME,
+  PLUGIN_NAMESPACE,
+  CORDIS_INJECT,
+  SYSTEM_PROMPT_SECTION_ORDER,
+  mcpServerEntryPath,
+} from "./const.js";
+import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
 
-/** Stable cordis plugin name. */
-export const name = "github-engineer";
-
-/** Cordis services this plugin depends on. */
-export const inject = ["tools", "systemPrompt", "logger"];
-
-/** Where the MCP server lives (relative to this bundle's dist). */
-const MCP_SERVER_ENTRY = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  "..",
-  "mcp-server",
-  "dist",
-  "index.js"
-);
+/** Where MCP server lives — exposed for tests / docs. */
+export const pathToConnect = mcpServerEntryPath(import.meta.url);
 
 /** Sanitize a raw MCP tool name into a model-facing DSH agent name. */
 function publicToolName(rawName: string): string {
-  const prefix = "mcp__github_engineer__";
   const sanitized = rawName.replace(/[^A-Za-z0-9_-]/g, "_");
-  return prefix + sanitized;
+  return PLUGIN_NAMESPACE + sanitized;
 }
 
 /** Extract text from an MCP `ContentBlock[]` for display. */
@@ -98,6 +91,7 @@ const STATUS_OUTPUT_SCHEMA = {
   properties: {
     ok: { type: "boolean" as const, required: true as const },
     message: { type: "string" as const, required: true as const },
+    pluginId: { type: "string" as const },
     oauthClientIdMasked: { type: "string" as const },
     repoOwner: { type: "string" as const },
     repoName: { type: "string" as const },
@@ -107,6 +101,29 @@ const STATUS_OUTPUT_SCHEMA = {
       items: { type: "string" as const },
     },
     mcpServerPath: { type: "string" as const },
+    agentsMdDrift: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        ok: { type: "boolean" as const, required: true as const },
+        unavailable: { type: "boolean" as const, required: true as const },
+        summary: { type: "string" as const, required: true as const },
+        details: {
+          type: "array" as const,
+          items: {
+            type: "object" as const,
+            additionalProperties: true as const,
+            properties: {
+              label: { type: "string" as const },
+              passed: { type: "boolean" as const },
+              observed: { type: "string" as const },
+            },
+          },
+          required: true as const,
+        },
+      },
+      required: true as const,
+    },
   },
 };
 
@@ -114,11 +131,12 @@ function makeStatusTool(deps: {
   oauthClientId: string;
   repo: Record<string, unknown>;
   scopes: string[];
+  agentsMdDrift: ReturnType<typeof checkAgentsMd> | null;
 }) {
   return defineTool({
     name: "engineer_status",
     description:
-      "查看 dsh-github-engineer 插件状态：是否已挂载、配置了哪个 repo binding 与 GitHub OAuth App ID、MCP server 是否可达、已注册的 mcp__github_engineer__* 工具数量。不会泄露任何密钥。",
+      "查看 dsh-github-engineer 插件状态：是否已挂载、配置了哪个 repo binding 与 GitHub OAuth App ID、MCP server 路径、AGENTS.md 是否与 cordis.patch.yml 一致。不会泄露任何密钥。",
     parameters: STATUS_PARAMS,
     output: {
       schema: STATUS_OUTPUT_SCHEMA,
@@ -128,31 +146,46 @@ function makeStatusTool(deps: {
     },
     async execute() {
       const oauthMasked = deps.oauthClientId
-        ? deps.oauthClientId.slice(0, 6) + "****"
-        : "";
+        ? `${deps.oauthClientId.slice(0, 6)}****`
+        : "(未设置 — 把 cordis.patch.yml 里的 githubOAuthClientId 换成真实的)";
+      const drift = deps.agentsMdDrift;
+      const driftLine = drift
+        ? drift.unavailable
+          ? `AGENTS.md drift: 暂无法拉取（首次连接 GitHub 后会自动校准）`
+          : drift.ok
+          ? `AGENTS.md drift: OK`
+          : `AGENTS.md drift: ⚠️ 不一致 — 详情见 dsh web 日志`
+        : `AGENTS.md drift: 未检查（OAuth 未完成）`;
       return {
         ok: true,
         message:
-          `dsh-github-engineer 已挂载。\n` +
-          `OAuth App: ${oauthMasked || "(未设置 — 把 cordis.patch.yml 里的 githubOAuthClientId 换成真实的)"}\n` +
+          `${PLUGIN_DISPLAY_NAME} 已挂载（plugin_id=${PLUGIN_ID}）。\n` +
+          `OAuth App: ${oauthMasked}\n` +
           `Repo binding: ${String(deps.repo.owner ?? "?")}/${String(deps.repo.name ?? "?")} (${String(deps.repo.baseBranch ?? "main")})\n` +
           `Allowed paths: ${Array.isArray(deps.repo.allowlistPaths) ? deps.repo.allowlistPaths.join(", ") : "(空)"}\n` +
           `Default scopes: ${deps.scopes.join(" ") || "(空)"}\n` +
           `MCP server entry: ${pathToConnect}\n` +
-          `\n下一步：注册 GitHub OAuth App + 填 client_id + 实现 OAuth Device Flow（见 docs/NEXT-STEPS.md）。`,
-        oauthClientIdMasked: oauthMasked,
+          `${driftLine}\n` +
+          `\n下一步：实现 OAuth Device Flow（见 docs/NEXT-STEPS.md）。`,
+        pluginId: PLUGIN_ID,
+        oauthClientIdMasked: deps.oauthClientId
+          ? `${deps.oauthClientId.slice(0, 6)}****`
+          : "",
         repoOwner: String(deps.repo.owner ?? ""),
         repoName: String(deps.repo.name ?? ""),
         baseBranch: String(deps.repo.baseBranch ?? "main"),
         defaultScopes: deps.scopes,
         mcpServerPath: pathToConnect,
+        agentsMdDrift: drift ?? {
+          ok: false,
+          unavailable: true,
+          summary: "未检查（OAuth 未完成或首次启动）",
+          details: [],
+        },
       };
     },
   });
 }
-
-/** Where MCP server lives — exposed for tests / docs. */
-export const pathToConnect = MCP_SERVER_ENTRY;
 
 /* ============================================================== */
 /*  Bundle apply                                                   */
@@ -179,19 +212,72 @@ export function apply(
   const repo = config?.repoBinding ?? {};
   const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
 
+  // AGENTS.md drift detection — fire once on apply. We do not have a
+  // token yet at this point (OAuth hasn't run), so we attempt an
+  // anonymous read of the public repo. If it fails, we mark
+  // `unavailable: true` and let `engineer_status` surface that.
+  let agentsMdDrift: ReturnType<typeof checkAgentsMd> | null = null;
+  ctx.effect(() => {
+    const bindingLike: RepoBindingLike = {
+      owner: String(repo.owner ?? ""),
+      name: String(repo.name ?? ""),
+      branchPrefix: String(repo.branchPrefix ?? ""),
+      allowlistPaths: Array.isArray(repo.allowlistPaths)
+        ? (repo.allowlistPaths as string[])
+        : [],
+      preflight: repo.preflight as { cmd?: string } | undefined,
+    };
+    void (async () => {
+      try {
+        const agentsMd = await fetchAgentsMd(
+          bindingLike.owner,
+          bindingLike.name,
+          String(repo.baseBranch ?? "main"),
+          null // no token yet
+        );
+        if (agentsMd === null) {
+          agentsMdDrift = {
+            ok: false,
+            unavailable: true,
+            details: [],
+            summary: `无法拉取 AGENTS.md：${bindingLike.owner}/${bindingLike.name}@${String(
+              repo.baseBranch ?? "main"
+            )}（OAuth 未完成或仓库不可匿名访问）`,
+          };
+          ctx.logger.warn(`github-engineer: ${agentsMdDrift.summary}`);
+        } else {
+          const check = checkAgentsMd(bindingLike, agentsMd);
+          agentsMdDrift = check;
+          if (check.ok) {
+            ctx.logger.info(`github-engineer: ${check.summary}`);
+          } else {
+            ctx.logger.warn(`github-engineer: ${check.summary}`);
+          }
+        }
+      } catch (err) {
+        ctx.logger.error(
+          `github-engineer: AGENTS.md drift check threw: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    })();
+    return () => {};
+  }, "github-engineer: agents-md drift");
+
   // 1. Register the high-level agent tool.
   ctx.effect(() => {
-    return ctx.tools.register(makeStatusTool({ oauthClientId, repo, scopes }));
+    return ctx.tools.register(makeStatusTool({ oauthClientId, repo, scopes, agentsMdDrift }));
   }, "github-engineer: status tool");
 
   // 2. Announce to the agent via a system prompt section.
   ctx.effect(() => {
     return ctx.systemPrompt.section({
-      name: "plugin:github-engineer",
-      order: 210,
+      name: `plugin:${PLUGIN_ID}`,
+      order: SYSTEM_PROMPT_SECTION_ORDER,
       text:
-        "本机已安装 dsh-github-engineer 插件（GitHub 仓库工程脚手架）。" +
-        "骨架阶段：仅提供 engineer_status 工具与一个 mcp__github_engineer__echo 探针工具。" +
+        `本机已安装 ${PLUGIN_DISPLAY_NAME} 插件（GitHub 仓库工程脚手架，plugin_id=${PLUGIN_ID}）。` +
+        "骨架阶段：仅提供 engineer_status 工具与一个 mcp__github-engineer__echo 探针工具。" +
         "完整功能（OAuth Device Flow + 拉仓库 + 改 public/data.json + 推 content/* 分支 + 开 PR + 本地 npm run validate 强校验）" +
         "在后续增量中实现。",
     });
@@ -199,21 +285,21 @@ export function apply(
 
   // 3. Spawn the MCP server and re-publish its tools.
   ctx.effect(() => {
-    if (!existsSync(MCP_SERVER_ENTRY)) {
+    if (!existsSync(pathToConnect)) {
       ctx.logger.warn(
-        `github-engineer: mcp-server entry not found at ${MCP_SERVER_ENTRY}; skipping MCP spawn. Run \`pnpm build\` inside mcp-server/.`
+        `github-engineer: mcp-server entry not found at ${pathToConnect}; skipping MCP spawn. Run \`pnpm build\` inside mcp-server/.`
       );
       return () => {};
     }
     const client = new Client(
-      { name: "dsh-github-engineer", version: "0.1.0" },
+      { name: PLUGIN_DISPLAY_NAME, version: "0.1.0" },
       { capabilities: {} }
     );
     (async () => {
       try {
         const transport = new StdioClientTransport({
           command: process.execPath,
-          args: [MCP_SERVER_ENTRY],
+          args: [pathToConnect],
           env: extendedEnv(),
         });
         await client.connect(transport);
@@ -231,13 +317,14 @@ export function apply(
             defineTool({
               name: publicName,
               description: tool.description ?? "",
-              // Raw JSON Schema coming from MCP — feed through as-is via `json`
-              // node, so the strict dsh-tools schema validator accepts it.
+              // The MCP server's inputSchema is raw JSON Schema. The dsh-tools
+              // `defineTool` accepts author-facing spec (a typed map); we
+              // mark this as `json` to forward whatever the model sends.
               parameters: {
                 __mcp_raw: {
                   type: "json",
                   required: true,
-                } as never,
+                },
               } as never,
               output: {
                 schema: { type: "json" },
@@ -252,8 +339,6 @@ export function apply(
                 },
               },
               async execute(args, exec) {
-                // The "args" here is whatever the model produced; we forward it
-                // as a JSON object to the MCP tool.
                 const forwardArgs = (args ?? {}) as Record<string, unknown>;
                 const result = (await client.request(
                   {
@@ -271,7 +356,7 @@ export function apply(
                 }
                 return {
                   content: Array.isArray(result.content) ? result.content : [],
-                } as unknown as InferValue<typeof STATUS_OUTPUT_SCHEMA>;
+                };
               },
             })
           );
@@ -290,8 +375,6 @@ export function apply(
         return () => {};
       }
     })();
-    // Return a disposer that does nothing if the async block hasn't resolved yet;
-    // the async block will install its own disposer on success.
     return () => {};
   }, "github-engineer: mcp bridge");
 }
@@ -300,3 +383,8 @@ export function apply(
 export async function ensureWorkspace(_dir: string): Promise<void> {
   await mkdir(_dir, { recursive: true });
 }
+
+// Re-export the cordis service identifier so consumers (tests, scripts)
+// can import it without re-typing the literal.
+export const name = PLUGIN_ID;
+export const inject = CORDIS_INJECT;

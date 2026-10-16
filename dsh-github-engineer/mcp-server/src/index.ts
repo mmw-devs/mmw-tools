@@ -14,9 +14,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { PLUGIN_DISPLAY_NAME, PLUGIN_VERSION } from "./const.js";
 
 const server = new Server(
-  { name: "dsh-github-engineer-mcp", version: "0.1.0" },
+  { name: PLUGIN_DISPLAY_NAME, version: PLUGIN_VERSION },
   { capabilities: { tools: {} } }
 );
 
@@ -49,7 +50,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: "text",
-          text: `echo: ${message}\n` +
+          text:
+            `echo: ${message}\n` +
             `env: REPO_OWNER=${process.env.REPO_OWNER ?? "(unset)"}, ` +
             `REPO_NAME=${process.env.REPO_NAME ?? "(unset)"}, ` +
             `GHOST_TOKEN=${process.env.GHOST_TOKEN ? "set" : "(unset)"}\n` +
