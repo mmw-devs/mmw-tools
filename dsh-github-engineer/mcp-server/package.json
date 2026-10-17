@@ -11,7 +11,9 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/guard.test.mjs && node tests/tools-list-schema.test.mjs",
+    "test:smoke": "node tests/tools-list.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

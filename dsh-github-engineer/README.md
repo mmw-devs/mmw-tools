@@ -1,10 +1,10 @@
 # dsh-github-engineer
 
-> **Status: v0.3.0 (Settings panel complete)**. Bundle mounts, exposes
-> six agent tools (`engineer_status` + 4 OAuth tools + the MCP probe
-> `mcp__github-engineer__echo`), plus a Settings → GitHub Engineer
-> tab in the DSH web UI. Repo access and the `engineer_run` wrapper
-> land in subsequent increments per [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md).
+> **Status: v0.4.0 (Real MCP tools complete)**. Bundle mounts, exposes
+> 11 agent tools (5 OAuth + 1 status + 8 MCP repo tools), plus a
+> Settings → GitHub Engineer tab. The `engineer_run` wrapper
+> (increment 4) and audit rails (increment 5) land next per
+> [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md).
 
 DeepSeek Harness plugin: connects the DSH agent to a **single configured
 GitHub repository** via personal OAuth Device Flow, lets it read
@@ -24,11 +24,14 @@ open a **draft** PR (no auto-merge).
 - ✅ AGENTS.md drift detection at bundle apply
 - ✅ Plugin-namespace consistency CI check
 - ✅ Settings web panel (React, `lib/client.js` registered via `__ModuleLoader__`)
-- 🚧 `repo_clone` / `repo_read` / `repo_search` / `repo_edit` / `pr_create` / `pr_list`
-- 🚧 `engineer_run` high-level wrapper
-- 🚧 Real pre-flight enforcement (`npm run validate`)
+- ✅ **8 MCP tools** (`repo_status` / `repo_clone` / `repo_pull` / `repo_read` / `repo_search` / `repo_edit` / `pr_create` / `pr_list`)
+- ✅ **Hardened guards**: path traversal, allowlist/denylist, branch prefix, token redaction, preflight, size limits
+- 🚧 `engineer_run` high-level wrapper (increment 4)
+- 🚧 Audit + safety rails (increment 5)
 
 ## Agent tools
+
+### High-level (registered as `engineer_*`)
 
 | Tool | Purpose |
 |---|---|
@@ -37,7 +40,26 @@ open a **draft** PR (no auto-merge).
 | `engineer_oauth_finish` | Poll once for the user's authorization result |
 | `engineer_oauth_refresh` | Force-refresh the access token (auto-refresh runs every 60s) |
 | `engineer_oauth_revoke` | Wipe local credentials (revoke on GitHub side is separate) |
-| `mcp__github-engineer__echo` | Probe tool; replaced by real repo tools in the next increment |
+
+### MCP (registered as `mcp__github-engineer__*`)
+
+| Tool | Purpose |
+|---|---|
+| `mcp__github-engineer__repo_status` | Branch / dirty / HEAD SHA / uncommitted files |
+| `mcp__github-engineer__repo_clone` | Clone the bound repo to `working_dir` |
+| `mcp__github-engineer__repo_pull` | `git pull --rebase origin <branch>` |
+| `mcp__github-engineer__repo_read` | Read one file (≤ 100 KiB by default; refuses binary) |
+| `mcp__github-engineer__repo_search` | `git grep` with max-results cap |
+| `mcp__github-engineer__repo_edit` | Apply file edits + preflight + commit (no push) |
+| `mcp__github-engineer__pr_create` | Push + `gh pr create --draft` |
+| `mcp__github-engineer__pr_list` | List open PRs |
+
+Every MCP tool runs through cross-cutting guards before any I/O:
+path traversal block, allowlist/denylist, branch prefix check,
+token-shaped string detection, size limits. See
+[`docs/INCREMENT-3-CHECKLIST.md`](docs/INCREMENT-3-CHECKLIST.md) for
+the full hardening spec and [`docs/INCREMENT-3-DESIGN.md`](docs/INCREMENT-3-DESIGN.md)
+for what was built.
 
 ## Web settings panel
 
@@ -93,9 +115,10 @@ The bundled [`cordis.patch.yml`](cordis.patch.yml) ships with:
 ## Tests
 
 ```sh
-pnpm test                  # 25 token-store + 16 client-bundle shape checks
-pnpm test:smoke            # MCP server end-to-end (requires Node spawn)
-pnpm check                 # typecheck + namespace consistency + tests
+pnpm check                                  # typecheck + namespace + tests (66 PASS)
+pnpm test                                   # 25 token-store + 16 client-bundle + 25 guard
+pnpm --filter mcp-server test               # 44 guard + 11 schema tests
+pnpm --filter mcp-server test:smoke         # MCP server end-to-end (skipped in sandbox)
 ```
 
 ## License

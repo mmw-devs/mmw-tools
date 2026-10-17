@@ -1,90 +1,64 @@
 # Next Steps
 
-## Current state (v0.3.0)
+## Current state (v0.4.0)
 
-✅ Settings web panel complete:
+✅ Real MCP tools complete:
 
-- `src/client/api.ts` — fetch wrapper around the loopback routes
-- `src/client/index.js` — plain-JS panel + `apply()` (no TSX; the
-  factory supplies React via `require`)
-- `scripts/build-client.mjs` — post-processor that wraps tsc's
-  `api.js` + the panel source in the `__ModuleLoader__` IIFE shape
-- `tsconfig.client.json` — separate tsc config for the client
-- `tests/client-bundle.test.mjs` — 16 shape checks against `lib/client.js`
-- `lib/client.js` registers a "GitHub Engineer" tab into the DSH
-  Settings page via `ctx.slots.inject("settings.section", …)`
+- `mcp-server/src/guard.ts` — cross-cutting hard guards (path safety,
+  allowlist/denylist, branch prefix, token redaction, preflight,
+  size limits). 44 unit tests in `tests/guard.test.mjs`.
+- 8 MCP tools in `mcp-server/src/tools/`:
+  `repo_status` / `repo_clone` / `repo_pull` / `repo_read` /
+  `repo_search` / `repo_edit` / `pr_create` / `pr_list`.
+- Each tool runs through every relevant guard before any I/O.
+- `mcp-server/src/index.ts` — dispatcher mapping `tools/list` +
+  `tools/call` JSON-RPC to the tools; refusal errors go through
+  `isError: true` with `[code] message` text.
+- 11 schema checks in `tests/tools-list-schema.test.mjs` (no spawn
+  needed; static source grep).
 
-The panel currently surfaces:
-- Current auth status (login, scope, masked access_token expiry)
-- `[Connect GitHub]` button → starts Device Flow, shows user_code +
-  verification_uri inline
-- `[Refresh]` / `[Revoke]` / `[我已完成授权]` (polls for the user's
-  authorization result)
+See [`docs/INCREMENT-3-CHECKLIST.md`](INCREMENT-3-CHECKLIST.md) for
+the per-tool hardening spec, and
+[`docs/INCREMENT-3-DESIGN.md`](INCREMENT-3-DESIGN.md) for what was
+actually built.
 
-### How the client bundle is built
+### What v0.4.0 still doesn't do
 
-```
-src/client/api.ts ───┐
-                    ├─► pnpm exec tsc -p tsconfig.client.json
-                    │   outputs client-build/api.js
-                    │
-src/client/index.js ─┘   (plain JS, kept untouched by tsc)
-                         scripts/build-client.mjs
-                         strips imports + the trailing `export { … }`,
-                         prepends api.js (export keywords stripped),
-                         wraps in window.__ModuleLoader__.load({ factory })
-                         → lib/client.js
-```
+- No `engineer_run` wrapper: the agent can call MCP tools directly,
+  but no top-level wrapper drives AGENTS.md auto-load + LLM loop yet.
+- No audit rails: no session log entries, no token filter in the
+  bundle logger. The guards above prevent the *content* from leaking,
+  but the *act* of an MCP call isn't logged.
+- No rate limiting (deferred to v2).
+- `repo_edit` patch mode is not implemented (only `replace` + `insert`).
 
-The factory body receives React + react/jsx-runtime from the DSH
-web loader via `require()` — this matches dsh-feishu-mcp's compiled
-client.js shape exactly.
-
-### Why we don't use tsdown
-
-`tsdown` 0.22.x and 0.23.x have ESM resolution bugs under Node 24 +
-pnpm (rolldown / ansis can't be resolved). Since `tsc -p
-tsconfig.client.json` produces clean ESM and the only bundler-shaped
-output we need is a small IIFE wrapper, `scripts/build-client.mjs`
-hand-rolls that step (~80 lines).
-
-## Upcoming increments, in priority order
-
-## 3. Real MCP tools (1 → 7)
-
-Add `repo_status`, `repo_clone`, `repo_pull`, `repo_read`,
-`repo_search`, `repo_edit`, `pr_create` to `mcp-server/src/tools/`.
-
-For each:
-- Validate input strictly (path not absolute / no `..`).
-- Apply allowlist/denylist before every file write.
-- Apply branch-prefix check before every push.
-- Run `preflight.cmd` before every commit.
-- Surface errors as `isError: true` MCP responses with informative
-  text — the bundle's `extractText` will preserve them.
-- Use Octokit (`@octokit/rest`) for `pr_create` (no `gh` subprocess).
+## Upcoming increments
 
 ## 4. `engineer_run` wrapper
 
 - File: `src/agent/run-pipeline.ts`.
-- Reads `AGENTS.md` + `README.md` from `working_dir`, concatenates into
-  the system prompt the agent sees when this tool is called.
+- Reads `AGENTS.md` + `README.md` from `working_dir`, concatenates
+  into the system prompt the agent sees when this tool is called.
 - Drives the LLM in a loop until either `{ack}` or 30 steps.
-- At the end, runs `repo_pull --rebase`, the pre-flight, `git push`,
-  and `pr_create` (default `draft: true`).
+- At the end, calls `repo_pull --rebase`, then loops with
+  `repo_read` / `repo_search` / `repo_edit` / `pr_create`.
+- Spawns the MCP server as a child process from the host, passing
+  config via `GHOST_*` env vars (see `mcp-server/src/index.ts:config()`).
 
 ## 5. Audit + safety rails
 
 - DSH session log entries per `engineer_run`: timestamp, login, PR
   number, changed paths, pre-flight exit, LLM step count. **Never**
   the PR body or commit message.
-- Token filter in `src/util/logger.ts` (regex: `(?i)(access_token=|bearer\s)`).
-- Commit-message / PR-body filter at submission time.
+- Token filter in the bundle's `src/util/logger.ts` (regex blacklist
+  reused from `mcp-server/src/guard.ts`).
+- Per-MCP-call audit hook in the bundle entry that records
+  tool name + ref-id + outcome into the DSH session log.
 
 ## 6. Publish
 
 - README.md + CHANGELOG.md + LICENSE (MIT).
-- Tag `v0.3.0` once `engineer_run` lands against a real OAuth App.
+- Tag `v0.4.0` once `engineer_run` lands against a real OAuth App.
 - PR to `awesome-dsh-plugin/awesome-dsh-plugin`.
 - (Optional) publish to npm as `dsh-github-engineer`.
 
