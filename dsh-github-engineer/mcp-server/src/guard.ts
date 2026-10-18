@@ -306,12 +306,19 @@ export function assertBranchPrefix(
 /** A token-shaped substring. The blacklist matches the patterns listed
  *  in docs/INCREMENT-3-CHECKLIST.md §3. */
 const TOKEN_BLACKLIST = [
-  // GitHub classic PAT (gho_, ghp_, ghu_, ghs_, ghr_) — 36+ chars.
+  // GitHub classic PAT (gho_, ghp_, ghu_, ghs_, ghr_) — 36+ chars,
+  // counting from the prefix (after the leading underscore) we need
+  // ≥ 20 base62 chars to match.
   /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/g,
-  // GitHub fine-grained PAT — `github_pat_11XXX_` + base62, ~80+ chars.
+  // GitHub fine-grained PAT — `github_pat_11XXX_` + base62 (underscores
+  // and alphanumerics), ≥ 20 chars.
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
-  // OAuth bearer / token / key / secret / password with separator.
-  /\b(access_token|bearer|api[-_]?key|client[-_]?secret|secret|password)\s*[:=]\s*["']?[A-Za-z0-9._-]+/gi,
+  // Bearer / token / key / secret / password forms. Both:
+  //   (a) with separator: `key: value` or `key=value`
+  //   (b) bare, with whitespace after the keyword: `Bearer <token>`,
+  //       `Authorization: <token>`, `key <token>`
+  /\b(access_token|authorization|bearer|api[-_]?key|client[-_]?secret|secret|password)\s*[:=]\s*["']?[A-Za-z0-9._-]+/gi,
+  /\b(bearer|token|key|secret)\s+["']?[A-Za-z0-9_.-]{16,}/gi,
 ];
 
 /** Detect token-shaped substrings. */

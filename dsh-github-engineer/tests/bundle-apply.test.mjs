@@ -179,7 +179,8 @@ console.log("\n--- Test 1: high-level agent tools ---");
   truthy(names.includes("engineer_oauth_finish"), "engineer_oauth_finish registered");
   truthy(names.includes("engineer_oauth_refresh"), "engineer_oauth_refresh registered");
   truthy(names.includes("engineer_oauth_revoke"), "engineer_oauth_revoke registered");
-  eq(names.length, 5, "exactly 5 high-level tools registered (no MCP tools yet)");
+  truthy(names.includes("engineer_run"), "engineer_run registered");
+  eq(names.length, 6, "exactly 6 high-level tools registered (no MCP tools yet)");
 }
 
 /* ============================================================== */

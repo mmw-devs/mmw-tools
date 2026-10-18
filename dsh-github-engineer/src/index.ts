@@ -247,6 +247,121 @@ function makeStatusTool(deps: {
   });
 }
 
+/* engineer_run — v0.5.0 lightweight bootstrap wrapper. */
+
+const ENGINEER_RUN_OUTPUT = {
+  type: "object" as const,
+  additionalProperties: false as const,
+  properties: {
+    branch_suggestion: { type: "string" as const, required: true as const },
+    working_dir: { type: "string" as const, required: true as const },
+    repo: {
+      type: "object" as const,
+      additionalProperties: false as const,
+      properties: {
+        owner: { type: "string" as const, required: true as const },
+        name: { type: "string" as const, required: true as const },
+        base_branch: { type: "string" as const, required: true as const },
+      },
+      required: true as const,
+    },
+    agents_md_excerpt: { type: "string" as const, required: true as const },
+    readme_excerpt: { type: "string" as const, required: true as const },
+    agents_md_present: { type: "boolean" as const, required: true as const },
+    readme_present: { type: "boolean" as const, required: true as const },
+    allowlist: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      required: true as const,
+    },
+    denylist: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      required: true as const,
+    },
+    branch_prefix: { type: "string" as const, required: true as const },
+    preflight_cmd: { type: "string" as const, required: true as const },
+    tool_inventory: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      required: true as const,
+    },
+    instructions: { type: "string" as const, required: true as const },
+  },
+};
+
+function makeEngineerRunTool(deps: {
+  workingDir: string;
+  repo: Record<string, unknown>;
+  allowlistPaths: string[];
+  denylistPaths: string[];
+  branchPrefix: string;
+  preflightCmd: string;
+}) {
+  return defineTool({
+    name: "engineer_run",
+    description:
+      "为 DSH agent 准备好 GitHub 仓库工程任务的工作环境：读 AGENTS.md 和 README.md、检查绑定仓库元信息、拼出 agent 必须遵守的硬约束（allowlist、denylist、分支前缀、preflight），并返回一份完整的工作指南。Agent 在收到结果后自行驱动 mcp__github-engineer__* 工具完成实际修改。本工具不做任何 LLM 调用、不自动 push、不自动合并。",
+    parameters: {
+      user_request: {
+        type: "string",
+        description: "用户的自然语言诉求。1–8 KiB；不接受含 token 形字符串。",
+      },
+      branch_name: {
+        type: "string",
+        description: "可选分支名（默认 content/<date>-<slug>）。",
+      },
+      draft: {
+        type: "boolean",
+        description: "建议的 draft PR 标志（仅作为建议，最终由 agent 决定）。",
+      },
+    },
+    output: {
+      schema: ENGINEER_RUN_OUTPUT,
+      render(_args, value) {
+        const v = value as Record<string, unknown>;
+        const lines = [
+          String(v.instructions ?? ""),
+          "",
+          "--- AGENTS.md excerpt ---",
+          String(v.agents_md_excerpt ?? ""),
+          "--- README.md excerpt ---",
+          String(v.readme_excerpt ?? ""),
+        ];
+        return [{ type: "text", text: lines.join("\n") }];
+      },
+    },
+    async execute(args) {
+      const input = (args ?? {}) as {
+        user_request?: string;
+        branch_name?: string;
+        draft?: boolean;
+      };
+      // Lazy import to keep the bundle entry's import graph small.
+      const mod = await import("./agent/engineer-run.js");
+      return mod.engineerRun(
+        {
+          user_request: String(input.user_request ?? ""),
+          branch_name: input.branch_name,
+          draft: input.draft,
+        },
+        {
+          workingDir: deps.workingDir,
+          repo: {
+            owner: String(deps.repo.owner ?? ""),
+            name: String(deps.repo.name ?? ""),
+            baseBranch: String(deps.repo.baseBranch ?? "main"),
+          },
+          allowlistPaths: deps.allowlistPaths,
+          denylistPaths: deps.denylistPaths,
+          branchPrefix: deps.branchPrefix,
+          preflightCmd: deps.preflightCmd,
+        }
+      );
+    },
+  });
+}
+
 /* OAuth agent tools — minimal parameter + output specs. */
 
 const OAUTH_START_OUTPUT = {
@@ -380,6 +495,13 @@ interface BundleConfig {
   githubOAuthClientId?: string;
   defaultScopes?: string[];
   repoBinding?: Record<string, unknown>;
+  /**
+   * Local working directory where the repo is (or will be) cloned.
+   * Required for `engineer_run` to read AGENTS.md / README.md. The
+   * MCP server reads the same value from `GHOST_WORKING_DIR`; we
+   * fall back to that env var when `workingDir` is not provided.
+   */
+  workingDir?: string;
 }
 
 export function apply(
@@ -400,6 +522,10 @@ export function apply(
   const oauthClientId = config?.githubOAuthClientId ?? "";
   const repo = config?.repoBinding ?? {};
   const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
+  const workingDir =
+    config?.workingDir && config.workingDir.length > 0
+      ? config.workingDir
+      : process.env.GHOST_WORKING_DIR ?? "";
 
   // Construct auth services.
   const store = new TokenStore();
@@ -479,6 +605,28 @@ export function apply(
   ctx.effect(() => {
     return ctx.tools.register(makeOauthRevokeTool(flow));
   }, "github-engineer: oauth_revoke tool");
+
+  // 2.5. Register engineer_run (v0.5.0 bootstrap).
+  ctx.effect(() => {
+    const allowlist = Array.isArray(repo.allowlistPaths)
+      ? (repo.allowlistPaths as string[])
+      : [];
+    const denylist = Array.isArray(repo.denylistPaths)
+      ? (repo.denylistPaths as string[])
+      : [];
+    return ctx.tools.register(
+      makeEngineerRunTool({
+        workingDir,
+        repo,
+        allowlistPaths: allowlist,
+        denylistPaths: denylist,
+        branchPrefix: String(repo.branchPrefix ?? "content/"),
+        preflightCmd: String(
+          (repo.preflight as { cmd?: string } | undefined)?.cmd ?? "npm run validate"
+        ),
+      })
+    );
+  }, "github-engineer: engineer_run tool");
 
   // 3. Register loopback HTTP routes.
   ctx.effect(() => {

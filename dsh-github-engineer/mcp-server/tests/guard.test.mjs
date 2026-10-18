@@ -292,9 +292,16 @@ throws(
 console.log("\n--- redactTokens ---");
 
 eq(
+  // Two regexes fire in sequence:
+  //   1. /(authorization)\s*[:=]\s*[A-Za-z0-9._-]+/ matches
+  //      "Authorization: Bearer" (Bearer is itself a valid value
+  //      token) -> "[REDACTED]"
+  //   2. /gh[oprsu]_[A-Za-z0-9]{20,}/ then matches the leftover
+  //      "ghs_..." -> "[REDACTED]"
+  // Net result is two [REDACTED] markers. Both are unambiguous.
   guard.redactTokens("Authorization: Bearer ghs_abcdefghijklmnopqrstuvwxyz0123456789"),
-  "Authorization: Bearer [REDACTED]",
-  "Bearer redacted"
+  "[REDACTED] [REDACTED]",
+  "Authorization + Bearer both redacted"
 );
 eq(
   guard.redactTokens("token=gho_abc123def456ghi789jkl012mno345pqr is set"),
