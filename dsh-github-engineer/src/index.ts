@@ -39,6 +39,7 @@ import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-
 import { TokenStore } from "./auth/token-store.js";
 import { DeviceFlow } from "./auth/device-flow.js";
 import { makeRoutes, API } from "./routes.js";
+import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
 
 /** Where MCP server lives — exposed for tests / docs. */
 export const pathToConnect = mcpServerEntryPath(import.meta.url);
@@ -297,6 +298,11 @@ function makeEngineerRunTool(deps: {
   denylistPaths: string[];
   branchPrefix: string;
   preflightCmd: string;
+  /** Audit logger — every engineer_run writes one start event plus an
+   *  outcome event. The writer never throws. */
+  audit: import("./util/audit.js").AuditLogger;
+  /** Token-redacting logger — for any incidental log line. */
+  log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void };
 }) {
   return defineTool({
     name: "engineer_run",
@@ -337,27 +343,64 @@ function makeEngineerRunTool(deps: {
         branch_name?: string;
         draft?: boolean;
       };
-      // Lazy import to keep the bundle entry's import graph small.
-      const mod = await import("./agent/engineer-run.js");
-      return mod.engineerRun(
-        {
-          user_request: String(input.user_request ?? ""),
-          branch_name: input.branch_name,
-          draft: input.draft,
-        },
-        {
-          workingDir: deps.workingDir,
-          repo: {
-            owner: String(deps.repo.owner ?? ""),
-            name: String(deps.repo.name ?? ""),
-            baseBranch: String(deps.repo.baseBranch ?? "main"),
+      const userRequest = String(input.user_request ?? "");
+      const branch = input.branch_name ?? "";
+
+      // Audit: record the START before any work happens. We deliberately
+      // log only the byte length of user_request — its full text is
+      // potentially sensitive and we already redact it in the executor.
+      void deps.audit.record({
+        kind: "engineer_run_start",
+        repo: `${String(deps.repo.owner ?? "")}/${String(deps.repo.name ?? "")}`,
+        branch_name: branch,
+        user_request_bytes: userRequest.length,
+        draft: input.draft ?? false,
+      });
+
+      try {
+        // Lazy import to keep the bundle entry's import graph small.
+        const mod = await import("./agent/engineer-run.js");
+        const result = await mod.engineerRun(
+          {
+            user_request: userRequest,
+            branch_name: branch || undefined,
+            draft: input.draft,
           },
-          allowlistPaths: deps.allowlistPaths,
-          denylistPaths: deps.denylistPaths,
-          branchPrefix: deps.branchPrefix,
-          preflightCmd: deps.preflightCmd,
-        }
-      );
+          {
+            workingDir: deps.workingDir,
+            repo: {
+              owner: String(deps.repo.owner ?? ""),
+              name: String(deps.repo.name ?? ""),
+              baseBranch: String(deps.repo.baseBranch ?? "main"),
+            },
+            allowlistPaths: deps.allowlistPaths,
+            denylistPaths: deps.denylistPaths,
+            branchPrefix: deps.branchPrefix,
+            preflightCmd: deps.preflightCmd,
+          }
+        );
+        void deps.audit.record({
+          kind: "engineer_run_created",
+          branch_suggestion: result.branch_suggestion,
+          agents_md_present: result.agents_md_present,
+          readme_present: result.readme_present,
+        });
+        return result;
+      } catch (err) {
+        // Surface the error code (e.g. "user-request-contains-token",
+        // "user-request-too-long") so the agent can act on it. The
+        // raw message is already token-redacted by validateInput +
+        // assertNoTokens upstream, but we re-redact for safety.
+        const code = err instanceof Error && "code" in err
+          ? String((err as { code: unknown }).code)
+          : "unknown";
+        void deps.audit.record({
+          kind: "refused",
+          tool: "engineer_run",
+          code,
+        });
+        throw err;
+      }
     },
   });
 }
@@ -527,6 +570,14 @@ export function apply(
       ? config.workingDir
       : process.env.GHOST_WORKING_DIR ?? "";
 
+  // Construct audit + redacting loggers once, share across tools.
+  const audit = createAuditLogger({
+    file: auditPath(),
+    maxBytes: MAX_AUDIT_BYTES,
+    warn: (m) => ctx.logger.warn(m),
+  });
+  const log = createRedactingLogger(ctx.logger);
+
   // Construct auth services.
   const store = new TokenStore();
   const flow = new DeviceFlow({ store, clientId: oauthClientId, scopes });
@@ -624,6 +675,8 @@ export function apply(
         preflightCmd: String(
           (repo.preflight as { cmd?: string } | undefined)?.cmd ?? "npm run validate"
         ),
+        audit,
+        log,
       })
     );
   }, "github-engineer: engineer_run tool");
