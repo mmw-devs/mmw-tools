@@ -1,0 +1,99 @@
+name: CI
+
+# Everything here runs offline against the checked-in source. The two
+# suites that need a real subprocess (the MCP stdio handshake and the
+# git integration suite) are the reason this workflow exists: those
+# cannot run in every developer sandbox, so CI is where they get
+# exercised on every push.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is not decoration: path handling differs, and this
+        # repository's tooling has already tripped over backslashes once.
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            dsh-github-engineer/pnpm-lock.yaml
+            dsh-github-engineer/mcp-server/pnpm-lock.yaml
+
+      # The plugin and its MCP child are separate pnpm projects with
+      # separate lockfiles; there is no workspace file at the root.
+      - name: Install plugin dependencies
+        working-directory: dsh-github-engineer
+        run: pnpm install --frozen-lockfile
+
+      - name: Install MCP server dependencies
+        working-directory: dsh-github-engineer/mcp-server
+        run: pnpm install --frozen-lockfile
+
+      # Build before check: `check:namespace` asserts that
+      # lib/client.js exists and `check:pack` asserts the tarball
+      # contains the built artifacts.
+      - name: Build MCP server
+        working-directory: dsh-github-engineer/mcp-server
+        run: pnpm build
+
+      - name: Build host bundle and client bundle
+        working-directory: dsh-github-engineer
+        run: pnpm build:all
+
+      - name: Typecheck, namespace consistency, unit and integration suites, pack contents
+        working-directory: dsh-github-engineer
+        run: pnpm check
+
+      - name: MCP guard and schema suites
+        working-directory: dsh-github-engineer/mcp-server
+        run: pnpm test
+
+      - name: MCP server starts over stdio and advertises its tools
+        working-directory: dsh-github-engineer
+        run: pnpm test:smoke
+
+      - name: Real-git integration suite
+        working-directory: dsh-github-engineer
+        run: pnpm test:integration
+
+      # Keep the generated bundles reachable when a build-related test
+      # fails, so a red run can be diagnosed without a local rebuild.
+      - name: Upload built bundles
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.os }}
+          path: |
+            dsh-github-engineer/lib
+            dsh-github-engineer/mcp-server/dist
+          if-no-files-found: ignore
+          retention-days: 7

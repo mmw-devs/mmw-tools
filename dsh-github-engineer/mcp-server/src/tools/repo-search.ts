@@ -88,12 +88,15 @@ export async function repoSearch(
     "--extended-regexp",
     "--heading",
     "--break",
-    "-l", // simpler output mode for parsing (one file per match)
+    "-l", // file list only; per-file line matches are re-run below
   ];
+  // Order matters: `git grep [options] <pattern> [--] [<pathspec>...]`.
+  // The pattern must come before `--`, or the pathspec is read as the
+  // pattern and the pattern as a pathspec.
+  args.push(input.query);
   if (input.glob && input.glob.length > 0) {
     args.push("--", input.glob);
   }
-  args.push(input.query);
 
   let stdout = "";
   try {
@@ -140,8 +143,8 @@ export async function repoSearch(
           "--line-number",
           "--no-color",
           "--extended-regexp",
-          "--",
           input.query,
+          "--",
           file,
         ],
         { cwd: cfg.workingDir, timeout: 10_000 }

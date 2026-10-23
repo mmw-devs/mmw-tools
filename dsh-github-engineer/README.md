@@ -163,30 +163,39 @@ Status line shows the login, granted scopes, and the remaining lifetime of the a
 
 ## Tests
 
+Three layers, split by what they need in order to run rather than by what they
+cover. Full rationale in [`docs/TESTING.md`](docs/TESTING.md).
+
 ```sh
-pnpm check          # typecheck + namespace consistency + 177 assertions
-pnpm test           # token-store, client-bundle, bundle-apply, routes, engineer-run, audit
-cd mcp-server && pnpm test   # 44 guard + 11 schema assertions
+pnpm check                 # typecheck + namespace + 177 assertions + pack contents
+cd mcp-server && pnpm test # 44 guard + 11 schema assertions
+pnpm test:smoke            # MCP server handshake over real stdio
+pnpm test:integration      # the eight tool bodies against a real git repo
 ```
 
-| Suite | Assertions | Covers |
+| Suite | Asserts | Needs |
 |---|---|---|
-| `tests/token-store.test.mjs` | 25 | persistence, masking, clear |
-| `tests/client-bundle.test.mjs` | 16 | `__ModuleLoader__` shape of `lib/client.js` |
-| `tests/bundle-apply.test.mjs` | 36 | `apply()` registers 6 tools, 5 routes, 1 section; idempotence |
-| `tests/routes-integration.test.mjs` | 26 | real HTTP against the five loopback routes |
-| `tests/engineer-run.test.mjs` | 37 | input validation, branch slug, excerpts, redaction, truncation |
-| `tests/audit.test.mjs` | 29 | deep redaction, rotation, failure handling |
-| `mcp-server/tests/guard.test.mjs` | 44 | every cross-cutting guard |
-| `mcp-server/tests/tools-list-schema.test.mjs` | 11 | all eight tools registered |
+| `tests/token-store.test.mjs` | 25 · persistence, masking, clear | — |
+| `tests/client-bundle.test.mjs` | 16 · `__ModuleLoader__` shape of `lib/client.js` | — |
+| `tests/bundle-apply.test.mjs` | 36 · `apply()` registers 6 tools, 5 routes, 1 section; idempotence | — |
+| `tests/routes-integration.test.mjs` | 26 · real HTTP against the five loopback routes | — |
+| `tests/engineer-run.test.mjs` | 37 · input validation, branch slug, excerpts, redaction, truncation | — |
+| `tests/audit.test.mjs` | 29 · deep redaction, rotation, failure handling | — |
+| `mcp-server/tests/guard.test.mjs` | 44 · every cross-cutting guard | — |
+| `mcp-server/tests/tools-list-schema.test.mjs` | 11 · all eight tools registered | — |
+| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises 8 tools | `spawn` |
+| `tests/integration-git.test.mjs` | tool bodies against git, incl. `repo_edit` rollback | `git`, `spawn` |
 
-`pnpm test:smoke` spawns the MCP child over stdio; it is excluded from `pnpm check` because `child_process.spawn` is unavailable in some sandboxes.
+The last two need `child_process.spawn` with piped stdio. Where a sandbox denies
+that they print a `SKIP` naming what was not verified and exit `0` — CI runs both
+on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 
 ## Docs
 
 | Document | Contents |
 |---|---|
 | [`docs/OAUTH-FLOW.md`](docs/OAUTH-FLOW.md) | End-user OAuth walkthrough, error table, revocation |
+| [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
 | [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) | Who keeps `AGENTS.md` and the binding in step |
 | [`docs/INCREMENT-3-CHECKLIST.md`](docs/INCREMENT-3-CHECKLIST.md) | Per-tool hardening spec |
 | [`docs/INCREMENT-3-DESIGN.md`](docs/INCREMENT-3-DESIGN.md) | What the eight MCP tools actually do |
