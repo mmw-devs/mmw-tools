@@ -122,14 +122,15 @@ export async function assertSafeRepoPath(
         }
       } catch (e2) {
         if (e2 instanceof GithubRefusedError) throw e2;
-        if ((e2 as NodeJS.ErrnoException).code !== "ENOENT") throw e2;
-        // Parent doesn't exist — write target's directory is gone.
-        // Treat as a path safety issue rather than letting the tool
-        // proceed blindly.
-        throw new GithubRefusedError(
-          "path-parent-missing",
-          `parent directory of ${JSON.stringify(input)} does not exist`
-        );
+        // A missing parent is not a safety problem: the path cannot
+        // escape through a directory that does not exist. Let the caller
+        // proceed so its own error is the useful one — `repo_read`
+        // reports file-not-found, `repo_edit` fails its write and rolls
+        // back. Anything else (for example ENOTDIR) is a real refusal.
+        if ((e2 as NodeJS.ErrnoException).code === "ENOENT") {
+          return absolute;
+        }
+        throw e2;
       }
     } else {
       throw err;

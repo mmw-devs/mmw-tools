@@ -43,6 +43,15 @@ const ROOT = path.resolve(__dirname, "..");
 const TOOLS = path.join(ROOT, "mcp-server", "dist", "tools");
 const GUARD = path.join(ROOT, "mcp-server", "dist", "guard.js");
 
+// A CI runner has no global git identity, so `git commit` inside the
+// cloned fixture would fail with "Please tell me who you are". Setting
+// the identity through the environment covers the tools as well, since
+// they spawn git with this process's environment.
+process.env.GIT_AUTHOR_NAME ||= "dsh-github-engineer tests";
+process.env.GIT_AUTHOR_EMAIL ||= "ci@example.invalid";
+process.env.GIT_COMMITTER_NAME ||= "dsh-github-engineer tests";
+process.env.GIT_COMMITTER_EMAIL ||= "ci@example.invalid";
+
 /* ============================================================== */
 /*  Capability gate                                                */
 /* ============================================================== */
