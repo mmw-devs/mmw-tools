@@ -1,75 +1,88 @@
 # Next Steps
 
-## Current state (v0.4.0)
+Nothing is blocked. Everything below is deliberately out of scope for
+`v0.6.0`, not unfinished work.
 
-✅ Real MCP tools complete:
+## Shipped
 
-- `mcp-server/src/guard.ts` — cross-cutting hard guards (path safety,
-  allowlist/denylist, branch prefix, token redaction, preflight,
-  size limits). 44 unit tests in `tests/guard.test.mjs`.
-- 8 MCP tools in `mcp-server/src/tools/`:
-  `repo_status` / `repo_clone` / `repo_pull` / `repo_read` /
-  `repo_search` / `repo_edit` / `pr_create` / `pr_list`.
-- Each tool runs through every relevant guard before any I/O.
-- `mcp-server/src/index.ts` — dispatcher mapping `tools/list` +
-  `tools/call` JSON-RPC to the tools; refusal errors go through
-  `isError: true` with `[code] message` text.
-- 11 schema checks in `tests/tools-list-schema.test.mjs` (no spawn
-  needed; static source grep).
+| Version | Increment | What landed |
+|---|---|---|
+| 0.1.0 | skeleton | bundle + `cordis.patch.yml` + MCP probe + namespace check |
+| 0.2.0 | 1 | OAuth Device Flow, token store, five loopback routes |
+| 0.3.0 | 2 | Settings web panel (`__ModuleLoader__` client bundle) |
+| 0.4.0 | 3 | eight MCP tools + cross-cutting guards |
+| 0.5.0 | 4 | `engineer_run` bootstrap wrapper |
+| 0.6.0 | 5 | JSONL audit trail + redacting logger |
+| 0.6.0 | 6 | LICENSE, CHANGELOG, publishing docs, v0.6.0 tag |
 
-See [`docs/INCREMENT-3-CHECKLIST.md`](INCREMENT-3-CHECKLIST.md) for
-the per-tool hardening spec, and
-[`docs/INCREMENT-3-DESIGN.md`](INCREMENT-3-DESIGN.md) for what was
-actually built.
+## Deliberately absent
 
-### What v0.4.0 still doesn't do
+### `repo_edit` patch mode
 
-- No `engineer_run` wrapper: the agent can call MCP tools directly,
-  but no top-level wrapper drives AGENTS.md auto-load + LLM loop yet.
-- No audit rails: no session log entries, no token filter in the
-  bundle logger. The guards above prevent the *content* from leaking,
-  but the *act* of an MCP call isn't logged.
-- No rate limiting (deferred to v2).
-- `repo_edit` patch mode is not implemented (only `replace` + `insert`).
+The schema accepts `mode: "patch"` but the implementation refuses it
+with `patch-not-implemented-v1`. Supporting it means writing the diff
+to a temp file and running `git apply --3way`, then reconciling the
+result with the allowlist. `replace` and `insert` cover the
+`public/data.json` workflow the plugin was built for.
 
-## Upcoming increments
+### Rate limiting
 
-## 4. `engineer_run` wrapper
+A per-tool token bucket (e.g. 10 calls / 10 s / process) would stop a
+runaway agent loop. It is in-process only, so it cannot bound several
+DSH instances hitting the same repository. Deferred until there is a
+reason to expect that.
 
-- File: `src/agent/run-pipeline.ts`.
-- Reads `AGENTS.md` + `README.md` from `working_dir`, concatenates
-  into the system prompt the agent sees when this tool is called.
-- Drives the LLM in a loop until either `{ack}` or 30 steps.
-- At the end, calls `repo_pull --rebase`, then loops with
-  `repo_read` / `repo_search` / `repo_edit` / `pr_create`.
-- Spawns the MCP server as a child process from the host, passing
-  config via `GHOST_*` env vars (see `mcp-server/src/index.ts:config()`).
+### A merge tool
 
-## 5. Audit + safety rails
+Intentional. `ffxiv-race-ops` requires CI plus human review before
+`main`, and the whole point of the guard set is that the agent cannot
+skip that. Adding `pr_merge` would mean re-implementing the policy it
+is supposed to respect.
 
-- DSH session log entries per `engineer_run`: timestamp, login, PR
-  number, changed paths, pre-flight exit, LLM step count. **Never**
-  the PR body or commit message.
-- Token filter in the bundle's `src/util/logger.ts` (regex blacklist
-  reused from `mcp-server/src/guard.ts`).
-- Per-MCP-call audit hook in the bundle entry that records
-  tool name + ref-id + outcome into the DSH session log.
+### Multiple repositories
 
-## 6. Publish
+One binding per install. A second repository means a second install
+with its own `cordis.patch.yml`. A multi-repo binding would need a
+per-repository guard table, and the current `repoBinding` was shaped
+to be a single object on purpose.
 
-- README.md + CHANGELOG.md + LICENSE (MIT).
-- Tag `v0.4.0` once `engineer_run` lands against a real OAuth App.
-- PR to `awesome-dsh-plugin/awesome-dsh-plugin`.
-- (Optional) publish to npm as `dsh-github-engineer`.
+### GitHub App authentication
 
----
+`race-ops-bot`-style App credentials were explicitly out of scope:
+they existed to filter access on the old server-hosted deployment,
+and a plugin that runs on the user's own machine does not need them.
 
-## Out of scope for v1
+### Domain skills
 
-- Multiple repos
-- GitHub App mode (race-ops-bot-style)
-- Domain-specific skills (update-team / add-news / add-broadcaster)
-- Lark / Feishu IM bridge
-- Auto-merge tool (intentionally missing — CI + human review only)
-- Webhook receiver
-- GitHub Enterprise Server
+`update-team` / `add-news` / `add-broadcaster` from the old `.pi/`
+agent were also out of scope. The agent plus `AGENTS.md` plus the
+guarded tools cover those flows without shipping repository-specific
+code.
+
+### DSH session-log integration
+
+The audit trail writes its own JSONL file because there is no stable
+plugin-facing API for the DSH session log. If one appears, the events
+in `src/util/audit.ts` are already structured for it.
+
+### `git+https://` install
+
+`dsh plugin add git+…` does not run a build, and `lib/` plus
+`mcp-server/dist/` are gitignored. npm and `link:` installs work
+today. See [`PUBLISHING.md`](PUBLISHING.md) for the trade-off and the
+one-line change that enables git installs.
+
+## If you extend this
+
+1. Read the increment document for the area you are touching
+   (`INCREMENT-3-*` for MCP tools, `INCREMENT-4-*` for `engineer_run`,
+   `INCREMENT-5-DESIGN.md` for audit).
+2. Add the guard before the tool. Every tool in `mcp-server/src/tools/`
+   runs its guards before any I/O, and `guard.test.mjs` is the spec
+   for what those guards promise.
+3. Run `pnpm check` and `cd mcp-server && pnpm test`. Neither needs
+   network access.
+4. If you rename the plugin, edit `src/const.ts` first, then
+   `cordis.patch.yml`, both `package.json` files, and
+   `mcp-server/src/const.ts`, then run
+   `node scripts/check-namespace-consistency.mjs`.

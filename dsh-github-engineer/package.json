@@ -1,9 +1,18 @@
 {
   "name": "dsh-github-engineer",
-  "version": "0.2.0",
+  "version": "0.6.0",
   "private": true,
   "description": "DeepSeek Harness plugin: lets the DSH agent read AGENTS.md, edit a single configured repo under allowlist, run pre-flight, and open a draft PR on a content/* branch. OAuth Device Flow with the user's GitHub identity.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmw-devs/mmw-tools.git",
+    "directory": "dsh-github-engineer"
+  },
+  "homepage": "https://github.com/mmw-devs/mmw-tools/tree/main/dsh-github-engineer#readme",
+  "bugs": {
+    "url": "https://github.com/mmw-devs/mmw-tools/issues"
+  },
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -38,7 +47,9 @@
     "test": "node tests/token-store.test.mjs && node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/engineer-run.test.mjs && node tests/audit.test.mjs",
     "test:smoke": "node tests/smoke.mjs",
     "check:namespace": "node scripts/check-namespace-consistency.mjs",
-    "check": "pnpm typecheck && pnpm check:namespace && pnpm test"
+    "check:pack": "node scripts/check-pack-contents.mjs",
+    "check": "pnpm typecheck && pnpm check:namespace && pnpm test && pnpm check:pack",
+    "prepublishOnly": "pnpm build:all"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -70,6 +81,7 @@
     "scripts",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
@@ -78,7 +90,10 @@
     "deepseek-harness",
     "github",
     "mcp",
-    "octokit"
+    "model-context-protocol",
+    "oauth-device-flow",
+    "pull-request",
+    "agents-md"
   ],
   "license": "MIT"
 }
