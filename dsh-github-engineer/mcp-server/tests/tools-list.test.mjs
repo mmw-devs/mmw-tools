@@ -12,6 +12,11 @@
  * Requires `child_process.spawn` with piped stdio. Where the sandbox
  * denies that with EPERM, the suite prints SKIP and exits 0; it runs
  * for real in CI and in an ordinary terminal.
+ *
+ * The handshake polls for each response instead of waiting a fixed
+ * time or closing stdin: closing stdin can shut the transport down
+ * before the reply is flushed, and a fixed sleep is a race on a loaded
+ * runner.
  */
 
 import { spawn } from "node:child_process";
@@ -32,20 +37,7 @@ const EXPECTED = [
   "repo_status",
 ];
 
-const REQUESTS = [
-  {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "2025-03-26",
-      capabilities: {},
-      clientInfo: { name: "tools-list-test", version: "0" },
-    },
-  },
-  { jsonrpc: "2.0", method: "notifications/initialized" },
-  { jsonrpc: "2.0", id: 2, method: "tools/list" },
-];
+const RESPONSE_TIMEOUT_MS = 10_000;
 
 function skip(reason) {
   console.log("");
@@ -59,58 +51,106 @@ let child;
 try {
   child = spawn(process.execPath, [ENTRY], {
     // stdin must be piped: the handshake is written to the child.
-    stdio: ["pipe", "pipe", "inherit"],
-    env: { ...process.env },
+    stdio: ["pipe", "pipe", "pipe"],
   });
 } catch (err) {
   if (err?.code === "EPERM") skip("child_process.spawn denied (EPERM) in this sandbox");
   throw err;
 }
 
-let stderrSeen = "";
-child.stderr?.on("data", (b) => (stderrSeen += b.toString("utf8")));
+let out = "";
+let errOut = "";
 
-// A spawn that fails asynchronously (rather than throwing) surfaces here.
-child.on("error", (err) => {
-  if (err?.code === "EPERM") skip("child_process.spawn denied (EPERM) in this sandbox");
-  console.error(`  FAIL  spawn error: ${err?.message}`);
-  process.exit(1);
+child.stdout.on("data", (b) => {
+  out += b.toString("utf8");
+});
+child.stderr.on("data", (b) => {
+  errOut += b.toString("utf8");
 });
 
-let out = "";
-child.stdout.on("data", (b) => (out += b.toString("utf8")));
+const spawnError = new Promise((_resolve, reject) => {
+  child.on("error", (err) => {
+    if (err?.code === "EPERM") skip("child_process.spawn denied (EPERM) in this sandbox");
+    reject(err);
+  });
+});
 
-for (const request of REQUESTS) {
-  child.stdin.write(JSON.stringify(request) + "\n");
+function parsedResponses() {
+  return out
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }
-// Close stdin so the server sees end-of-input if it ever waits for it.
-child.stdin.end();
 
-const timeout = setTimeout(() => {
-  console.error("  FAIL  the MCP server did not answer tools/list within 5s");
-  if (stderrSeen) console.error(`        stderr: ${stderrSeen.slice(0, 400)}`);
+function waitForResponse(id) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const found = parsedResponses().find((r) => r.id === id);
+      if (found) {
+        clearInterval(timer);
+        resolve(found);
+        return;
+      }
+      if (Date.now() - started > RESPONSE_TIMEOUT_MS) {
+        clearInterval(timer);
+        reject(
+          new Error(
+            `timed out after ${RESPONSE_TIMEOUT_MS}ms waiting for response id=${id}` +
+              (errOut ? `; stderr: ${errOut.slice(0, 300)}` : "")
+          )
+        );
+      }
+    }, 50);
+    timer.unref?.();
+  });
+}
+
+let init;
+let toolsResp;
+let failure = null;
+
+try {
+  await Promise.race([
+    (async () => {
+      for (const request of [
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "tools-list-test", version: "0" },
+          },
+        },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      ]) {
+        child.stdin.write(JSON.stringify(request) + "\n");
+      }
+      init = await waitForResponse(1);
+      toolsResp = await waitForResponse(2);
+    })(),
+    spawnError,
+  ]);
+} catch (err) {
+  failure = err;
+} finally {
   child.kill();
+}
+
+if (failure) {
+  console.error(`  FAIL  ${failure.message}`);
   process.exit(1);
-}, 5000);
-timeout.unref?.();
-
-await new Promise((resolve) => child.on("close", resolve));
-clearTimeout(timeout);
-
-const responses = out
-  .split("\n")
-  .filter((line) => line.trim().startsWith("{"))
-  .map((line) => {
-    try {
-      return JSON.parse(line);
-    } catch {
-      return null;
-    }
-  })
-  .filter(Boolean);
-
-const init = responses.find((r) => r.id === 1);
-const toolsResp = responses.find((r) => r.id === 2);
+}
 
 let fail = 0;
 function check(condition, label, detail) {
@@ -128,7 +168,7 @@ check(
   "serverInfo.name is dsh-github-engineer",
   init?.result?.serverInfo?.name
 );
-check(Boolean(toolsResp), "tools/list responded", stderrSeen.slice(0, 200));
+check(Boolean(toolsResp), "tools/list responded");
 
 const tools = toolsResp?.result?.tools ?? [];
 check(Array.isArray(tools), "result.tools is an array");
