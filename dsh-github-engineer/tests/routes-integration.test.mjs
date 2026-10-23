@@ -258,12 +258,13 @@ console.log("\n--- Test 5: routes map shape ---");
 }
 
 server.close();
+// Free sockets deterministically, then exit. `server.close()` alone only
+// stops accepting new connections; it waits for existing ones to drain,
+// and a lingering socket keeps the event loop — and therefore the suite —
+// alive. That is what hung this step on the Linux CI runner. `agent:
+// false` on the requests already avoids pooling; this is the belt to that
+// braces.
+server.closeAllConnections?.();
 
 console.log(`\n${pass} pass, ${fail} fail`);
-
-// Every request above used `agent: false`, so no keep-alive socket is
-// left behind and the process exits on its own once the server is
-// closed. An explicit process.exit here would tear down a still-open
-// event loop, which on Windows can trip a libuv assertion instead of
-// exiting cleanly.
-process.exitCode = fail > 0 ? 1 : 0;
+process.exit(fail > 0 ? 1 : 0);

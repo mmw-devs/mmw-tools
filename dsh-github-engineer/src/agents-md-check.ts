@@ -13,6 +13,10 @@
  * committing to an AGENTS.md schema. v2 will introduce a separate
  * machine-readable `.dsh-github-engineer.yaml` instead.
  */
+
+/** Deadline for the AGENTS.md fetch performed at bundle apply. */
+const AGENTS_MD_TIMEOUT_MS = 10_000;
+
 export interface RepoBindingLike {
   owner: string;
   name: string;
@@ -109,7 +113,11 @@ export async function fetchAgentsMd(
   if (token) headers.Authorization = `Bearer ${token}`;
 
   try {
-    const res = await fetch(url, { headers });
+    // Deadline-bound. This runs at bundle apply, and `fetch` has no
+    // default timeout: an unreachable api.github.com would leave the
+    // drift check pending forever, which holds the process open and
+    // silently leaves `engineer_status` reporting "未检查".
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(AGENTS_MD_TIMEOUT_MS) });
     if (!res.ok) return null;
     const data = (await res.json()) as { content?: string; encoding?: string };
     if (!data.content || data.encoding !== "base64") return null;
