@@ -125,10 +125,15 @@ export async function repoSearch(
   }
 
   const hits: RepoSearchHit[] = [];
-  for (const line of stdout.split("\n")) {
+  for (const rawLine of stdout.split("\n")) {
+    // A Windows checkout with core.autocrlf leaves CRLF in the working
+    // tree, and `git grep` echoes the matched line as-is, so every
+    // output line then ends with "\r". JavaScript's "." does not match
+    // "\r" and "$" does not sit before it, so leaving it in place made
+    // every hit fail the regex and vanish — the suite saw zero matches
+    // on Git for Windows while the same query matched on Linux.
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.length === 0) continue;
-    // `path:line:text`; the path may itself contain colons on Windows
-    // drive letters, so anchor the line number from the right.
     const match = line.match(/^(.*?):(\d+):(.*)$/);
     if (!match) continue;
     const [, filePath, lineNo, snippet] = match;
