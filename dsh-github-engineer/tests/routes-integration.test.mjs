@@ -103,6 +103,9 @@ function request(opts) {
       {
         method: opts.method || "GET",
         headers: opts.headers || {},
+        // No keep-alive: a pooled socket would outlive the test and
+        // leave the event loop open after the assertions finish.
+        agent: false,
       },
       (res) => {
         let body = "";
@@ -202,6 +205,7 @@ console.log("\n--- Test 4: malformed JSON body on /oauth/finish ---");
       {
         method: "POST",
         headers: { "content-type": "application/json" },
+        agent: false,
       },
       (res) => {
         let body = "";
@@ -236,8 +240,9 @@ server.close();
 
 console.log(`\n${pass} pass, ${fail} fail`);
 
-// Exit explicitly. `server.close()` stops accepting connections but does
-// not end the keep-alive sockets the client left behind (Node 19+ enables
-// keep-alive on the global agent by default), so the event loop can stay
-// alive after the last assertion and hang the suite in CI.
-process.exit(fail > 0 ? 1 : 0);
+// Every request above used `agent: false`, so no keep-alive socket is
+// left behind and the process exits on its own once the server is
+// closed. An explicit process.exit here would tear down a still-open
+// event loop, which on Windows can trip a libuv assertion instead of
+// exiting cleanly.
+process.exitCode = fail > 0 ? 1 : 0;

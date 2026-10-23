@@ -1,21 +1,29 @@
 /**
  * dsh-github-engineer MCP server — repo_search tool.
  *
- * Searches the cloned working copy using `git grep`. Returns line
- * hits as (path, line, snippet) triples.
+ * One `git grep` pass. The output of `-n -e <pattern> [-- <pathspec>]`
+ * is already `path:line:text`, which is the shape this tool returns, so
+ * there is no reason to list files first and grep them again.
  *
- * Per docs/INCREMENT-3-CHECKLIST.md:
- *   - query cannot start with `!` or contain `--` or `\0` (git option
- *     injection prevention).
- *   - glob is a path-safety-safe pattern.
- *   - max_results default 50, hard cap 200.
- *   - snippet content passed through redactTokens before returning.
+ * An earlier version did exactly that: a `-l --heading --break` pass to
+ * collect filenames, then a per-file pass for line matches. Two things
+ * were wrong with it. The listing pass's output is human-oriented and
+ * does not parse reliably across git builds (it produced nothing usable
+ * on Git for Windows), and the per-file pass was wrapped in a bare
+ * `catch {}`, so every failure became "zero hits" instead of an error.
+ * A single pass removes both problems.
+ *
+ * Guards, per docs/INCREMENT-3-CHECKLIST.md:
+ *   - the query cannot start with `!` or contain `--` or a NUL byte
+ *     (argument-injection prevention)
+ *   - the glob cannot contain `..`
+ *   - results are capped
+ *   - snippets pass through redactTokens
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import {
-  assertSafeRepoPath,
   redactTokens,
   GithubRefusedError,
   LIMITS,
@@ -62,18 +70,13 @@ export async function repoSearch(
     }
   }
 
-  // If a glob is given, validate it as a safe path.
   if (typeof input.glob === "string" && input.glob.length > 0) {
-    // Path traversal in globs can target parent dirs.
     if (input.glob.includes("..")) {
       throw new GithubRefusedError(
         "glob-traversal",
         `glob must not contain '..' segments: ${input.glob}`
       );
     }
-    // We don't pass this through assertSafeRepoPath because git grep
-    // treats -- as an option separator — calling the guard would 404.
-    // The 'no `..`' rule above is sufficient.
   }
 
   let maxResults: number = LIMITS.SEARCH_RESULTS_DEFAULT;
@@ -81,19 +84,18 @@ export async function repoSearch(
     maxResults = Math.min(input.max_results, LIMITS.SEARCH_RESULTS_HARD_CAP);
   }
 
+  // `-I` skips binary files. `-e` separates the pattern from any
+  // pathspec, so the ordering that `git grep` is picky about cannot be
+  // got wrong here.
   const args = [
     "grep",
     "--line-number",
     "--no-color",
     "--extended-regexp",
-    "--heading",
-    "--break",
-    "-l", // file list only; per-file line matches are re-run below
+    "-I",
+    "-e",
+    input.query,
   ];
-  // Order matters: `git grep [options] <pattern> [--] [<pathspec>...]`.
-  // The pattern must come before `--`, or the pathspec is read as the
-  // pattern and the pattern as a pathspec.
-  args.push(input.query);
   if (input.glob && input.glob.length > 0) {
     args.push("--", input.glob);
   }
@@ -103,7 +105,7 @@ export async function repoSearch(
     const result = await execFileAsync("git", args, {
       cwd: cfg.workingDir,
       timeout: 30_000,
-      maxBuffer: 1024 * 1024,
+      maxBuffer: 4 * 1024 * 1024,
     });
     stdout = result.stdout;
   } catch (err) {
@@ -112,7 +114,7 @@ export async function repoSearch(
       stderr?: string;
       code?: string | number;
     };
-    // git grep exits 1 when no matches are found — that's not an error.
+    // Exit 1 with no output is "no matches", not a failure.
     if (String(e.code) === "1" && (e.stdout ?? "").length === 0) {
       return { hits: [], truncated: false };
     }
@@ -122,53 +124,21 @@ export async function repoSearch(
     );
   }
 
-  // `git grep -l` outputs one file path per line; we need to re-run with
-  // a different mode if we want line numbers. Switch to per-file paths
-  // mode, then re-run a per-file grep. To keep things simple for v1,
-  // we run grep twice: once with -l for the file list, then per file.
-  // Better: use `--files-with-matches` for the file set, then per-file
-  // grep with -n. v1 keeps it cheap: just emit file-level hits.
-  const files = stdout
-    .split("\n")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
   const hits: RepoSearchHit[] = [];
-  for (const file of files) {
+  for (const line of stdout.split("\n")) {
+    if (line.length === 0) continue;
+    // `path:line:text`; the path may itself contain colons on Windows
+    // drive letters, so anchor the line number from the right.
+    const match = line.match(/^(.*?):(\d+):(.*)$/);
+    if (!match) continue;
+    const [, filePath, lineNo, snippet] = match;
+    hits.push({
+      path: filePath,
+      line: Number(lineNo),
+      snippet: redactTokens(snippet),
+    });
     if (hits.length >= maxResults) break;
-    try {
-      const result = await execFileAsync(
-        "git",
-        [
-          "grep",
-          "--line-number",
-          "--no-color",
-          "--extended-regexp",
-          input.query,
-          "--",
-          file,
-        ],
-        { cwd: cfg.workingDir, timeout: 10_000 }
-      );
-      for (const line of result.stdout.split("\n")) {
-        if (line.trim().length === 0) continue;
-        // git grep output: `path:lineno:matched_text`
-        const match = line.match(/^(.+?):(\d+):(.*)$/);
-        if (!match) continue;
-        const [, p, ln, snippet] = match;
-        hits.push({
-          path: p,
-          line: Number(ln),
-          snippet: redactTokens(snippet),
-        });
-        if (hits.length >= maxResults) break;
-      }
-    } catch {
-      // Skip files where grep errors — typically binary files.
-    }
   }
 
-  return {
-    hits,
-    truncated: hits.length >= maxResults,
-  };
+  return { hits, truncated: hits.length >= maxResults };
 }
