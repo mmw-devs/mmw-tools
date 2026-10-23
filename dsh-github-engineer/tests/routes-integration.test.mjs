@@ -28,7 +28,7 @@ if (!existsSync(BUNDLE_DIST) || !existsSync(MCP_DIST)) {
   process.exit(2);
 }
 
-const { apply, makeRoutes, API, TokenStore, DeviceFlow } = await import(
+const { apply, makeRoutes, API, TokenStore } = await import(
   pathToFileURL(BUNDLE_DIST).href
 );
 
@@ -64,11 +64,41 @@ apply(ctx, {
 });
 
 const store = new TokenStore();
-const flow = new DeviceFlow({
-  store,
-  clientId: "Ov23liakpz9LHG1E0dE5",
-  scopes: ["repo", "workflow", "offline_access"],
-});
+
+// A fake device flow. `pnpm check` must not depend on the network: the
+// real DeviceFlow.begin() posts to github.com, and a suite that reaches
+// out could hang (it did — an unanswered fetch has no default timeout)
+// or fail for reasons unrelated to this plugin. The route contract is
+// what this suite tests; the flow's HTTP behaviour is covered by the
+// timeout added in src/auth/device-flow.ts, which cannot be exercised
+// offline either way.
+let nextFlowState = "no_token";
+const fakeFlow = {
+  status: () => nextFlowState,
+  async begin() {
+    nextFlowState = "device_pending";
+    return {
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+      expiresAt: Date.now() + 900_000,
+      interval: 5,
+    };
+  },
+  async poll() {
+    return { ok: false, message: "authorization_pending" };
+  },
+  async refresh() {
+    return { ok: false, message: "no refresh_token in this fixture" };
+  },
+  async ensureFresh() {
+    return false;
+  },
+  async clearAll() {
+    nextFlowState = "no_token";
+  },
+};
+
+const flow = fakeFlow;
 
 const server = http.createServer(async (req, res) => {
   // Manually re-implement the loopback guard so the test exercises the
@@ -168,26 +198,17 @@ console.log("\n--- Test 3: POST /oauth/start ---");
 
 {
   const r = await request({ method: "POST", path: API.oauthStart, body: {} });
-  // The bundle's oauth_start makes a real network call to GitHub.
-  // In this test environment without network OR with a fake client_id,
-  // we expect either:
-  //   (a) a 200 response with ok:false and a real-looking error, OR
-  //   (b) the route handler itself catches the network error.
-  // Either way, the route MUST respond with JSON, not 500/empty.
   truthy(r.headers["content-type"]?.includes("application/json"), "content-type is JSON");
-  eq(r.status, 200, "status code (we wrap errors in 200 + ok:false)");
+  eq(r.status, 200, "status code");
   const data = JSON.parse(r.body);
-  truthy("ok" in data, "ok field present");
-  // If GitHub accepted our request (unlikely without network), we get
-  // user_code/verification_uri. Otherwise we get ok:false + error.
-  if (data.ok) {
-    truthy(typeof data.userCode === "string" && data.userCode.length > 0,
-      "userCode present on success");
-    truthy(data.verificationUri?.includes("github.com/login/device"),
-      "verificationUri is GitHub Device URL");
-  } else {
-    truthy(typeof data.error === "string", "error string present on failure");
-  }
+  eq(data.ok, true, "ok is true");
+  truthy(typeof data.userCode === "string" && data.userCode.length > 0, "userCode returned");
+  truthy(
+    data.verificationUri?.includes("github.com/login/device"),
+    "verificationUri is the Device URL"
+  );
+  truthy(typeof data.expiresAt === "number", "expiresAt returned");
+  truthy(typeof data.interval === "number", "interval returned");
 }
 
 /* ============================================================== */

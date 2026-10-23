@@ -25,6 +25,40 @@ import { TokenStore, type StoredTokens } from "./token-store.js";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 
+/**
+ * How long a single request to GitHub may take.
+ *
+ * `fetch` has no default timeout. Without one, an unreachable GitHub
+ * leaves `engineer_oauth_start` pending forever — the agent's tool call
+ * never returns and the user sees a spinner with no error. Fifteen
+ * seconds is well past a normal round trip and well short of a person's
+ * patience.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * `fetch` with a deadline. Turns a timeout into an error a user can act
+ * on instead of a request that never settles.
+ */
+async function fetchWithDeadline(
+  url: string,
+  init: RequestInit,
+  label = "request"
+): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error(
+        `GitHub ${label} 请求超时（${REQUEST_TIMEOUT_MS / 1000}s）：请检查网络或代理后重试。`
+      );
+    }
+    throw new Error(
+      `GitHub ${label} 请求失败：${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
 /** What the plugin holds while waiting for the user. */
 export interface PendingFlow {
   deviceCode: string;
@@ -102,14 +136,20 @@ function describeError(body: AccessTokenResponse): string {
  */
 async function fetchLogin(accessToken: string): Promise<string> {
   try {
-    const r = await fetch("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "dsh-github-engineer",
-        "X-GitHub-Api-Version": "2022-11-28",
+    // Also deadline-bound: this runs inside the token-exchange path, so
+    // a hung /user call would hold the whole `engineer_oauth_finish`.
+    const r = await fetchWithDeadline(
+      "https://api.github.com/user",
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "dsh-github-engineer",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
       },
-    });
+      "user"
+    );
     if (!r.ok) return "";
     const data = (await r.json()) as { login?: string };
     return typeof data.login === "string" ? data.login : "";
@@ -162,7 +202,7 @@ export class DeviceFlow {
       );
     }
 
-    const r = await fetch(DEVICE_CODE_URL, {
+    const r = await fetchWithDeadline(DEVICE_CODE_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -214,7 +254,7 @@ export class DeviceFlow {
       return { ok: false, message: "没有待完成的授权流程：请先发起登录授权。" };
     }
 
-    const r = await fetch(ACCESS_TOKEN_URL, {
+    const r = await fetchWithDeadline(ACCESS_TOKEN_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -275,7 +315,7 @@ export class DeviceFlow {
       return { ok: false, message: "没有 refresh_token：请重新发起登录授权（需要 scope 含 offline_access）。" };
     }
 
-    const r = await fetch(ACCESS_TOKEN_URL, {
+    const r = await fetchWithDeadline(ACCESS_TOKEN_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
