@@ -88,8 +88,14 @@ export function assertInsideRepo(
     throw new Error(`${fieldName} must be relative, got ${input}`);
   }
   const absolute = path.resolve(repoRoot, input);
-  const root = repoRoot.endsWith(path.sep) ? repoRoot : repoRoot + path.sep;
-  if (!absolute.startsWith(root) && absolute !== repoRoot) {
+  // `path.relative` instead of a prefix comparison: on Windows it is
+  // case-insensitive and separator-normalizing, so a short-form root
+  // (`C:\Users\RUNNER~1\...`) does not falsely reject a long-form child.
+  // Same reasoning as guard.ts::isInsideRoot.
+  const rel = path.relative(repoRoot, absolute);
+  const inside =
+    rel === "" || (!rel.startsWith(".." + path.sep) && rel !== ".." && !path.isAbsolute(rel));
+  if (!inside) {
     throw new Error(
       `${fieldName} resolves to ${absolute} which is outside ${repoRoot}`
     );

@@ -12,9 +12,11 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { statfs } from "node:fs/promises";
+
+import { GithubRefusedError } from "../guard.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,39 +37,40 @@ export interface RepoCloneConfig {
   githubToken: string | null;
 }
 
-export class RepoCloneError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "RepoCloneError";
-    this.code = code;
-  }
-}
-
 const MIN_FREE_BYTES = 100 * 1024 * 1024;
 
 export async function repoClone(
   input: RepoCloneInput,
   cfg: RepoCloneConfig
 ): Promise<RepoCloneOutput> {
-  if (existsSync(path.join(cfg.workingDir, ".git")) && input.force !== true) {
-    throw new RepoCloneError(
+  const alreadyInitialized = existsSync(path.join(cfg.workingDir, ".git"));
+
+  if (alreadyInitialized && input.force !== true) {
+    throw new GithubRefusedError(
       "already-initialized",
       `working_dir ${cfg.workingDir} already has a .git directory. Pass force=true to re-clone (will wipe existing contents)`
     );
+  }
+
+  if (alreadyInitialized && input.force === true) {
+    // `git clone` refuses to write into a non-empty directory, so force
+    // has to mean what it says: remove the old checkout first.
+    rmSync(cfg.workingDir, { recursive: true, force: true });
   }
 
   // Disk space check
   try {
     const fs = await statfs(cfg.workingDir);
     if (fs.bavail * fs.bsize < MIN_FREE_BYTES) {
-      throw new RepoCloneError(
+      throw new GithubRefusedError(
         "disk-space-low",
         `working_dir has < ${MIN_FREE_BYTES} bytes free`
       );
     }
-  } catch {
-    // statfs can fail on some Windows configurations. Don't block.
+  } catch (err) {
+    // statfs can fail on some Windows configurations. Don't block. But a
+    // disk-space refusal above must not be swallowed.
+    if (err instanceof GithubRefusedError) throw err;
   }
 
   mkdirSync(cfg.workingDir, { recursive: true });
@@ -98,7 +101,7 @@ export async function repoClone(
       stderr?: string;
       code?: string | number;
     };
-    throw new RepoCloneError(
+    throw new GithubRefusedError(
       "clone-failed",
       `git clone failed: ${e.stderr ?? e.message ?? String(e)}`
     );

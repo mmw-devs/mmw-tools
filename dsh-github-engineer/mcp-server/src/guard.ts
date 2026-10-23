@@ -37,6 +37,22 @@ export class GithubRefusedError extends Error {
 /* ============================================================== */
 
 /**
+ * True when `target` is `root` itself or lives beneath it.
+ *
+ * Uses `path.relative` rather than a prefix comparison: on Windows it
+ * compares case-insensitively and normalizes separators, so a short-form
+ * root (`C:\Users\RUNNER~1\...`) and a long-form target
+ * (`C:\Users\runneradmin\...`) that name the same directory are not
+ * mistaken for an escape. `path.relative` returns "" for the root, a
+ * plain relative path for a child, and something starting with ".." (or
+ * an absolute path, across drives) otherwise.
+ */
+function isInsideRoot(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith(".." + path.sep) && rel !== ".." && !path.isAbsolute(rel));
+}
+
+/**
  * Normalize and validate that `input` stays inside `repoRoot`.
  * Rejects:
  *   - absolute paths
@@ -64,8 +80,7 @@ export async function assertSafeRepoPath(
 
   // Normalize via path.resolve, then verify it's inside repoRoot.
   const absolute = path.resolve(repoRoot, input);
-  const root = repoRoot.endsWith(path.sep) ? repoRoot : repoRoot + path.sep;
-  if (!absolute.startsWith(root) && absolute !== repoRoot) {
+  if (!isInsideRoot(repoRoot, absolute)) {
     throw new GithubRefusedError(
       "path-traversal",
       `path ${JSON.stringify(input)} resolves to ${absolute} which is outside repo root`
@@ -75,15 +90,24 @@ export async function assertSafeRepoPath(
   // Symlink check: if the resolved path itself exists, ensure realpath
   // stays inside the root. We allow non-existent paths (write targets)
   // and skip the check on those.
+  //
+  // Both sides are canonicalized before comparing. On Windows the root
+  // this function is handed often comes from `os.tmpdir()`, which can be
+  // the 8.3 short form (`C:\Users\RUNNER~1\...`) while `realpath()`
+  // returns the long form (`C:\Users\runneradmin\...`). A plain
+  // `startsWith` then reports every legitimate path as an escape, which
+  // is exactly what happened on the Windows CI runner.
   try {
     const real = await realpath(absolute);
-    if (!real.startsWith(root) && real !== repoRoot) {
+    const realRoot = await realpath(repoRoot).catch(() => repoRoot);
+    if (!isInsideRoot(realRoot, real)) {
       throw new GithubRefusedError(
         "path-symlink-escape",
         `path ${JSON.stringify(input)} is a symlink escaping repo root: ${real}`
       );
     }
   } catch (err) {
+    if (err instanceof GithubRefusedError) throw err;
     // realpath throws ENOENT for paths that don't exist yet (e.g. write
     // targets). For those, fall back to stat on the parent directory.
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -97,6 +121,7 @@ export async function assertSafeRepoPath(
           );
         }
       } catch (e2) {
+        if (e2 instanceof GithubRefusedError) throw e2;
         if ((e2 as NodeJS.ErrnoException).code !== "ENOENT") throw e2;
         // Parent doesn't exist — write target's directory is gone.
         // Treat as a path safety issue rather than letting the tool
