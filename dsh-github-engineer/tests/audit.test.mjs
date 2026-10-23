@@ -157,11 +157,29 @@ console.log("\n--- createAuditLogger: rotation ---");
   rmSync(tmp, { recursive: true, force: true });
 }
 
+/**
+ * Build a path that cannot be written on any platform.
+ *
+ * An absolute path like `/nope/cannot/create` is not portable as a
+ * "failure" fixture: on Windows it resolves to `C:\nope\cannot\create`,
+ * and a GitHub Windows runner runs with enough privilege to create it,
+ * so the write succeeds and no warning is emitted. Occupying the
+ * parent slot with a regular file instead makes `mkdir` fail with
+ * ENOTDIR/EEXIST everywhere, including as root.
+ */
+function unwritablePath() {
+  const tmp = mkdtempSync(path.join(tmpdir(), "dsh-audit-blocked-"));
+  const blocker = path.join(tmp, "blocker");
+  writeFileSync(blocker, "not a directory");
+  return { file: path.join(blocker, "nested", "audit.jsonl"), cleanup: () => rmSync(tmp, { recursive: true, force: true }) };
+}
+
 console.log("\n--- createAuditLogger: write failures do not throw ---");
 
 {
+  const blocked = unwritablePath();
   const log = createAuditLogger({
-    file: "/this/path/does/not/exist/and/parent/cannot/be/created",
+    file: blocked.file,
     maxBytes: 1024,
     warn: () => {},
   });
@@ -172,14 +190,16 @@ console.log("\n--- createAuditLogger: write failures do not throw ---");
     caught = err;
   }
   eq(caught, null, "record() never throws");
+  blocked.cleanup();
 }
 
 console.log("\n--- createAuditLogger: warn fires only once ---");
 
 {
+  const blocked = unwritablePath();
   const captured = [];
   const log = createAuditLogger({
-    file: "/nope/cannot/create",
+    file: blocked.file,
     maxBytes: 1024,
     warn: (m) => captured.push(m),
   });
@@ -187,11 +207,15 @@ console.log("\n--- createAuditLogger: warn fires only once ---");
   await log.record({ kind: "b" });
   await log.record({ kind: "c" });
   eq(captured.length, 1, "warn fires once on repeated failures");
-  truthy(captured[0].includes("audit write failed"), "warn includes diagnostic");
   truthy(
-    captured[0].includes("further audit failures are silent"),
+    (captured[0] ?? "").includes("audit write failed"),
+    "warn includes diagnostic"
+  );
+  truthy(
+    (captured[0] ?? "").includes("further audit failures are silent"),
     "warn mentions the once-only behavior"
   );
+  blocked.cleanup();
 }
 
 /* ============================================================== */

@@ -302,4 +302,11 @@ console.log("\n--- Test 6: MCP spawn + tools re-publish ---");
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
-if (fail > 0) process.exit(1);
+
+// Exit explicitly. Test 6 calls apply(), which spawns the MCP server as
+// a real child process; that child's stdio pipes keep Node's event loop
+// alive, and the bundle's bridge effect installs its own disposer inside
+// an async IIFE that this test cannot reach. Without an explicit exit
+// the suite prints its results and then hangs — which is exactly what
+// happened on the first CI run.
+process.exit(fail > 0 ? 1 : 0);

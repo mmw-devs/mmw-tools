@@ -235,4 +235,9 @@ console.log("\n--- Test 5: routes map shape ---");
 server.close();
 
 console.log(`\n${pass} pass, ${fail} fail`);
-if (fail > 0) process.exit(1);
+
+// Exit explicitly. `server.close()` stops accepting connections but does
+// not end the keep-alive sockets the client left behind (Node 19+ enables
+// keep-alive on the global agent by default), so the event loop can stay
+// alive after the last assertion and hang the suite in CI.
+process.exit(fail > 0 ? 1 : 0);
