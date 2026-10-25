@@ -667,9 +667,12 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
   eq(second.bootstrap.ran, false, "bootstrap is skipped once node_modules exists");
   eq(countRuns(), afterFirst, "bootstrap command ran exactly once across both edits");
 
+  // whenMissing points at a path that never exists, because the earlier
+  // success already created node_modules — using node_modules here would
+  // skip the bootstrap and the edit would legitimately succeed.
   const badBoot = {
     ...gated,
-    bootstrap: { cmd: "node scripts/always-fail.js", whenMissing: "node_modules", timeoutSeconds: 60 },
+    bootstrap: { cmd: "node scripts/always-fail.js", whenMissing: "deps-never-installed", timeoutSeconds: 60 },
   };
   await refuses(
     () =>
