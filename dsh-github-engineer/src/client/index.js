@@ -411,14 +411,18 @@ function apply(ctx, opts) {
     ctx.slots.inject("settings.section", () =>
       ctx.slots.register(
         {
-          id: "github-engineer",
           name: "settings.section",
+          id: "github-engineer",
           order: 240,
           label: () => "GitHub Engineer",
         },
         GithubPanel
       )
     );
+    // One line, deliberately: without it there is no way to tell "apply
+    // never ran" from "apply ran and the panel is elsewhere in Settings",
+    // and that ambiguity cost several round trips.
+    console.info("[dsh-github-engineer] client apply ok — settings section registered");
   } catch (err) {
     console.error("[dsh-github-engineer] settings panel registration FAILED:", err);
     throw err;
@@ -429,6 +433,10 @@ function apply(ctx, opts) {
 // `exports.apply = apply; exports.inject = inject; exports.buildPanel
 // = buildPanel;` before wrapping in the IIFE factory.
 export { apply, inject, buildPanel };
+
+/** Plugin id, as the host expects to find it on the returned object. */
+const name = "dsh-github-engineer";
+export { name };
 
 // Side-effect import: ensures api.js is parsed into the bundle.
 // eslint-disable-next-line no-unused-expressions

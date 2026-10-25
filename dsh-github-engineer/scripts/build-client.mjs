@@ -78,7 +78,7 @@ panelSource = panelSource.replace(/^\s*\/\/ eslint-disable.*\n\s*githubApi;\s*$/
 //     `exports.a = a; exports.b = b; ...`. ESM `export` doesn't work
 //     inside the IIFE factory (which is plain JS).
 panelSource = panelSource.replace(
-  /^export\s*\{\s*([^}]+)\s*\};?\s*$/m,
+  /^export\s*\{\s*([^}]+)\s*\};?[ \t]*$/gm,
   (_, names) => {
     const list = names
       .split(",")
@@ -121,6 +121,19 @@ ${panelSource
   },
 });
 `;
+
+// 5b. Refuse to emit a bundle that still contains ESM `export` syntax.
+// A stray `export { ... }` inside the IIFE factory is a SyntaxError, and
+// it fails only in the browser at load time — the build stayed green and
+// the panel simply never registered. Cheaper to fail here.
+const strayExport = wrapped.match(/^\s*export\s/m);
+if (strayExport) {
+  console.error(
+    "build-client: refusing to write — ESM `export` survived inside the CJS factory.\n" +
+      "The rewrite only understands `export { a, b };` on its own line."
+  );
+  process.exit(1);
+}
 
 // 6. Write.
 writeFileSync(OUT, wrapped, "utf8");
