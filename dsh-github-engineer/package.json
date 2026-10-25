@@ -44,7 +44,7 @@
     "build:all": "pnpm build && pnpm build:client",
     "watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/token-store.test.mjs && node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/engineer-run.test.mjs && node tests/audit.test.mjs && node tests/github-app.test.mjs",
+    "test": "node tests/token-store.test.mjs && node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/engineer-run.test.mjs && node tests/audit.test.mjs && node tests/github-app.test.mjs && node tests/session-store.test.mjs && node tests/broker-client.test.mjs",
     "test:smoke": "node mcp-server/tests/tools-list.test.mjs",
     "test:integration": "node tests/integration-git.test.mjs",
     "check:namespace": "node scripts/check-namespace-consistency.mjs",
