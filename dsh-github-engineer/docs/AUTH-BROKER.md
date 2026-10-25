@@ -342,6 +342,48 @@ Let's Encrypt 的验证器（全部在境外）会返回腾讯的备案拦截页
 | DNS-01（acme.sh + dns_tencent） | ✅ 2026-10-26 签发，`CN=race-ops-broker.mmw-team.icu`，至 2027-01-23 |
 | `ssl_session_cache` 名称 | 必须用独立名字（`SSL_BROKER`）：与现有站点的 `SSL` 区大小不同会让 nginx 拒绝加载 |
 
+### 已知阻塞：备案审核中的域名不可用
+
+2026-10-26 定位到一条与本项目无关、但会阻塞上线的外部条件：
+
+`mmw-team.icu` 的 ICP 备案当时仍在管局审核中。审核期间腾讯会对该域名做
+网络层拦截，表现为：
+
+| 端口 | 行为 |
+|---|---|
+| 80 | `302 → dnspod.qcloud.com/static/webblock.html?d=<域名>`（备案拦截页） |
+| 443 | TCP 能连上，但 TLS 握手被 RST；换任何端口（试过 8443）同样被 RST |
+
+排查结论留档，避免重复投入：
+
+- 服务器自身访问自己的公网 IP:443 返回 200，证书链校验通过（`verify=0`），
+  nginx 与 Let's Encrypt 证书都正常 —— **服务端没有问题**
+- 权威 DNS 与各公共解析器一致指向该 IP，无分线路、无泛解析
+- Let's Encrypt 的 HTTP-01 之所以永远失败，也是同一层拦截（它的验证器全部
+  在境外），这与 nginx 配置无关
+- 本机浏览器能打开 `https://race-ops-broker.mmw-team.icu/health`，而 Node /
+  curl 全部在 TLS 阶段被 RST —— 同一台机器上不同进程走了不同链路，说明是
+  中间设备按 TLS 特征拦截，不是本机防火墙
+
+**因此：备案通过前，公网 HTTPS 不可达，任何证书方案都无法改变这一点。**
+
+过渡期验证手段：用 SSH 隧道把 broker 的回环端口映射到本机，并把插件指向它
+
+```
+ssh -N -L 8787:127.0.0.1:8787 ubuntu@<server>
+GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
+```
+
+插件里 `GHOST_BROKER_URL` 优先于 `cordis.patch.yml` 的 `brokerUrl`，正是为了
+这种"单机改指向"的场景。**这只是验证手段，不是交付形态。**
+
+备案通过后需要复核的三件事（都已在 nginx/证书侧就绪，只需确认）：
+
+1. `curl https://race-ops-broker.mmw-team.icu/health` 返回 200
+2. `curl http://mmw-team.icu/` 不再是 webblock 页
+3. GitHub App 的 callback URL 仍是
+   `https://race-ops-broker.mmw-team.icu/auth/github/callback`
+
 ## 10. 分步实施（每步保持现有测试全绿）
 
 | 步 | 内容 | 可本地验证 |

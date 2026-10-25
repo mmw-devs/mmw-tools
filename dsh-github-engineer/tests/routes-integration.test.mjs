@@ -9,7 +9,8 @@
 // Covers (per INCREMENT-3-CHECKLIST §1, §2):
 //   - loopback guard (rejects non-127.0.0.1)
 //   - method guard (GET vs POST)
-//   - JSON body guard (malformed body → 400)
+//   - /oauth/finish takes no input: no body, empty body and malformed
+//     body all reach the handler (a strict body guard broke the panel)
 //   - happy path: GET /status returns a secret-free view
 
 import { pathToFileURL } from "node:url";
@@ -218,14 +219,16 @@ console.log("\n--- Test 3: POST /oauth/start ---");
 }
 
 /* ============================================================== */
-/*  Test 4: POST with malformed JSON body → 400                      */
+/*  Test 4: /oauth/finish does not require a body                    */
 /* ============================================================== */
 
-console.log("\n--- Test 4: malformed JSON body on /oauth/finish ---");
+console.log("\n--- Test 4: /oauth/finish does not require a body ---");
 
 {
-  // /oauth/finish reads the body. Sending invalid JSON should return
-  // 400. (oauthStart doesn't read body, so we use finish here.)
+  // The poll needs no input. Requiring parseable JSON here is what turned
+  // the panel's "我已完成授权" button into "HTTP 400: invalid JSON
+  // response"; the body is now accepted and ignored. A malformed body must
+  // therefore reach the handler, not be rejected by the route.
   const r = await new Promise((resolve, reject) => {
     const req = http.request(
       `${BASE}${API.oauthFinish}`,
@@ -244,8 +247,9 @@ console.log("\n--- Test 4: malformed JSON body on /oauth/finish ---");
     req.write("this is not valid JSON {{{");
     req.end();
   });
-  eq(r.status, 400, "malformed body → 400");
-  truthy(/invalid JSON/i.test(r.body), "error message contains 'invalid JSON'");
+  eq(r.status, 200, "a malformed body is ignored, not rejected");
+  const parsed = JSON.parse(r.body);
+  truthy("ok" in parsed, "the handler answered, so the body was not a gate");
 }
 
 /* ============================================================== */

@@ -730,8 +730,12 @@ export function apply(
   },
   config?: BundleConfig
 ): void {
+  // Environment wins over the profile file: the file ships with the
+  // production URL, and an operator needs a way to point one machine
+  // somewhere else (a tunnel, a staging broker) without editing a file
+  // that is part of the package.
   const brokerUrl =
-    config?.brokerUrl ?? process.env.GHOST_BROKER_URL ?? "https://race-ops-broker.mmw-team.icu";
+    process.env.GHOST_BROKER_URL ?? config?.brokerUrl ?? "https://race-ops-broker.mmw-team.icu";
   const repo = config?.repoBinding ?? {};
   const binding = normalizeBinding(repo);
 

@@ -181,13 +181,11 @@ export function makeRoutes(deps: RouteDeps): Array<{
       path: API.oauthFinish,
       handler: async (req, res) => {
         if (!guard(req, res, "POST")) return;
-        const body = await readJsonBody(req);
-        if (body === undefined) {
-          writeJson(res, 400, { ok: false, error: "invalid JSON body" });
-          return;
-        }
-        // Body is a hint, not authoritative — the device flow state machine
-        // already has the device_code. We just need to ask it to poll once.
+        // No body is required. The poll has all the state it needs, and the
+        // panel sends none — requiring JSON here turned a button click into
+        // "HTTP 400: invalid JSON response". A body is still accepted and
+        // ignored, so an older panel keeps working.
+        await readJsonBody(req).catch(() => undefined);
         const result = await flow.poll();
         if (result.ok) {
           writeJson(res, 200, {
