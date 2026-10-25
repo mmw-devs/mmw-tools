@@ -69,6 +69,15 @@
             enabled: true
             cmd: npm run validate
             timeoutSeconds: 60
+          # `npm run validate` runs scripts/validate-data.ts through tsx,
+          # which lives in devDependencies. A fresh clone has no
+          # node_modules, so without this bootstrap every commit is
+          # refused by its own pre-flight with "tsx: not found".
+          # Runs once per working directory, before the first edit.
+          bootstrap:
+            cmd: npm ci
+            whenMissing: node_modules
+            timeoutSeconds: 300
           pr:
             defaultDraft: true
             titlePrefix: "[ops]"

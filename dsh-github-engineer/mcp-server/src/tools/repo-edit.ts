@@ -32,6 +32,7 @@ import {
   stat,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -73,6 +74,7 @@ export interface RepoEditOutput {
   new_commit_sha: string;
   files_changed: string[];
   preflight: { ran: boolean; exit_code: number; stdout: string; stderr: string };
+  bootstrap: { ran: boolean; exit_code: number; stderr: string };
 }
 
 export interface RepoEditConfig {
@@ -82,6 +84,13 @@ export interface RepoEditConfig {
   branchPrefix: string;
   baseBranch: string;
   preflight: { cmd: string; timeoutSeconds: number };
+  /**
+   * Optional one-time setup, run before the first edit if `whenMissing`
+   * is absent from the working directory. Exists because `preflight`
+   * commonly needs devDependencies, and a fresh clone has none — without
+   * this, every commit is refused by its own pre-flight.
+   */
+  bootstrap?: { cmd: string; whenMissing: string; timeoutSeconds: number };
 }
 
 /* ============================================================== */
@@ -152,6 +161,12 @@ export async function repoEdit(
 
   // ---------- Step 5: ensure branch exists ----------
   await ensureBranch(cfg.workingDir, branch, cfg.baseBranch);
+
+  // ---------- Step 5b: one-time prerequisites ----------
+  // Deliberately before any edit is written: a failed bootstrap must
+  // leave the tree untouched, and a successful one must not be mistaken
+  // for the edit's own pre-flight.
+  const bootstrap = await ensurePrerequisites(cfg);
 
   // ---------- Step 6: apply each edit (atomic per-edit) ----------
   const originalContents = new Map<string, string | null>();
@@ -244,12 +259,51 @@ export async function repoEdit(
     new_commit_sha: newSha,
     files_changed: input.edits.map((e) => e.path),
     preflight: preflightResult,
+    bootstrap: { ran: bootstrap.ran, exit_code: bootstrap.exitCode, stderr: bootstrap.stderr },
   };
 }
 
 /* ============================================================== */
 /*  Edit validation + application                                 */
 /* ============================================================== */
+
+/**
+ * Run the configured bootstrap command once, if its marker is missing.
+ *
+ * Judged by inspection rather than a marker file: a marker inside the
+ * working directory would be an untracked file, which makes `git status`
+ * dirty and causes `repo_pull` and `repo_edit` to refuse. "node_modules
+ * is absent" is self-evident, idempotent to re-check, and free when the
+ * dependency tree is already there.
+ */
+async function ensurePrerequisites(cfg: RepoEditConfig): Promise<{
+  ran: boolean;
+  exitCode: number;
+  stderr: string;
+}> {
+  const boot = cfg.bootstrap;
+  if (!boot || !boot.cmd || boot.cmd.trim().length === 0) {
+    return { ran: false, exitCode: 0, stderr: "" };
+  }
+  if (boot.whenMissing && existsSync(join(cfg.workingDir, boot.whenMissing))) {
+    return { ran: false, exitCode: 0, stderr: "" };
+  }
+
+  const r = await runPreflight({
+    cmd: boot.cmd,
+    cwd: cfg.workingDir,
+    timeoutSeconds: boot.timeoutSeconds,
+  });
+  if (r.exitCode !== 0) {
+    throw new GithubRefusedError(
+      "bootstrap-failed",
+      `bootstrap command ${JSON.stringify(boot.cmd)} failed (exit ${r.exitCode}): ${
+        r.stderr || r.stdout || "no output"
+      }`
+    );
+  }
+  return { ran: true, exitCode: r.exitCode, stderr: r.stderr };
+}
 
 function validateEdit(e: Edit): void {
   switch (e.mode) {

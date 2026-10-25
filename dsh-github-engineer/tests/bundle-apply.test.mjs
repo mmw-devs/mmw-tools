@@ -38,7 +38,9 @@ if (!existsSync(MCP_DIST)) {
   process.exit(2);
 }
 
-const { apply, name: pluginId } = await import(pathToFileURL(BUNDLE_DIST).href);
+const { apply, name: pluginId, mcpBindingEnv, normalizeBinding } = await import(
+  pathToFileURL(BUNDLE_DIST).href
+);
 
 let pass = 0;
 let fail = 0;
@@ -299,6 +301,65 @@ console.log("\n--- Test 6: MCP spawn + tools re-publish ---");
       truthy(names.has(e), `${e} registered`);
     }
   }
+}
+
+/* ============================================================== */
+/*  Test 7: binding → MCP environment (no spawn needed)            */
+/* ============================================================== */
+
+console.log("\n--- Test 7: repoBinding is injected into the MCP child env ---");
+
+{
+  // Regression: the host used to spawn the MCP child with only the
+  // inherited environment, so GHOST_WORKING_DIR and GHOST_REPO_OWNER
+  // were empty and every tool failed on first real use. Asserting the
+  // env seam directly keeps this covered even where spawn is blocked.
+  const binding = normalizeBinding({
+    owner: "mmw-devs",
+    name: "ffxiv-race-ops",
+    baseBranch: "main",
+    branchPrefix: "content/",
+    allowlistPaths: ["public/data.json"],
+    denylistPaths: ["AGENTS.md"],
+    preflight: { cmd: "npm run validate", timeoutSeconds: 60 },
+    bootstrap: { cmd: "npm ci", whenMissing: "node_modules", timeoutSeconds: 300 },
+  });
+  eq(binding.owner, "mmw-devs", "normalize keeps owner");
+  eq(binding.preflight.cmd, "npm run validate", "normalize keeps preflight cmd");
+  eq(binding.bootstrap.cmd, "npm ci", "normalize keeps bootstrap cmd");
+
+  const env = mcpBindingEnv(binding, "/work/ffxiv-race-ops");
+  eq(env.GHOST_WORKING_DIR, "/work/ffxiv-race-ops", "GHOST_WORKING_DIR injected");
+  eq(env.GHOST_REPO_OWNER, "mmw-devs", "GHOST_REPO_OWNER injected");
+  eq(env.GHOST_REPO_NAME, "ffxiv-race-ops", "GHOST_REPO_NAME injected");
+  eq(
+    env.GHOST_REPO_URL,
+    "https://github.com/mmw-devs/ffxiv-race-ops.git",
+    "GHOST_REPO_URL derived from the binding"
+  );
+  eq(env.GHOST_BRANCH_PREFIX, "content/", "GHOST_BRANCH_PREFIX injected");
+  eq(env.GHOST_ALLOWLIST, "public/data.json", "GHOST_ALLOWLIST injected");
+  eq(env.GHOST_PREFLIGHT_CMD, "npm run validate", "GHOST_PREFLIGHT_CMD injected");
+  eq(env.GHOST_BOOTSTRAP_CMD, "npm ci", "GHOST_BOOTSTRAP_CMD injected");
+  truthy(
+    typeof env.GHOST_TOKEN_FILE === "string" && env.GHOST_TOKEN_FILE.length > 0,
+    "GHOST_TOKEN_FILE points at the token store (not a token value)"
+  );
+  truthy(
+    env.GHOST_TOKEN === undefined,
+    "no access token is copied into the child environment"
+  );
+
+  // Defaults must not leave the child with empty binding fields.
+  const bare = normalizeBinding({ owner: "o", name: "n" });
+  eq(bare.baseBranch, "main", "default baseBranch");
+  eq(bare.branchPrefix, "content/", "default branchPrefix");
+  eq(bare.preflight.cmd, "npm run validate", "default preflight cmd");
+  eq(bare.bootstrap.cmd, "", "no bootstrap unless configured");
+  truthy(bare.denylistPaths.includes("AGENTS.md"), "default denylist protects AGENTS.md");
+
+  const bareEnv = mcpBindingEnv(bare, "/w");
+  eq(bareEnv.GHOST_BOOTSTRAP_CMD, undefined, "bootstrap vars omitted when unset");
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

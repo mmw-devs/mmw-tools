@@ -87,6 +87,10 @@ repoBinding:
   preflight:
     cmd: npm run validate
     timeoutSeconds: 60
+  bootstrap:                         # optional; runs once per checkout
+    cmd: npm ci
+    whenMissing: node_modules
+    timeoutSeconds: 300
 ```
 
 | Field | Meaning |
@@ -97,6 +101,7 @@ repoBinding:
 | `allowlistPaths` | The only paths `repo_edit` may write. Glob, forward-slash, `**` and `*` supported. |
 | `denylistPaths` | Always refused, even if also allowlisted. |
 | `preflight.cmd` | Run before every commit; non-zero exit rolls the tree back. |
+| `bootstrap.cmd` | Optional. Run before the first edit of a checkout when `whenMissing` is absent. Needed when `preflight` depends on devDependencies — a fresh clone has no `node_modules`, so without it every commit is refused by its own pre-flight (`tsx: not found`). |
 
 ### Keeping the binding honest
 

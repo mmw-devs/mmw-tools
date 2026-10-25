@@ -36,7 +36,7 @@ import {
   mcpServerEntryPath,
 } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
-import { TokenStore } from "./auth/token-store.js";
+import { TokenStore, configPath } from "./auth/token-store.js";
 import { DeviceFlow } from "./auth/device-flow.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
@@ -86,10 +86,99 @@ function extendedEnv(): Record<string, string> {
   return env;
 }
 
+/**
+ * Translate the plugin's `repoBinding` into the environment the MCP
+ * child reads.
+ *
+ * Without this the child saw only the inherited environment, so
+ * `GHOST_WORKING_DIR` and `GHOST_REPO_OWNER` were empty and every tool
+ * failed on first real use. The token is passed as a *path*
+ * (`GHOST_TOKEN_FILE`) rather than a value: access tokens expire in 8
+ * hours while the child lives as long as DSH does, and the child reads
+ * the store per call, so a host-side refresh is picked up without a
+ * restart.
+ */
+// Exported for tests: this is the seam that was broken (the child received
+// no binding at all), so it is asserted directly rather than only through a
+// real spawn, which not every sandbox permits.
+export function mcpBindingEnv(binding: NormalizedBinding, workingDir: string): Record<string, string> {
+  const env: Record<string, string> = {
+    GHOST_WORKING_DIR: workingDir,
+    GHOST_REPO_URL: `https://github.com/${binding.owner}/${binding.name}.git`,
+    GHOST_REPO_OWNER: binding.owner,
+    GHOST_REPO_NAME: binding.name,
+    GHOST_BASE_BRANCH: binding.baseBranch,
+    GHOST_BRANCH_PREFIX: binding.branchPrefix,
+    GHOST_ALLOWLIST: binding.allowlistPaths.join(","),
+    GHOST_DENYLIST: binding.denylistPaths.join(","),
+    GHOST_PREFLIGHT_CMD: binding.preflight.cmd,
+    GHOST_PREFLIGHT_TIMEOUT: String(binding.preflight.timeoutSeconds),
+    GHOST_TOKEN_FILE: configPath(),
+  };
+  if (binding.bootstrap.cmd.length > 0) {
+    env.GHOST_BOOTSTRAP_CMD = binding.bootstrap.cmd;
+    env.GHOST_BOOTSTRAP_WHEN_MISSING = binding.bootstrap.whenMissing;
+    env.GHOST_BOOTSTRAP_TIMEOUT = String(binding.bootstrap.timeoutSeconds);
+  }
+  return env;
+}
+
+/** The plugin's `repoBinding`, with every field defaulted once. */
+export interface NormalizedBinding {
+  owner: string;
+  name: string;
+  baseBranch: string;
+  branchPrefix: string;
+  allowlistPaths: string[];
+  denylistPaths: string[];
+  preflight: { cmd: string; timeoutSeconds: number };
+  bootstrap: { cmd: string; whenMissing: string; timeoutSeconds: number };
+}
+
+const DEFAULT_DENYLIST = [
+  ".github/workflows/**",
+  "schema/**",
+  "scripts/**",
+  "constants.js",
+  "AGENTS.md",
+  "README.md",
+  ".pi/**",
+  "dist/**",
+];
+
+export function normalizeBinding(raw: Record<string, unknown>): NormalizedBinding {
+  const str = (v: unknown, fallback: string) =>
+    typeof v === "string" && v.length > 0 ? v : fallback;
+  const list = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+  const preflightRaw = (raw.preflight ?? {}) as Record<string, unknown>;
+  const bootRaw = (raw.bootstrap ?? {}) as Record<string, unknown>;
+
+  return {
+    owner: str(raw.owner, ""),
+    name: str(raw.name, ""),
+    baseBranch: str(raw.baseBranch, "main"),
+    branchPrefix: str(raw.branchPrefix, "content/"),
+    allowlistPaths: list(raw.allowlistPaths),
+    denylistPaths: list(raw.denylistPaths).length > 0 ? list(raw.denylistPaths) : DEFAULT_DENYLIST,
+    preflight: {
+      cmd: str(preflightRaw.cmd, "npm run validate"),
+      timeoutSeconds:
+        typeof preflightRaw.timeoutSeconds === "number" ? preflightRaw.timeoutSeconds : 60,
+    },
+    bootstrap: {
+      cmd: str(bootRaw.cmd, ""),
+      whenMissing: str(bootRaw.whenMissing, "node_modules"),
+      timeoutSeconds:
+        typeof bootRaw.timeoutSeconds === "number" ? bootRaw.timeoutSeconds : 300,
+    },
+  };
+}
+
 /* ============================================================== */
 /*  Agent tools                                                    */
 /* ============================================================== */
-
 const STATUS_PARAMS = {} as const;
 
 const STATUS_OUTPUT_SCHEMA = {
@@ -564,6 +653,7 @@ export function apply(
 ): void {
   const oauthClientId = config?.githubOAuthClientId ?? "";
   const repo = config?.repoBinding ?? {};
+  const binding = normalizeBinding(repo);
   const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
   const workingDir =
     config?.workingDir && config.workingDir.length > 0
@@ -741,7 +831,7 @@ export function apply(
         const transport = new StdioClientTransport({
           command: process.execPath,
           args: [pathToConnect],
-          env: extendedEnv(),
+          env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir) },
         });
         await client.connect(transport);
         const { tools } = await client.request(

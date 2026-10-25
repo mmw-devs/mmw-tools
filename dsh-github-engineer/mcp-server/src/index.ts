@@ -15,6 +15,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { readFileSync } from "node:fs";
 import { PLUGIN_DISPLAY_NAME, PLUGIN_VERSION } from "./const.js";
 
 import { repoStatus } from "./tools/repo-status.js";
@@ -46,6 +47,29 @@ interface ToolDef {
   call: (input: Record<string, unknown>) => Promise<unknown>;
 }
 
+/**
+ * Read the current access token from the host's token store.
+ *
+ * The child is long-lived while access tokens last 8 hours, so a token
+ * copied into the environment at spawn time goes stale mid-session. The
+ * host therefore passes `GHOST_TOKEN_FILE` (the store path) and this
+ * reads it per call, which means a host-side refresh is picked up
+ * without restarting the child. `GHOST_TOKEN` remains supported as a
+ * static fallback for tests.
+ */
+function readTokenFromStore(): string | null {
+  const file = process.env.GHOST_TOKEN_FILE;
+  if (!file) return null;
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8")) as { accessToken?: unknown };
+    return typeof raw.accessToken === "string" && raw.accessToken.length > 0
+      ? raw.accessToken
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function config() {
   return {
     workingDir: process.env.GHOST_WORKING_DIR ?? "",
@@ -60,7 +84,16 @@ function config() {
       cmd: process.env.GHOST_PREFLIGHT_CMD ?? "npm run validate",
       timeoutSeconds: Number(process.env.GHOST_PREFLIGHT_TIMEOUT ?? 60),
     },
-    githubToken: process.env.GHOST_TOKEN ?? null,
+    bootstrap: {
+      // Runs once per working directory when `whenMissing` is absent.
+      // `npm run validate` needs devDependencies, and a fresh clone has
+      // none, so without this every commit is refused by its own
+      // pre-flight with "tsx: not found".
+      cmd: process.env.GHOST_BOOTSTRAP_CMD ?? "",
+      whenMissing: process.env.GHOST_BOOTSTRAP_WHEN_MISSING ?? "node_modules",
+      timeoutSeconds: Number(process.env.GHOST_BOOTSTRAP_TIMEOUT ?? 300),
+    },
+    githubToken: readTokenFromStore() ?? process.env.GHOST_TOKEN ?? null,
   };
 }
 

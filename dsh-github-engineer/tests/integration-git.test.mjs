@@ -582,6 +582,110 @@ console.log("\n--- repo_edit: ambiguous find and insert mode ---");
   rmSync(fx.tmp, { recursive: true, force: true });
 }
 
+console.log("\n--- repo_edit: bootstrap runs once, before the first edit ---");
+{
+  // A fixture whose pre-flight needs dependencies, like the real repo:
+  // `npm run validate` cannot run before `npm ci` has populated
+  // node_modules. Without a bootstrap step, every commit on a fresh
+  // clone is refused by its own pre-flight with "tsx: not found".
+  const NEEDS_DEPS = `import { existsSync } from 'node:fs'
+if (!existsSync('node_modules')) {
+  console.error('validate: dependencies are not installed (run npm ci)')
+  process.exit(1)
+}
+process.exit(0)
+`;
+  const BOOTSTRAP = `import { mkdirSync, appendFileSync } from 'node:fs'
+mkdirSync('node_modules', { recursive: true })
+if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
+`;
+  const ALWAYS_FAIL = `process.exit(1)
+`;
+
+  const fx = makeFixture();
+  writeFileSync(path.join(fx.seed, "scripts", "needs-deps.js"), NEEDS_DEPS);
+  writeFileSync(path.join(fx.seed, "scripts", "bootstrap.js"), BOOTSTRAP);
+  writeFileSync(path.join(fx.seed, "scripts", "always-fail.js"), ALWAYS_FAIL);
+  commitAll(fx.seed, "test: dependency-gated validator");
+  git(fx.seed, ["push", "origin", "main"]);
+
+  await repoClone({}, cloneConfig(fx));
+  const counter = path.join(fx.tmp, "bootstrap-runs.txt");
+  process.env.E2E_COUNTER = counter;
+
+  const gated = editConfig(fx.work, {
+    preflight: { cmd: "node scripts/needs-deps.js", timeoutSeconds: 60 },
+  });
+
+  await refuses(
+    () =>
+      repoEdit(
+        {
+          branch: "content/no-bootstrap",
+          edits: [{ path: "public/data.json", mode: "replace", find: '"Alpha"', replace: '"Beta"' }],
+          commit_message: "content: would fail",
+        },
+        gated
+      ),
+    "preflight-failed",
+    "dependency-gated preflight refuses a commit on a fresh clone"
+  );
+  ok("a fresh clone cannot commit when nothing installs dependencies");
+
+  const boot = {
+    ...gated,
+    bootstrap: { cmd: "node scripts/bootstrap.js", whenMissing: "node_modules", timeoutSeconds: 60 },
+  };
+  const first = await repoEdit(
+    {
+      branch: "content/with-bootstrap",
+      edits: [{ path: "public/data.json", mode: "replace", find: '"Alpha"', replace: '"Beta"' }],
+      commit_message: "content: with bootstrap",
+    },
+    boot
+  );
+  eq(first.bootstrap.ran, true, "bootstrap ran before the first edit");
+  eq(first.bootstrap.exit_code, 0, "bootstrap exited 0");
+  eq(first.preflight.exit_code, 0, "preflight passed after bootstrap");
+  truthy(existsSync(path.join(fx.work, "node_modules")), "bootstrap populated node_modules");
+
+  const countRuns = () =>
+    readFileSync(counter, "utf8").trim().split("\n").filter(Boolean).length;
+  const afterFirst = countRuns();
+
+  const second = await repoEdit(
+    {
+      branch: "content/with-bootstrap-2",
+      edits: [{ path: "public/data.json", mode: "replace", find: '"Beta"', replace: '"Gamma"' }],
+      commit_message: "content: second edit",
+    },
+    boot
+  );
+  eq(second.bootstrap.ran, false, "bootstrap is skipped once node_modules exists");
+  eq(countRuns(), afterFirst, "bootstrap command ran exactly once across both edits");
+
+  const badBoot = {
+    ...gated,
+    bootstrap: { cmd: "node scripts/always-fail.js", whenMissing: "node_modules", timeoutSeconds: 60 },
+  };
+  await refuses(
+    () =>
+      repoEdit(
+        {
+          branch: "content/bad-bootstrap",
+          edits: [{ path: "public/data.json", mode: "replace", find: '"Gamma"', replace: '"Delta"' }],
+          commit_message: "content: bad bootstrap",
+        },
+        badBoot
+      ),
+    "bootstrap-failed",
+    "a failing bootstrap refuses the edit"
+  );
+
+  delete process.env.E2E_COUNTER;
+  rmSync(fx.tmp, { recursive: true, force: true });
+}
+
 /* ============================================================== */
 /*  repo_pull                                                      */
 /* ============================================================== */
