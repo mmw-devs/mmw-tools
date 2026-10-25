@@ -155,8 +155,23 @@ function statusStyle(view) {
  * @returns {Function} a React component
  */
 function buildPanel(runtime) {
-  const { useState, useEffect, useCallback } = runtime.react;
-  const { jsx: _jsx, jsxs: _jsxs } = runtime.jsxRuntime;
+  // `react` / `react_jsx_runtime` are declared by the bundle wrapper in
+  // this same scope (build-client.mjs: `let react = require("react")`).
+  // The DSH client loader calls apply(ctx) with no options, so the
+  // runtime is resolved from those locals — previously apply() insisted
+  // on `opts.runtime` / `ctx.__githubEngineerRuntime`, threw, and the
+  // catch below swallowed it: the panel never appeared and the only
+  // trace was a console.warn.
+  const resolved =
+    runtime ??
+    (typeof react !== "undefined" && react
+      ? { react, jsxRuntime: typeof react_jsx_runtime !== "undefined" ? react_jsx_runtime : react }
+      : null);
+  if (!resolved) {
+    throw new Error("react runtime unavailable in the client bundle scope");
+  }
+  const { useState, useEffect, useCallback } = resolved.react;
+  const { jsx: _jsx, jsxs: _jsxs } = resolved.jsxRuntime;
 
   function GithubPanel() {
     const [viewState, setView] = useState(null);
@@ -391,10 +406,7 @@ const inject = ["slots"];
  */
 function apply(ctx, opts) {
   try {
-    const runtime = (opts && opts.runtime) || (ctx && ctx.__githubEngineerRuntime);
-    if (!runtime) {
-      throw new Error("dsh-github-engineer: react runtime not provided");
-    }
+    const runtime = (opts && opts.runtime) || (ctx && ctx.__githubEngineerRuntime) || null;
     const GithubPanel = buildPanel(runtime);
     ctx.slots.inject("settings.section", () =>
       ctx.slots.register(
@@ -408,7 +420,8 @@ function apply(ctx, opts) {
       )
     );
   } catch (err) {
-    console.warn("[dsh-github-engineer] settings panel registration failed:", err);
+    console.error("[dsh-github-engineer] settings panel registration FAILED:", err);
+    throw err;
   }
 }
 

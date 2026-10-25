@@ -19,6 +19,13 @@ reachable by the offline suites, which stub the host context.
   resolve a linked package's peer dependencies, so the browser module was
   listed in the boot payload and then never served. Docs now use
   `file:`.
+- **The panel registered nothing, silently.** `apply()` demanded a React
+  runtime from `opts.runtime` or `ctx.__githubEngineerRuntime`; the DSH
+  client loader passes neither, so it threw, and the `catch` downgraded
+  that to a `console.warn`. The result was a settings entry that showed
+  the plugin's name and no controls. React comes from the bundle wrapper
+  (`require("react")`) and is in scope — it is now used directly, and a
+  registration failure throws instead of hiding.
 - **The access token was written to `.git/config`.** `git clone` stores
   the credentialed URL as `origin`. `repo_clone` now resets it
   immediately; `pr_create` pushes to an explicit URL and no longer uses
