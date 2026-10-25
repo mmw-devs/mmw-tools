@@ -201,7 +201,8 @@ on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 
 | Document | Contents |
 |---|---|
-| [`docs/OAUTH-FLOW.md`](docs/OAUTH-FLOW.md) | End-user OAuth walkthrough, error table, revocation |
+| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, threat model, deployment, ICP blocker |
+| [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) | The panel's state machine: four phases, action matrix, acceptance checks |
 | [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
 | [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | Step-by-step real round trip against the bound repo: gates, stop conditions, cleanup |
 | [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) | Who keeps `AGENTS.md` and the binding in step |
@@ -212,7 +213,7 @@ on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 | [`docs/INCREMENT-2-VERIFICATION.md`](docs/INCREMENT-2-VERIFICATION.md) | The client-bundle build decisions, checked against DSH source |
 | [`docs/PUBLISHING.md`](docs/PUBLISHING.md) | Release checklist and the two distribution channels |
 | [`CHANGELOG.md`](CHANGELOG.md) | Per-increment history |
-| [`NEXT-STEPS.md`](docs/NEXT-STEPS.md) | What is not built yet |
+| [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md) | What is not built yet, and why each omission is deliberate |
 
 ## License
 
