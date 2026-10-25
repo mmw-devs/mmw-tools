@@ -83,7 +83,7 @@ export async function prCreate(
 
   // ---------- Push ----------
   const remote = cfg.remoteName ?? "origin";
-  await pushBranch(cfg.workingDir, remote, head);
+  await pushBranch(cfg.workingDir, cfg, head);
 
   // ---------- Create PR via gh CLI ----------
   // We use gh CLI (not Octokit) here because gh has built-in
@@ -170,13 +170,24 @@ export async function prCreate(
 
 async function pushBranch(
   workingDir: string,
-  remote: string,
+  cfg: PrCreateConfig,
   branch: string
 ): Promise<void> {
+  // Push to an explicit credentialed URL rather than to `origin`:
+  // repo_clone deliberately leaves `origin` credential-free so the token
+  // never lands in .git/config, and `-u` is omitted for the same reason
+  // (`-u <url>` would store that URL, token included, as
+  // branch.<name>.remote). Upstream tracking buys this tool nothing.
+  const remote = cfg.remoteName ?? "origin";
+  const baseUrl = `https://github.com/${cfg.repoOwner}/${cfg.repoName}.git`;
+  const pushUrl = cfg.githubToken
+    ? baseUrl.replace("https://", `https://x-access-token:${cfg.githubToken}@`)
+    : remote;
+
   try {
     await execFileAsync(
       "git",
-      ["push", "-u", remote, branch],
+      ["push", pushUrl, branch],
       { cwd: workingDir, timeout: 60_000 }
     );
   } catch (err) {

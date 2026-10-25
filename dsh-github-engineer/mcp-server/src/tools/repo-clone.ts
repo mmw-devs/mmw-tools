@@ -107,6 +107,27 @@ export async function repoClone(
     );
   }
 
+  // `git clone <url-with-token>` stores that URL as `origin`, which puts
+  // the access token in plaintext in .git/config — a file that gets
+  // copied, backed up and shared. Put the clean URL back immediately;
+  // push authenticates per command (see pr-create.ts) instead of relying
+  // on a credentialed remote.
+  if (cfg.githubToken && rewriteUrl(cfg.repoUrl, cfg.githubToken) !== cfg.repoUrl) {
+    try {
+      await execFileAsync("git", ["remote", "set-url", "origin", cfg.repoUrl], {
+        cwd: cfg.workingDir,
+        timeout: 15_000,
+      });
+    } catch (err) {
+      throw new GithubRefusedError(
+        "clone-cleanup-failed",
+        `cloned, but could not remove credentials from .git/config: ${
+          (err as Error).message
+        }. Delete ${cfg.workingDir} and clone again.`
+      );
+    }
+  }
+
   return {
     cloned_to: cfg.workingDir,
     branch: cfg.baseBranch,
@@ -119,8 +140,9 @@ export async function repoClone(
  * argv (NOT stdin or env), which is visible to ps on Linux — that's a
  * known weakness of this approach. v2 should use git's GIT_ASKPASS or
  * SSH key for auth. For v1 the risk is bounded: this runs once per
- * clone, the token is exposed in process listing for ~1s, and the
- * plugin only ever runs on the user's own machine.
+ * clone or push, the token is exposed in process listing for ~1s, and
+ * the plugin only ever runs on the user's own machine. What it must not
+ * do is persist: nothing keeps this URL on disk.
  */
 function rewriteUrl(url: string, token: string | null): string {
   if (!token) return url;

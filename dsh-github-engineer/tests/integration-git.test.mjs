@@ -692,6 +692,33 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
   rmSync(fx.tmp, { recursive: true, force: true });
 }
 
+console.log("\n--- repo_edit: preflight can run a package-manager shim ---");
+{
+  // Regression: on Windows `npm` is `npm.cmd`, and execFile does not
+  // consult PATHEXT, so `npm run validate` as a preflight failed with
+  // ENOENT on the platform this plugin is mostly used on. Every other
+  // preflight in this suite runs `node <script>`, which hid it.
+  const fx = makeFixture();
+  await repoClone({}, cloneConfig(fx));
+  const cfg = editConfig(fx.work, {
+    preflight: { cmd: "npm --version", timeoutSeconds: 60 },
+  });
+  const r = await repoEdit(
+    {
+      branch: "content/pm-shim",
+      edits: [{ path: "public/data.json", mode: "insert", content: "\n" }],
+      commit_message: "content: package-manager shim",
+    },
+    cfg
+  );
+  eq(r.preflight.exit_code, 0, "preflight resolves a package-manager shim");
+  truthy(
+    /\d+\.\d+\.\d+/.test(String(r.preflight.stdout)),
+    "preflight captured the package manager's version output"
+  );
+  rmSync(fx.tmp, { recursive: true, force: true });
+}
+
 /* ============================================================== */
 /*  repo_pull                                                      */
 /* ============================================================== */

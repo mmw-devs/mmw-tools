@@ -15,12 +15,13 @@
  *
  * See docs/INCREMENT-3-CHECKLIST.md for the rationale.
  */
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { realpath, stat } from "node:fs/promises";
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 /** Thrown by every guard when it rejects an input. */
 export class GithubRefusedError extends Error {
@@ -417,6 +418,35 @@ export async function runPreflight(opts: {
   const parts = opts.cmd.trim().split(/\s+/);
   if (parts.length === 0 || parts[0] === "") {
     throw new GithubRefusedError("preflight-cmd-empty", "preflight cmd is empty");
+  }
+  // Windows: run the whole command string through the shell so `.cmd`
+  // shims (`npm.cmd`) resolve. Passing an argv to execFile with
+  // `shell: true` triggers DEP0190 ("arguments are not escaped, only
+  // concatenated"), so the string form is used instead — it is the same
+  // execution with a narrower surface.
+  if (process.platform === "win32") {
+    try {
+      const { stdout, stderr } = await execAsync(opts.cmd, {
+        cwd: opts.cwd,
+        timeout: opts.timeoutSeconds * 1000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      });
+      return { exitCode: 0, stdout, stderr };
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+        code?: string | number;
+      };
+      if (typeof e.code === "number") {
+        return { exitCode: e.code, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+      }
+      throw new GithubRefusedError(
+        "preflight-spawn-failed",
+        `preflight ${JSON.stringify(opts.cmd)} failed to spawn: ${e.message}`
+      );
+    }
   }
   try {
     const { stdout, stderr } = await execFileAsync(parts[0], parts.slice(1), {

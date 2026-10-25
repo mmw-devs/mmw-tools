@@ -162,8 +162,9 @@ Status line shows the login, granted scopes, and the remaining lifetime of the a
 
 **Known trade-offs**, stated rather than hidden:
 
-- `repo_clone` passes the token in the clone URL, so it is visible in the process list for the duration of the clone. Bounded by a single use on the user's own machine; a future version should use `GIT_ASKPASS`.
+- `repo_clone` and `pr_create` pass the token on the git command line, so it is briefly visible in the process list. It is never written to `.git/config`: `repo_clone` resets `origin` to the credential-free URL immediately after cloning, and `pr_create` pushes to an explicit URL without `-u`, because `-u <url>` would store that URL — token included — as `branch.<name>.remote`. A future version should use `GIT_ASKPASS` and drop the argv exposure too.
 - `repo_edit` matches `find` byte-for-byte. On a Windows checkout with `core.autocrlf` the working tree holds CRLF, so a multi-line `find` written with LF will not match; the edit is refused with `find-not-found` rather than applied half-way. Read the file with `repo_read` first and reuse its exact bytes.
+- `preflight` and `bootstrap` commands run through the shell on Windows, because `npm` there is `npm.cmd` and `execFile` does not consult `PATHEXT`. Without this every npm-based pre-flight failed with `ENOENT` on the platform this plugin is mostly used on. The command string comes from your own plugin config, never from the agent.
 - `repo_edit`'s `patch` mode is not implemented; use `replace` or `insert`.
 - Rate limiting is not implemented.
 
