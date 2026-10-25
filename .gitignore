@@ -21,3 +21,5 @@ Thumbs.db
 
 # Build artefacts that ship with subprojects
 # (subprojects have their own .gitignore; this is for top-level accidents only)
+# Secret material directory
+secrets/
