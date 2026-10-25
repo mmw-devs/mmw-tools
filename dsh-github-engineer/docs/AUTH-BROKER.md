@@ -251,7 +251,7 @@ callback URL 必须是 HTTPS，所以没有证书这条路走不通。
 `.env`：
 
 ```
-BROKER_PUBLIC_URL=https://race-ops-broker.example.com
+BROKER_PUBLIC_URL=https://race-ops-broker.mmw-team.icu
 GITHUB_APP_ID=123456
 GITHUB_APP_CLIENT_ID=Iv1...
 GITHUB_APP_CLIENT_SECRET=...
@@ -286,13 +286,70 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-Caddy：
+### 主机名
+
+`mmw-team.icu` 已在使用中，broker 走子域名，与现有项目互不影响：
 
 ```
-race-ops-broker.example.com {
+race-ops-broker.mmw-team.icu
+```
+
+需要且只需要一条 DNS 记录：
+
+| 类型 | 名称 | 值 | TTL |
+|---|---|---|---|
+| A | `race-ops-broker` | 腾讯云服务器的公网 IP | 300（联调期短 TTL） |
+
+**不要**动现有的 `@` / `www` 记录。GitHub App 的 callback URL 必须是
+
+```
+https://race-ops-broker.mmw-team.icu/auth/github/callback
+```
+
+### TLS 与共存
+
+80/443 通常已经被同机上的另一个项目占用，所以**不要**直接装 Caddy —— 它会
+和现有服务抢端口。按现状二选一：
+
+**（a）已有 nginx（含宝塔等面板）** —— 加一个 server 块，不动现有站点：
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name race-ops-broker.mmw-team.icu;
+
+    ssl_certificate     /etc/letsencrypt/live/race-ops-broker.mmw-team.icu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/race-ops-broker.mmw-team.icu/privkey.pem;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8787;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Forwarded-For $remote_addr;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+证书用现有 ACME 工具签：
+
+```bash
+certbot --nginx -d race-ops-broker.mmw-team.icu
+```
+
+**（b）端口空闲** —— Caddy 自动签发：
+
+```
+race-ops-broker.mmw-team.icu {
   reverse_proxy 127.0.0.1:8787
 }
 ```
+
+两种情况都要求：
+
+- 腾讯云安全组与主机防火墙放行 **80 和 443**（HTTP-01 校验需要 80）
+- broker 自身只监听 **127.0.0.1:8787**，不对外
+- 若前面有 CDN/Cloudflare 代理：保持先 **DNS only** 把证书签下来，再开代理；
+  开代理时 `BROKER_PUBLIC_URL` 仍是 `https://race-ops-broker.mmw-team.icu`
 
 ## 10. 分步实施（每步保持现有测试全绿）
 
