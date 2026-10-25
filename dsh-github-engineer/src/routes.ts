@@ -137,6 +137,13 @@ function guard(
 export interface RouteDeps {
   store: BrokerAuth;
   flow: BrokerAuth;
+  brokerUrl: string;
+  binding: {
+    owner: string;
+    name: string;
+    baseBranch: string;
+    allowlistPaths: string[];
+  };
 }
 
 /** Build all /api/github-engineer/* routes. */
@@ -152,12 +159,28 @@ export function makeRoutes(deps: RouteDeps): Array<{
       path: API.status,
       handler: async (req, res) => {
         if (!guard(req, res, "GET")) return;
+        // docs/PANEL-CONTRACT.md §8. The OAuth-era fields (configured,
+        // accessTokenMasked, scope, ...) are deliberately gone: they
+        // described one credential where there are now two, which is what
+        // let the panel show "configured: true" next to "no_token".
         const view = await store.view();
-        // `status()` is the synchronous in-memory view (is a sign-in
-        // pending?). The store is the source of truth for "are we signed
-        // in", so the panel must see the resolved status — otherwise a
-        // successful login still renders as no_token.
-        writeJson(res, 200, { ...view, status: await flow.resolvedStatus() });
+        const phase = await flow.phase();
+        const repoAccess = await flow.repoAccess();
+        writeJson(res, 200, {
+          phase,
+          session: {
+            login: view.login,
+            expiresAt: view.accessTokenExpiresAt,
+            secondsRemaining: Math.max(
+              0,
+              Math.floor((view.accessTokenExpiresAt - Date.now()) / 1000)
+            ),
+          },
+          repoAccess,
+          binding: deps.binding,
+          brokerUrl: deps.brokerUrl,
+          sessionPath: view.configPath,
+        });
       },
     },
     {

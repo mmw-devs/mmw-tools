@@ -87,6 +87,12 @@ const store = {
 
 const flow = {
   status: () => "no_token",
+  async phase() {
+    return "signed_out";
+  },
+  async repoAccess() {
+    return { state: "unavailable", reason: "尚未登录" };
+  },
   async resolvedStatus() {
     return "no_token";
   },
@@ -107,6 +113,18 @@ const flow = {
   async clearAll() {},
 };
 
+const routeDeps = {
+  store,
+  flow,
+  brokerUrl: "https://race-ops-broker.mmw-team.icu",
+  binding: {
+    owner: "mmw-devs",
+    name: "ffxiv-race-ops",
+    baseBranch: "main",
+    allowlistPaths: ["public/data.json"],
+  },
+};
+
 const server = http.createServer(async (req, res) => {
   // Manually re-implement the loopback guard so the test exercises the
   // exact same guard the bundle uses.
@@ -116,7 +134,7 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: "loopback-only" }));
     return;
   }
-  const m = makeRoutes({ store, flow });
+  const m = makeRoutes(routeDeps);
   for (const r of m) {
     if (r.path === req.url || (req.url && r.path === req.url.split("?")[0])) {
       return r.handler(req, res);
@@ -160,27 +178,33 @@ function request(opts) {
 /*  Test 1: GET /api/github-engineer/status                          */
 /* ============================================================== */
 
-console.log("\n--- Test 1: GET /status returns secret-free view ---");
+console.log("\n--- Test 1: GET /status matches PANEL-CONTRACT §8 ---");
 
 {
   const r = await request({ method: "GET", path: API.status });
   eq(r.status, 200, "status code");
   const data = JSON.parse(r.body);
-  eq(typeof data.configured, "boolean", "data.configured is boolean");
-  console.log("    configPath:", data.configPath);
+
+  eq(typeof data.phase, "string", "phase is a string");
+  eq(data.phase, "signed_out", "phase is signed_out when no session");
+  eq(typeof data.session, "object", "session is an object");
+  eq(data.session.login, "", "no login when signed out");
+  eq(typeof data.session.secondsRemaining, "number", "secondsRemaining is numeric");
+  eq(typeof data.repoAccess, "object", "repoAccess is an object");
+  eq(data.repoAccess.state, "unavailable", "repoAccess is unavailable when signed out");
+  eq(typeof data.brokerUrl, "string", "brokerUrl present");
   truthy(
-    data.configPath.endsWith("dsh-github-engineer-session.json") ||
-      data.configPath.endsWith("/dsh-github-engineer.json") ||
-      data.configPath.endsWith("\\dsh-github-engineer.json"),
-    "configPath ends with dsh-github-engineer.json"
+    typeof data.sessionPath === "string" && data.sessionPath.endsWith("dsh-github-engineer-session.json"),
+    "sessionPath names the session file"
   );
-  truthy(data.accessTokenMasked === "" || /\*\*\*\*/.test(data.accessTokenMasked), "masked token format");
-  eq(data.login, "", "no login before OAuth");
-  // The status field must be one of the four documented values.
-  truthy(
-    ["no_token", "device_pending", "authorized", "reauth_needed"].includes(data.status),
-    "status is one of no_token/device_pending/authorized/reauth_needed"
-  );
+  eq(typeof data.binding, "object", "binding present");
+  eq(data.binding.owner, "mmw-devs", "binding owner");
+
+  // The OAuth-era fields are gone by contract.
+  for (const gone of ["configured", "accessTokenMasked", "accessTokenExpiresAt", "scope", "refreshTokenExpiresAt", "status"]) {
+    eq(Object.prototype.hasOwnProperty.call(data, gone), false, `field '${gone}' is not in the payload`);
+  }
+  truthy(!r.body.includes("gho_") && !r.body.includes("ghs_"), "no token material in the payload");
 }
 
 /* ============================================================== */
@@ -259,7 +283,7 @@ console.log("\n--- Test 4: /oauth/finish does not require a body ---");
 console.log("\n--- Test 5: routes map shape ---");
 
 {
-  const routes = makeRoutes({ store, flow });
+  const routes = makeRoutes(routeDeps);
   eq(routes.length, 5, "5 routes defined");
   for (const r of routes) {
     eq(r.kind, "exact", `${r.path} is exact match`);

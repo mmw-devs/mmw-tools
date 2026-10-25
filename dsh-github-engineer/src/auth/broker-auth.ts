@@ -130,6 +130,35 @@ export class BrokerAuth {
     return session.expiresAt > this.now() ? "authorized" : "reauth_needed";
   }
 
+  /** The four states of docs/PANEL-CONTRACT.md §3, and nothing else. */
+  async phase(): Promise<"signed_out" | "authorizing" | "signed_in" | "expired"> {
+    if (this.pending) return "authorizing";
+    const session = await this.store.read();
+    if (!session) return "signed_out";
+    return session.expiresAt > this.now() ? "signed_in" : "expired";
+  }
+
+  /**
+   * Whether a repository credential is available right now.
+   *
+   * Deliberately separate from the session: the session can be valid while
+   * the installation token is missing or the broker refuses to mint one,
+   * and the user needs to see those as different things.
+   */
+  async repoAccess(): Promise<{ state: "ready" | "unavailable"; reason: string }> {
+    try {
+      const token = await this.ensureInstallationToken(false);
+      return token
+        ? { state: "ready", reason: "" }
+        : { state: "unavailable", reason: "尚未登录" };
+    } catch (err) {
+      return {
+        state: "unavailable",
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   async view(): Promise<AuthView> {
     const session = await this.store.read();
     if (!session) {

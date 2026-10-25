@@ -881,7 +881,17 @@ export function apply(
         const ws = safeAccess(serviceGetter(ctx, "webServer")) as {
           register: (route: unknown) => () => void;
         };
-        disposers = makeRoutes({ store, flow }).map((r) => ws.register(r));
+        disposers = makeRoutes({
+          store,
+          flow,
+          brokerUrl,
+          binding: {
+            owner: binding.owner,
+            name: binding.name,
+            baseBranch: binding.baseBranch,
+            allowlistPaths: binding.allowlistPaths,
+          },
+        }).map((r) => ws.register(r));
         return () => disposers.forEach((d) => d());
       },
       () =>
