@@ -11,7 +11,8 @@
  *
  * Visible agent-facing surfaces:
  *   1. engineer_status                       — high-level state report
- *   2. engineer_oauth_start / _finish / _refresh / _revoke
+ *   2. (removed) the four engineer_oauth_* tools — sign-in is a human
+ *      action performed in the panel, never by the agent
  *                                          — drive OAuth lifecycle
  *   3. mcp__github-engineer__*                — auto-discovered MCP tools
  *
@@ -284,11 +285,11 @@ function makeStatusTool(deps: {
         authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
         authLines.push("仓库写入使用 broker 签发的 1 小时 App 令牌");
       } else if (status === "reauth_needed") {
-        authLines.push("⚠️ 会话已过期 — 调用 engineer_oauth_start 重新登录");
+        authLines.push("⚠️ 会话已过期 — 请在面板里点「登录 GitHub」重新登录");
       } else if (status === "device_pending") {
-        authLines.push("等待浏览器完成授权 — 调用 engineer_oauth_finish 轮询");
+        authLines.push("等待浏览器完成授权 — 面板会自动继续，无需操作");
       } else {
-        authLines.push("调用 engineer_oauth_start 获取登录链接");
+        authLines.push("未登录 — 请在面板里点「登录 GitHub」");
       }
 
       return {
@@ -302,7 +303,7 @@ function makeStatusTool(deps: {
           `MCP server entry: ${pathToConnect}\n` +
           `\n--- Auth ---\n${authLines.join("\n")}\n` +
           `\n--- AGENTS.md ---\n${driftLine}\n` +
-          `\n下一步：调用 engineer_oauth_start，把返回的链接在浏览器打开完成登录。`,
+          `\n下一步：请用户在面板里完成 GitHub 登录（agent 不参与登录）。`,
         pluginId: PLUGIN_ID,
         oauthClientIdMasked: "",
         repoOwner: String(deps.repo.owner ?? ""),
@@ -511,107 +512,6 @@ const OAUTH_SIMPLE_OUTPUT = {
     message: { type: "string" as const, required: true as const },
   },
 };
-
-function makeOauthStartTool(flow: BrokerAuth) {
-  return defineTool({
-    name: "engineer_oauth_start",
-    description:
-      "发起 GitHub OAuth Device Flow：向 GitHub 申请一个 user_code，让用户在浏览器打开 https://github.com/login/device 输码完成授权。返回 userCode + verificationUri。后续用 engineer_oauth_finish 轮询结果。",
-    parameters: {},
-    output: {
-      schema: OAUTH_START_OUTPUT,
-      render(_args, value) {
-        const v = value as Record<string, unknown>;
-        const lines = [String(v.message ?? "")];
-        if (v.userCode && v.verificationUri) {
-          lines.push("", `user_code: ${v.userCode}`, `verification_uri: ${v.verificationUri}`);
-        }
-        return [{ type: "text", text: lines.join("\n") }];
-      },
-    },
-    async execute() {
-      try {
-        const pending = await flow.begin();
-        return {
-          ok: true,
-          message:
-            "已在 GitHub 发起 Device Flow。请让用户在浏览器打开下方 verification_uri 并输 user_code 完成授权。完成后用 engineer_oauth_finish 轮询结果。",
-          userCode: pending.userCode,
-          verificationUri: pending.verificationUri,
-          expiresAt: pending.expiresAt,
-          interval: pending.interval,
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          message: "发起授权失败：" + (err instanceof Error ? err.message : String(err)),
-        };
-      }
-    },
-  });
-}
-
-function makeOauthFinishTool(flow: BrokerAuth) {
-  return defineTool({
-    name: "engineer_oauth_finish",
-    description:
-      "轮询 Device Flow 一次：检查用户是否已在浏览器完成授权；若已完成，保存 access_token/refresh_token；若用户还在授权中，返回 ok=false 并说明错误码（authorization_pending / slow_down / expired_token）。可重复调用直到 ok=true 或出错。",
-    parameters: {},
-    output: {
-      schema: OAUTH_SIMPLE_OUTPUT,
-      render(_args, value) {
-        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
-      },
-    },
-    async execute() {
-      const result = await flow.poll();
-      if (result.ok) {
-        return {
-          ok: true,
-          message: `授权完成。access_token 已保存（登录身份: ${result.tokens.login || "(unknown)"}，scope: ${result.tokens.scope || "(none)"}）。`,
-        };
-      }
-      return { ok: false, message: result.message };
-    },
-  });
-}
-
-function makeOauthRefreshTool(flow: BrokerAuth) {
-  return defineTool({
-    name: "engineer_oauth_refresh",
-    description:
-      "主动用 refresh_token 换一个新的 access_token。access_token 8 小时过期、refresh_token 6 个月过期；watchdog 会自动 refresh，本工具用于手动触发。",
-    parameters: {},
-    output: {
-      schema: OAUTH_SIMPLE_OUTPUT,
-      render(_args, value) {
-        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
-      },
-    },
-    async execute() {
-      return flow.refresh();
-    },
-  });
-}
-
-function makeOauthRevokeTool(flow: BrokerAuth) {
-  return defineTool({
-    name: "engineer_oauth_revoke",
-    description:
-      "清空所有 GitHub 凭据（access_token + refresh_token）。撤销后下一次操作需要重新发起 Device Flow。注意：这只是清本地副本；要撤销 GitHub 端的授权，用户需要去 https://github.com/settings/applications 自己撤销。",
-    parameters: {},
-    output: {
-      schema: OAUTH_SIMPLE_OUTPUT,
-      render(_args, value) {
-        return [{ type: "text", text: String((value as Record<string, unknown>).message ?? "") }];
-      },
-    },
-    async execute() {
-      await flow.clearAll();
-      return { ok: true, message: "凭据已清空。下一次需要调用 engineer_oauth_start 重新授权。" };
-    },
-  });
-}
 
 /* ============================================================== */
 /*  Bundle apply                                                   */
@@ -832,21 +732,9 @@ export function apply(
   }, "github-engineer: status tool");
 
   // 2. Register the OAuth tools.
-  ctx.effect(() => {
-    return ctx.tools.register(makeOauthStartTool(flow));
-  }, "github-engineer: oauth_start tool");
 
-  ctx.effect(() => {
-    return ctx.tools.register(makeOauthFinishTool(flow));
-  }, "github-engineer: oauth_finish tool");
 
-  ctx.effect(() => {
-    return ctx.tools.register(makeOauthRefreshTool(flow));
-  }, "github-engineer: oauth_refresh tool");
 
-  ctx.effect(() => {
-    return ctx.tools.register(makeOauthRevokeTool(flow));
-  }, "github-engineer: oauth_revoke tool");
 
   // 2.5. Register engineer_run (v0.5.0 bootstrap).
   ctx.effect(() => {
@@ -917,8 +805,8 @@ export function apply(
       order: SYSTEM_PROMPT_SECTION_ORDER,
       text:
         `本机已安装 ${PLUGIN_DISPLAY_NAME} 插件（GitHub 仓库工程脚手架，plugin_id=${PLUGIN_ID}）。` +
-        "Agent tools: engineer_status（查看状态）、engineer_oauth_start（发起 Device Flow）、" +
-        "engineer_oauth_finish（轮询 token）、engineer_oauth_refresh（主动刷新）、engineer_oauth_revoke（撤销）。" +
+        "Agent tools: engineer_status（查看状态）、engineer_run（读取上下文）。" +
+        "GitHub 登录是用户动作，在 Settings 面板完成；agent 不参与登录流程。" +
         `Loopback HTTP routes: ${paths}。`,
       }),
       () =>

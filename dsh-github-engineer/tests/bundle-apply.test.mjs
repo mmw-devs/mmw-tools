@@ -177,12 +177,19 @@ console.log("\n--- Test 1: high-level agent tools ---");
   const names = ctx.captured.toolDefs.map((t) => t.name).sort();
   eq(pluginId, "github-engineer", "pluginId export");
   truthy(names.includes("engineer_status"), "engineer_status registered");
-  truthy(names.includes("engineer_oauth_start"), "engineer_oauth_start registered");
-  truthy(names.includes("engineer_oauth_finish"), "engineer_oauth_finish registered");
-  truthy(names.includes("engineer_oauth_refresh"), "engineer_oauth_refresh registered");
-  truthy(names.includes("engineer_oauth_revoke"), "engineer_oauth_revoke registered");
   truthy(names.includes("engineer_run"), "engineer_run registered");
-  eq(names.length, 6, "exactly 6 high-level tools registered (no MCP tools yet)");
+  // PANEL-CONTRACT §7: sign-in is a human action, so no oauth tool may be
+  // exposed to the agent. Asserting the count *and* the absence keeps a
+  // future re-addition from slipping through as "just one more tool".
+  for (const gone of [
+    "engineer_oauth_start",
+    "engineer_oauth_finish",
+    "engineer_oauth_refresh",
+    "engineer_oauth_revoke",
+  ]) {
+    eq(names.includes(gone), false, `${gone} is not exposed to the agent`);
+  }
+  eq(names.length, 2, "exactly 2 high-level tools registered");
 }
 
 /* ============================================================== */
