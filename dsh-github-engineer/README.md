@@ -54,7 +54,7 @@ pnpm install
 pnpm --filter dsh-github-engineer-mcp build   # MCP child
 pnpm build:all                                # host bundle + client bundle
 
-dsh plugin --profile web add link:$PWD
+dsh plugin --profile web add file:$PWD   # `file:`, not `link:` — see below
 # restart `dsh web`
 ```
 

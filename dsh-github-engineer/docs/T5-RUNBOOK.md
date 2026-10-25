@@ -51,7 +51,7 @@ environment setup. Step 5 is a gate. Steps 6–9 write to the real repo.
 
 ## 1. Build
 
-The profile links to this checkout, so the bundles must be current.
+The profile installs from this checkout (`file:`), so the bundles must be current. Avoid `link:`: it skips peer resolution and the Settings panel silently never loads.
 
 ```powershell
 cd <path-to>\mmw-tools\dsh-github-engineer
@@ -78,7 +78,7 @@ down without booting anything.
 ## 3. Install the plugin
 
 ```powershell
-& $dsh plugin --profile t5 add link:C:\Users\weunimix\Desktop\WorkLibrary\ffxivStrategy\mmw-tools\dsh-github-engineer
+& $dsh plugin --profile t5 add file:C:\Users\weunimix\Desktop\WorkLibrary\ffxivStrategy\mmw-tools\dsh-github-engineer
 ```
 
 Then confirm the row is in the composed profile:
@@ -89,6 +89,13 @@ Then confirm the row is in the composed profile:
 
 Expect `id: github-engineer`, `name: dsh-github-engineer`, and the
 `repoBinding` block from the plugin's `cordis.patch.yml`.
+
+### Note on `file:` installs
+
+Installing from this checkout with `file:` was observed to leave the
+**source** checkout's `node_modules` empty. Re-run `pnpm install
+--frozen-lockfile` in `dsh-github-engineer` after installing, or rebuild
+before you next run the suites.
 
 ## 4. Point it at a working directory
 

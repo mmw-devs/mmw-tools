@@ -6,7 +6,7 @@ Two distribution channels. They differ in one important way: **whether the build
 |---|---|---|
 | npm | `dsh plugin --profile web add dsh-github-engineer` | No — `prepublishOnly` builds before packing |
 | git | `dsh plugin --profile web add "git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-github-engineer"` | **Yes** — `dsh plugin add` does not run a build |
-| source | `dsh plugin --profile web add link:/abs/path/to/dsh-github-engineer` | No — you build first |
+| source | `dsh plugin --profile web add file:/abs/path/to/dsh-github-engineer` | No — you build first |
 
 `dsh plugin add` installs a package and mounts its `dsh.bundle`; it never runs a build step. So a git install only works if the artifacts the manifest points at already exist in the tree:
 
@@ -31,6 +31,18 @@ Both `lib/` and `mcp-server/dist/` are currently in `.gitignore`, which means **
 3. Commit the output together with the source change that produced it, in the same commit. A source-only commit leaves the published artifact stale, which is worse than either extreme.
 
 The cost is that every source change now touches generated files. Do not mix the two: if `lib/` is committed, it must be regenerated in every commit that changes `src/`.
+
+## Use `file:`, not `link:`
+
+`dsh plugin add link:<dir>` symlinks the package and tells pnpm **not**
+to resolve the package's peer dependencies. The host bundle still loads,
+which is why the mistake is easy to miss — but the browser-side module
+is listed in the boot payload and then never served, so the Settings
+panel silently does not appear.
+
+`file:<dir>` resolves peers against the profile and serves the client
+module correctly. Use it for every local install, including the T5
+runbook.
 
 ## Why `.npmignore` exists
 

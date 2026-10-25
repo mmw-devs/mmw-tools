@@ -636,24 +636,119 @@ interface BundleConfig {
   workingDir?: string;
 }
 
+/**
+ * Read a service from the host context without assuming it exists.
+ *
+ * Cordis resolves `ctx.<service>` through a getter that may throw when
+ * the service is declared but not ready. Since none of these services is
+ * declared (see CORDIS_INJECT), a missing one should read as undefined
+ * rather than take the whole plugin down at activation.
+ */
+function safeAccess<T>(get: () => T | undefined): T | undefined {
+  try {
+    return get();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Run `register` once `<service>` becomes available, without making the
+ * plugin's activation depend on it.
+ *
+ * Declaring these services in `inject` would make the whole entry wait —
+ * and wait forever if a profile never provides them, which is how this
+ * plugin previously ended up `pending` and completely inert. Not
+ * declaring them means we activate early, before `webServer` exists, so
+ * registration has to be retried. Bounded, so a missing service produces
+ * one warning instead of a spinning timer.
+ */
+/**
+ * Read a service by name.
+ *
+ * `ctx.get(name)` is the canonical accessor for a service the plugin did
+ * not declare in `inject`. Property access (`ctx.webServer`) only works
+ * for declared ones on some cordis versions, which silently returned
+ * undefined here — the plugin activated, then registered nothing.
+ * The property form is kept as a fallback so the test stubs, which have
+ * no `get`, keep working.
+ */
+function serviceGetter(ctx: unknown, name: string): () => unknown {
+  return () => {
+    const c = ctx as { get?: (n: string) => unknown } & Record<string, unknown>;
+    if (typeof c.get === "function") {
+      try {
+        return c.get(name);
+      } catch {
+        /* fall through to property access */
+      }
+    }
+    return c[name];
+  };
+}
+
+function whenService(
+  get: () => unknown,
+  register: () => () => void,
+  onTimeout: () => void,
+  timeoutMs = 15_000,
+  intervalMs = 100
+): () => void {
+  let disposed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposer: (() => void) | undefined;
+  const deadline = Date.now() + timeoutMs;
+
+  const attempt = () => {
+    if (disposed) return;
+    if (safeAccess(get as () => unknown) !== undefined) {
+      disposer = register();
+      return;
+    }
+    if (Date.now() >= deadline) {
+      onTimeout();
+      return;
+    }
+    timer = setTimeout(attempt, intervalMs);
+    (timer as { unref?: () => void }).unref?.();
+  };
+  attempt();
+
+  return () => {
+    disposed = true;
+    if (timer) clearTimeout(timer);
+    disposer?.();
+  };
+}
+
 export function apply(
   ctx: {
     tools: { register: (d: unknown) => () => void };
-    webServer: {
+    webServer?: {
       port: number;
       register: (route: { kind: "exact"; path: string; handler: (req: any, res: any) => Promise<void> }) => () => void;
     };
-    systemPrompt: {
+    systemPrompt?: {
       section: (s: { name: string; order: number; text: string }) => () => void;
     };
     effect: (fn: () => () => void, label: string) => () => void;
-    logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+    logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
   },
   config?: BundleConfig
 ): void {
   const oauthClientId = config?.githubOAuthClientId ?? "";
   const repo = config?.repoBinding ?? {};
   const binding = normalizeBinding(repo);
+
+  // `logger` is optional in CORDIS_INJECT: a profile that does not
+  // provide it must not leave this entry pending forever. Fall back to
+  // the process streams, which DSH already captures.
+  const consoleLogger = {
+    info: (m: string) => console.log(m),
+    warn: (m: string) => console.warn(m),
+    error: (m: string) => console.error(m),
+  };
+  const logger = safeAccess(() => ctx.logger) ?? consoleLogger;
   const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
   const workingDir =
     config?.workingDir && config.workingDir.length > 0
@@ -664,9 +759,9 @@ export function apply(
   const audit = createAuditLogger({
     file: auditPath(),
     maxBytes: MAX_AUDIT_BYTES,
-    warn: (m) => ctx.logger.warn(m),
+    warn: (m) => logger.warn(m),
   });
-  const log = createRedactingLogger(ctx.logger);
+  const log = createRedactingLogger(logger);
 
   // Construct auth services.
   const store = new TokenStore();
@@ -705,15 +800,15 @@ export function apply(
             details: [],
             summary: `无法拉取 AGENTS.md：${bindingLike.owner}/${bindingLike.name}@${String(repo.baseBranch ?? "main")}`,
           };
-          ctx.logger.warn(`github-engineer: ${agentsMdDrift.summary}`);
+          logger.warn(`github-engineer: ${agentsMdDrift.summary}`);
         } else {
           const check = checkAgentsMd(bindingLike, agentsMd);
           agentsMdDrift = check;
-          if (check.ok) ctx.logger.info(`github-engineer: ${check.summary}`);
-          else ctx.logger.warn(`github-engineer: ${check.summary}`);
+          if (check.ok) logger.info(`github-engineer: ${check.summary}`);
+          else logger.warn(`github-engineer: ${check.summary}`);
         }
       } catch (err) {
-        ctx.logger.error(
+        logger.error(
           `github-engineer: AGENTS.md drift check threw: ${
             err instanceof Error ? err.message : String(err)
           }`
@@ -773,14 +868,35 @@ export function apply(
 
   // 3. Register loopback HTTP routes.
   ctx.effect(() => {
-    const disposers = makeRoutes({ store, flow }).map((r) => ctx.webServer.register(r));
-    return () => disposers.forEach((d) => d());
+    let disposers: Array<() => void> = [];
+    const dispose = whenService(
+      serviceGetter(ctx, "webServer"),
+      () => {
+        const ws = safeAccess(serviceGetter(ctx, "webServer")) as {
+          register: (route: unknown) => () => void;
+        };
+        disposers = makeRoutes({ store, flow }).map((r) => ws.register(r));
+        return () => disposers.forEach((d) => d());
+      },
+      () =>
+        logger.warn(
+          "github-engineer: `webServer` never became available; the Settings panel routes were not registered"
+        )
+    );
+    return () => {
+      dispose();
+      disposers.forEach((d) => d());
+    };
   }, "github-engineer: routes");
 
   // 4. Announce to the agent via a system prompt section.
   ctx.effect(() => {
     const paths = Object.values(API).join(", ");
-    return ctx.systemPrompt.section({
+    return whenService(
+      serviceGetter(ctx, "systemPrompt"),
+      () => (safeAccess(serviceGetter(ctx, "systemPrompt")) as {
+        section: (s: unknown) => () => void;
+      }).section({
       name: `plugin:${PLUGIN_ID}`,
       order: SYSTEM_PROMPT_SECTION_ORDER,
       text:
@@ -788,7 +904,12 @@ export function apply(
         "Agent tools: engineer_status（查看状态）、engineer_oauth_start（发起 Device Flow）、" +
         "engineer_oauth_finish（轮询 token）、engineer_oauth_refresh（主动刷新）、engineer_oauth_revoke（撤销）。" +
         `Loopback HTTP routes: ${paths}。`,
-    });
+      }),
+      () =>
+        logger.warn(
+          "github-engineer: `systemPrompt` never became available; the agent announcement was not registered"
+        )
+    );
   }, "github-engineer: section");
 
   // 5. Refresh watchdog — every 60s, refresh access_token if it's
@@ -799,10 +920,10 @@ export function apply(
         try {
           const refreshed = await flow.ensureFresh();
           if (refreshed) {
-            ctx.logger.info(`github-engineer: access_token auto-refreshed`);
+            logger.info(`github-engineer: access_token auto-refreshed`);
           }
         } catch (err) {
-          ctx.logger.error(
+          logger.error(
             `github-engineer: refresh watchdog threw: ${
               err instanceof Error ? err.message : String(err)
             }`
@@ -817,7 +938,7 @@ export function apply(
   // 6. Spawn the MCP server and re-publish its tools.
   ctx.effect(() => {
     if (!existsSync(pathToConnect)) {
-      ctx.logger.warn(
+      logger.warn(
         `github-engineer: mcp-server entry not found at ${pathToConnect}; skipping MCP spawn. Run \`pnpm build\` inside mcp-server/.`
       );
       return () => {};
@@ -838,7 +959,7 @@ export function apply(
           { method: "tools/list" },
           ListToolsResultSchema
         );
-        ctx.logger.info(
+        logger.info(
           `github-engineer: MCP server connected, ${tools.length} tool(s) discovered`
         );
         const disposers: Array<() => void> = [];
@@ -882,7 +1003,7 @@ export function apply(
           client.close().catch(() => {});
         };
       } catch (err) {
-        ctx.logger.error(
+        logger.error(
           `github-engineer: failed to start MCP server: ${
             err instanceof Error ? err.message : String(err)
           }`

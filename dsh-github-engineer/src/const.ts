@@ -27,8 +27,26 @@ export const PLUGIN_NAMESPACE = "mcp__github-engineer__";
 export const WORKING_DIR_SUFFIX = "workspaces";
 
 /** Cordis services this plugin depends on. */
-export const CORDIS_INJECT = ["tools", "systemPrompt", "logger"];
-
+/**
+ * Services this plugin needs from the host context.
+ *
+ * Only `tools` is listed, and only because without it there is nothing
+ * to do. Everything else is reached defensively at the call site:
+ *
+ *  - A *required* service that a profile does not provide leaves the
+ *    whole entry `pending` forever, with a single boot warning and no
+ *    tools, routes or panel. That is exactly what happened: `logger` is
+ *    not provided by the shipped web profile, so the plugin never
+ *    activated at all.
+ *  - Declaring them here at all is not help either: the host's cordis
+ *    version reads a `{ required, optional }` object as a list of
+ *    service names, so it waited for services literally called
+ *    "required" and "optional".
+ *
+ * So: declare the one thing that is genuinely mandatory, and tolerate
+ * the rest missing.
+ */
+export const CORDIS_INJECT = ["tools"];
 /** System-prompt section order (lower renders earlier). */
 export const SYSTEM_PROMPT_SECTION_ORDER = 210;
 

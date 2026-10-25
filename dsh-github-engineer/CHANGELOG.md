@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.7.0 — real mounting
+
+Everything below was found by installing the plugin into a real DSH
+profile and running it against the real bound repository. None of it was
+reachable by the offline suites, which stub the host context.
+
+### Fixed
+
+- **The plugin never activated.** `inject` listed `logger`, which the
+  shipped web profile does not provide, so cordis left the entry
+  `pending` forever: no tools, no routes, no panel, one line of boot
+  warning. `inject` is now `["tools"]`, and the other services are
+  reached through `ctx.get(name)` with bounded retries and a warning on
+  timeout. (`optional`/`required` object form is not supported by this
+  cordis: it reads the object's keys as service names.)
+- **The panel never loaded with `link:` installs.** pnpm does not
+  resolve a linked package's peer dependencies, so the browser module was
+  listed in the boot payload and then never served. Docs now use
+  `file:`.
+- **The access token was written to `.git/config`.** `git clone` stores
+  the credentialed URL as `origin`. `repo_clone` now resets it
+  immediately; `pr_create` pushes to an explicit URL and no longer uses
+  `-u`.
+- **Every npm-based preflight and bootstrap failed on Windows** with
+  `spawn npm ENOENT`: `npm` is `npm.cmd` and `execFile` ignores
+  `PATHEXT`. Preflight now runs through the shell on Windows, using the
+  string form of `exec` to avoid DEP0190.
+
+### Added
+
+- `repoBinding.bootstrap` — one-time setup (e.g. `npm ci`) before the
+  first edit, because a fresh clone has no devDependencies and every
+  commit was refused by its own pre-flight.
+- `mcpBindingEnv()` — the host now actually passes the binding and the
+  token-store path to the MCP child. Before this the child saw an empty
+  working directory and no repository.
+- `scripts/t5-readonly.mjs` / `scripts/t5-write.mjs` — the real-repo
+  check, repeatable.
+
+### Verified
+
+- Live profile: `/api/github-engineer/status` → 200 with the
+  secret-free JSON; unknown paths → 404; the client bundle is served and
+  registers `settings.section`.
+- Real repo, read path 19/19; write path 8/8 (bootstrap, preflight,
+  commit, draft PR #16, verified with `gh`, then closed).
+
+
 All notable changes to this plugin are documented here.
 
 The plugin follows a `0.x` line: the surface may change between minor
