@@ -202,6 +202,7 @@ on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 |---|---|
 | [`docs/OAUTH-FLOW.md`](docs/OAUTH-FLOW.md) | End-user OAuth walkthrough, error table, revocation |
 | [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
+| [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | Step-by-step real round trip against the bound repo: gates, stop conditions, cleanup |
 | [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) | Who keeps `AGENTS.md` and the binding in step |
 | [`docs/INCREMENT-3-CHECKLIST.md`](docs/INCREMENT-3-CHECKLIST.md) | Per-tool hardening spec |
 | [`docs/INCREMENT-3-DESIGN.md`](docs/INCREMENT-3-DESIGN.md) | What the eight MCP tools actually do |
