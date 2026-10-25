@@ -153,7 +153,11 @@ export function makeRoutes(deps: RouteDeps): Array<{
       handler: async (req, res) => {
         if (!guard(req, res, "GET")) return;
         const view = await store.view();
-        writeJson(res, 200, { ...view, status: flow.status() });
+        // `status()` is the synchronous in-memory view (is a sign-in
+        // pending?). The store is the source of truth for "are we signed
+        // in", so the panel must see the resolved status — otherwise a
+        // successful login still renders as no_token.
+        writeJson(res, 200, { ...view, status: await flow.resolvedStatus() });
       },
     },
     {
