@@ -632,6 +632,9 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
   );
   ok("a fresh clone cannot commit when nothing installs dependencies");
 
+  // Insert mode deliberately: these assertions are about the bootstrap
+  // lifecycle, so they must not depend on what a previous, refused edit
+  // left behind (or on the rollback restoring it).
   const boot = {
     ...gated,
     bootstrap: { cmd: "node scripts/bootstrap.js", whenMissing: "node_modules", timeoutSeconds: 60 },
@@ -639,7 +642,7 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
   const first = await repoEdit(
     {
       branch: "content/with-bootstrap",
-      edits: [{ path: "public/data.json", mode: "replace", find: '"Alpha"', replace: '"Beta"' }],
+      edits: [{ path: "public/data.json", mode: "insert", content: "\n" }],
       commit_message: "content: with bootstrap",
     },
     boot
@@ -656,7 +659,7 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
   const second = await repoEdit(
     {
       branch: "content/with-bootstrap-2",
-      edits: [{ path: "public/data.json", mode: "replace", find: '"Beta"', replace: '"Gamma"' }],
+      edits: [{ path: "public/data.json", mode: "insert", content: "\n" }],
       commit_message: "content: second edit",
     },
     boot
@@ -673,7 +676,7 @@ if (process.env.E2E_COUNTER) appendFileSync(process.env.E2E_COUNTER, 'ran\\n')
       repoEdit(
         {
           branch: "content/bad-bootstrap",
-          edits: [{ path: "public/data.json", mode: "replace", find: '"Gamma"', replace: '"Delta"' }],
+          edits: [{ path: "public/data.json", mode: "insert", content: "\n" }],
           commit_message: "content: bad bootstrap",
         },
         badBoot
