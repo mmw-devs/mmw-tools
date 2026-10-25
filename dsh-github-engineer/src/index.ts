@@ -36,8 +36,7 @@ import {
   mcpServerEntryPath,
 } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
-import { TokenStore, configPath } from "./auth/token-store.js";
-import { DeviceFlow } from "./auth/device-flow.js";
+import { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
 
@@ -113,7 +112,7 @@ export function mcpBindingEnv(binding: NormalizedBinding, workingDir: string): R
     GHOST_DENYLIST: binding.denylistPaths.join(","),
     GHOST_PREFLIGHT_CMD: binding.preflight.cmd,
     GHOST_PREFLIGHT_TIMEOUT: String(binding.preflight.timeoutSeconds),
-    GHOST_TOKEN_FILE: configPath(),
+    GHOST_TOKEN_FILE: installationTokenPath(),
   };
   if (binding.bootstrap.cmd.length > 0) {
     env.GHOST_BOOTSTRAP_CMD = binding.bootstrap.cmd;
@@ -248,12 +247,12 @@ function formatExpiry(timestampMs: number): string {
 }
 
 function makeStatusTool(deps: {
-  oauthClientId: string;
+  brokerUrl: string;
   repo: Record<string, unknown>;
   scopes: string[];
   agentsMdDrift: ReturnType<typeof checkAgentsMd> | null;
-  store: TokenStore;
-  flow: DeviceFlow;
+  store: BrokerAuth;
+  flow: BrokerAuth;
 }) {
   return defineTool({
     name: "engineer_status",
@@ -267,11 +266,9 @@ function makeStatusTool(deps: {
       },
     },
     async execute() {
-      const oauthMasked = deps.oauthClientId
-        ? `${deps.oauthClientId.slice(0, 6)}****`
-        : "(未设置 — 把 cordis.patch.yml 里的 githubOAuthClientId 换成真实的)";
+      const brokerLine = deps.brokerUrl;
       const view = await deps.store.view();
-      const status = deps.flow.status();
+      const status = await deps.flow.resolvedStatus();
 
       const driftLine = deps.agentsMdDrift
         ? deps.agentsMdDrift.unavailable
@@ -284,33 +281,30 @@ function makeStatusTool(deps: {
       const authLines: string[] = [`Auth 状态: ${status}`];
       if (status === "authorized") {
         authLines.push(`登录身份: ${view.login || "(unknown)"}`);
-        authLines.push(`Scopes: ${view.scope || "(none)"}`);
-        authLines.push(`access_token 剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
-        authLines.push(`refresh_token 剩余: ${formatExpiry(view.refreshTokenExpiresAt)}`);
+        authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
+        authLines.push("仓库写入使用 broker 签发的 1 小时 App 令牌");
       } else if (status === "reauth_needed") {
-        authLines.push("⚠️ access_token 失效 — 调用 engineer_oauth_start 重新授权");
+        authLines.push("⚠️ 会话已过期 — 调用 engineer_oauth_start 重新登录");
       } else if (status === "device_pending") {
-        authLines.push("用户正在浏览器完成授权 — 调用 engineer_oauth_finish 轮询");
+        authLines.push("等待浏览器完成授权 — 调用 engineer_oauth_finish 轮询");
       } else {
-        authLines.push("调用 engineer_oauth_start 发起 Device Flow");
+        authLines.push("调用 engineer_oauth_start 获取登录链接");
       }
 
       return {
         ok: true,
         message:
           `${PLUGIN_DISPLAY_NAME} 已挂载（plugin_id=${PLUGIN_ID}）。\n` +
-          `OAuth App: ${oauthMasked}\n` +
+          `Broker: ${brokerLine}\n` +
           `Repo binding: ${String(deps.repo.owner ?? "?")}/${String(deps.repo.name ?? "?")} (${String(deps.repo.baseBranch ?? "main")})\n` +
           `Allowed paths: ${Array.isArray(deps.repo.allowlistPaths) ? deps.repo.allowlistPaths.join(", ") : "(空)"}\n` +
           `Default scopes: ${deps.scopes.join(" ") || "(空)"}\n` +
           `MCP server entry: ${pathToConnect}\n` +
           `\n--- Auth ---\n${authLines.join("\n")}\n` +
           `\n--- AGENTS.md ---\n${driftLine}\n` +
-          `\n下一步：实现 OAuth Device Flow 后调用 engineer_oauth_start。`,
+          `\n下一步：调用 engineer_oauth_start，把返回的链接在浏览器打开完成登录。`,
         pluginId: PLUGIN_ID,
-        oauthClientIdMasked: deps.oauthClientId
-          ? `${deps.oauthClientId.slice(0, 6)}****`
-          : "",
+        oauthClientIdMasked: "",
         repoOwner: String(deps.repo.owner ?? ""),
         repoName: String(deps.repo.name ?? ""),
         baseBranch: String(deps.repo.baseBranch ?? "main"),
@@ -518,7 +512,7 @@ const OAUTH_SIMPLE_OUTPUT = {
   },
 };
 
-function makeOauthStartTool(flow: DeviceFlow) {
+function makeOauthStartTool(flow: BrokerAuth) {
   return defineTool({
     name: "engineer_oauth_start",
     description:
@@ -557,7 +551,7 @@ function makeOauthStartTool(flow: DeviceFlow) {
   });
 }
 
-function makeOauthFinishTool(flow: DeviceFlow) {
+function makeOauthFinishTool(flow: BrokerAuth) {
   return defineTool({
     name: "engineer_oauth_finish",
     description:
@@ -582,7 +576,7 @@ function makeOauthFinishTool(flow: DeviceFlow) {
   });
 }
 
-function makeOauthRefreshTool(flow: DeviceFlow) {
+function makeOauthRefreshTool(flow: BrokerAuth) {
   return defineTool({
     name: "engineer_oauth_refresh",
     description:
@@ -600,7 +594,7 @@ function makeOauthRefreshTool(flow: DeviceFlow) {
   });
 }
 
-function makeOauthRevokeTool(flow: DeviceFlow) {
+function makeOauthRevokeTool(flow: BrokerAuth) {
   return defineTool({
     name: "engineer_oauth_revoke",
     description:
@@ -624,8 +618,8 @@ function makeOauthRevokeTool(flow: DeviceFlow) {
 /* ============================================================== */
 
 interface BundleConfig {
-  githubOAuthClientId?: string;
-  defaultScopes?: string[];
+  /** Broker that issues sessions and installation tokens. */
+  brokerUrl?: string;
   repoBinding?: Record<string, unknown>;
   /**
    * Local working directory where the repo is (or will be) cloned.
@@ -736,7 +730,8 @@ export function apply(
   },
   config?: BundleConfig
 ): void {
-  const oauthClientId = config?.githubOAuthClientId ?? "";
+  const brokerUrl =
+    config?.brokerUrl ?? process.env.GHOST_BROKER_URL ?? "https://race-ops-broker.mmw-team.icu";
   const repo = config?.repoBinding ?? {};
   const binding = normalizeBinding(repo);
 
@@ -749,7 +744,7 @@ export function apply(
     error: (m: string) => console.error(m),
   };
   const logger = safeAccess(() => ctx.logger) ?? consoleLogger;
-  const scopes: string[] = Array.isArray(config?.defaultScopes) ? config.defaultScopes : [];
+  const scopes: string[] = [];
   const workingDir =
     config?.workingDir && config.workingDir.length > 0
       ? config.workingDir
@@ -764,8 +759,15 @@ export function apply(
   const log = createRedactingLogger(logger);
 
   // Construct auth services.
-  const store = new TokenStore();
-  const flow = new DeviceFlow({ store, clientId: oauthClientId, scopes });
+  // One implementation: BrokerAuth replaces both the token store and the
+  // Device Flow state machine. It is handed to the routes twice because
+  // that surface still names the two halves `store` and `flow`.
+  const auth = new BrokerAuth({
+    brokerUrl,
+    installationTokenFile: installationTokenPath(),
+  });
+  const store = auth;
+  const flow = auth;
 
   // Hydrate lastStatus before exposing it.
   ctx.effect(() => {
@@ -821,7 +823,7 @@ export function apply(
   // 1. Register the status tool.
   ctx.effect(() => {
     return ctx.tools.register(
-      makeStatusTool({ oauthClientId, repo, scopes, agentsMdDrift, store, flow })
+      makeStatusTool({ brokerUrl, repo, scopes, agentsMdDrift, store, flow })
     );
   }, "github-engineer: status tool");
 
@@ -1027,6 +1029,6 @@ export const inject = CORDIS_INJECT;
 // Re-export auth internals for tests and the upcoming MCP bridge.
 // (The MCP child process imports from this same bundle via the lib
 //  entry — see NEXT-STEPS.md "Settings web panel".)
-export { TokenStore } from "./auth/token-store.js";
-export { DeviceFlow } from "./auth/device-flow.js";
+export { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+export { SessionStore } from "./auth/session-store.js";
 export { makeRoutes, API } from "./routes.js";

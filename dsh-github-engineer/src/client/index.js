@@ -123,13 +123,13 @@ function statusText(view) {
   if (view === null) return "加载中…";
   switch (view.status) {
     case "no_token":
-      return `未授权 · 点击下方 [Connect GitHub] 发起 Device Flow`;
+      return `未登录 · 点击下方 [登录 GitHub] 打开授权页`;
     case "device_pending":
       return `等待用户在浏览器完成授权（user_code 已展示在下方）`;
     case "authorized":
       return `已授权 · ${view.login || "(unknown)"} · scope: ${view.scope || "(none)"} · access_token ${formatRemaining(view.accessTokenExpiresAt)} 后过期`;
     case "reauth_needed":
-      return `⚠️ access_token 失效 · 重新 [Connect GitHub]`;
+      return `⚠️ 会话已过期 · 重新 [登录 GitHub]`;
   }
 }
 
@@ -216,12 +216,12 @@ function buildPanel(runtime) {
         if (!result.ok) {
           throw new GithubApiError(result.error ?? "未知错误");
         }
-        if (!result.userCode || !result.verificationUri) {
-          throw new GithubApiError("GitHub 响应缺少 userCode / verificationUri");
+        if (!result.verificationUri) {
+          throw new GithubApiError("broker 响应缺少登录链接");
         }
         setPending(result);
         setMsg(
-          `请在浏览器打开 ${result.verificationUri} 输 user_code ${result.userCode} 完成授权（5 分钟内）。`
+          `请在浏览器打开 ${result.verificationUri} 完成 GitHub 授权（5 分钟内）。`
         );
         setMsgKind("info");
       });
@@ -303,7 +303,7 @@ function buildPanel(runtime) {
       _jsx("p", {
         style: s.hint,
         children:
-          "通过 GitHub OAuth Device Flow 连接 GitHub。首次使用：点 Connect GitHub → 在浏览器打开 github.com/login/device → 输入 user_code 完成授权。Token 自动存到 ~/.dsh/dsh-github-engineer.json（mode 0600），access_token 8 小时、refresh_token 6 个月，到期自动续期。",
+          "通过 race-ops broker 登录 GitHub。点「登录 GitHub」会在浏览器打开授权页，完成后回到这里点「刷新」。会话有效期 12 小时，保存在 ~/.dsh（mode 0600）；仓库写入使用 broker 签发的 1 小时 App 令牌，私钥不在本机。",
       }),
       _jsx("div", { style: statusStyle(viewState), children: statusText(viewState) }),
       _jsxs("div", {
@@ -314,7 +314,7 @@ function buildPanel(runtime) {
             style: btnPrimary,
             disabled: busy,
             onClick: startOauth,
-            children: isPending ? "重新获取 user_code" : "Connect GitHub",
+            children: isPending ? "重新打开授权页" : "登录 GitHub",
           }),
           _jsx("button", {
             type: "button",

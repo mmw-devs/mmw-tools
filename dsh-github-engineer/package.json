@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-engineer",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "DeepSeek Harness plugin: lets the DSH agent read AGENTS.md, edit a single configured repo under allowlist, run pre-flight, and open a draft PR on a content/* branch. OAuth Device Flow with the user's GitHub identity.",
   "type": "module",
@@ -44,7 +44,7 @@
     "build:all": "pnpm build && pnpm build:client",
     "watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/token-store.test.mjs && node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/engineer-run.test.mjs && node tests/audit.test.mjs && node tests/github-app.test.mjs && node tests/session-store.test.mjs && node tests/broker-client.test.mjs && node broker/tests/core.test.mjs && node broker/tests/server.test.mjs",
+    "test": "node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/engineer-run.test.mjs && node tests/audit.test.mjs && node tests/github-app.test.mjs && node tests/session-store.test.mjs && node tests/broker-client.test.mjs && node broker/tests/core.test.mjs && node broker/tests/server.test.mjs",
     "test:smoke": "node mcp-server/tests/tools-list.test.mjs",
     "test:integration": "node tests/integration-git.test.mjs",
     "check:namespace": "node scripts/check-namespace-consistency.mjs",

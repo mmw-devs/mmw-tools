@@ -28,7 +28,7 @@ if (!existsSync(BUNDLE_DIST) || !existsSync(MCP_DIST)) {
   process.exit(2);
 }
 
-const { apply, makeRoutes, API, TokenStore } = await import(
+const { apply, makeRoutes, API } = await import(
   pathToFileURL(BUNDLE_DIST).href
 );
 
@@ -63,42 +63,48 @@ apply(ctx, {
   },
 });
 
-const store = new TokenStore();
+// The routes take `store` and `flow` from one implementation
+// (BrokerAuth). For HTTP-behaviour tests the broker is stubbed: no
+// network, no session file, and the two halves are plain objects that
+// implement exactly the methods the route handlers call.
+const emptyView = {
+  configured: false,
+  login: "",
+  scope: "",
+  accessTokenMasked: "",
+  accessTokenExpiresAt: 0,
+  refreshTokenExpiresAt: 0,
+  tokenUpdatedAt: "",
+  configPath: "C:\\x\\.dsh\\dsh-github-engineer-session.json",
+};
 
-// A fake device flow. `pnpm check` must not depend on the network: the
-// real DeviceFlow.begin() posts to github.com, and a suite that reaches
-// out could hang (it did — an unanswered fetch has no default timeout)
-// or fail for reasons unrelated to this plugin. The route contract is
-// what this suite tests; the flow's HTTP behaviour is covered by the
-// timeout added in src/auth/device-flow.ts, which cannot be exercised
-// offline either way.
-let nextFlowState = "no_token";
-const fakeFlow = {
-  status: () => nextFlowState,
+const store = {
+  async view() {
+    return { ...emptyView };
+  },
+};
+
+const flow = {
+  status: () => "no_token",
+  async resolvedStatus() {
+    return "no_token";
+  },
   async begin() {
-    nextFlowState = "device_pending";
     return {
-      userCode: "ABCD-1234",
-      verificationUri: "https://github.com/login/device",
-      expiresAt: Date.now() + 900_000,
+      userCode: "",
+      verificationUri: "https://race-ops-broker.mmw-team.icu/auth/github/start?state=stub",
+      expiresAt: Date.now() + 300_000,
       interval: 5,
     };
   },
   async poll() {
-    return { ok: false, message: "authorization_pending" };
+    return { ok: false, message: "等待浏览器完成授权…" };
   },
   async refresh() {
-    return { ok: false, message: "no refresh_token in this fixture" };
+    return { ok: false, message: "尚未登录，请先完成浏览器授权。" };
   },
-  async ensureFresh() {
-    return false;
-  },
-  async clearAll() {
-    nextFlowState = "no_token";
-  },
+  async clearAll() {},
 };
-
-const flow = fakeFlow;
 
 const server = http.createServer(async (req, res) => {
   // Manually re-implement the loopback guard so the test exercises the
@@ -162,7 +168,7 @@ console.log("\n--- Test 1: GET /status returns secret-free view ---");
   eq(typeof data.configured, "boolean", "data.configured is boolean");
   console.log("    configPath:", data.configPath);
   truthy(
-    data.configPath.endsWith("dsh-github-engineer.json") ||
+    data.configPath.endsWith("dsh-github-engineer-session.json") ||
       data.configPath.endsWith("/dsh-github-engineer.json") ||
       data.configPath.endsWith("\\dsh-github-engineer.json"),
     "configPath ends with dsh-github-engineer.json"
@@ -202,10 +208,10 @@ console.log("\n--- Test 3: POST /oauth/start ---");
   eq(r.status, 200, "status code");
   const data = JSON.parse(r.body);
   eq(data.ok, true, "ok is true");
-  truthy(typeof data.userCode === "string" && data.userCode.length > 0, "userCode returned");
+  eq(data.userCode, "", "broker flows carry no user code");
   truthy(
-    data.verificationUri?.includes("github.com/login/device"),
-    "verificationUri is the Device URL"
+    data.verificationUri?.startsWith("https://race-ops-broker.mmw-team.icu/auth/github/start"),
+    "verificationUri is the broker login URL"
   );
   truthy(typeof data.expiresAt === "number", "expiresAt returned");
   truthy(typeof data.interval === "number", "interval returned");

@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.8.0 — broker auth
+
+Authentication is no longer performed by the plugin. It holds a 12-hour
+broker session and exchanges it for a 1-hour installation token issued to
+the GitHub App `race-ops-tool` (docs/AUTH-BROKER.md).
+
+### Removed
+
+- `src/auth/device-flow.ts` (362 lines) and `src/auth/token-store.ts`
+  (166 lines), plus `tests/token-store.test.mjs` and
+  `docs/OAUTH-FLOW.md`. The plugin no longer talks OAuth to GitHub at all,
+  so keeping a second auth path would have meant two implementations of
+  the same job.
+
+### Added
+
+- `src/auth/broker-auth.ts` — the single implementation. It exposes the
+  method surface the routes and status tool were already written against
+  (`begin` / `poll` / `refresh` / `clearAll` / `status` / `view`), so the
+  swap did not need a schema migration.
+- `src/auth/session-store.ts`, `src/auth/broker-client.ts` — session
+  persistence and the broker contract, 66 assertions between them.
+- `broker/` — the token broker: core (59 assertions), HTTP layer
+  (42 assertions), deployment scripts.
+
+### Notes
+
+- The installation token is written to
+  `~/.dsh/dsh-github-engineer-installation.json` (0600) because the MCP
+  child reads `accessToken` from `GHOST_TOKEN_FILE` on every call.
+  Deliberate trade-off: the alternative is restarting the MCP bridge on
+  every login and every hourly refresh. Follow-up: have the child ask the
+  broker itself.
+- `view()` still returns `accessTokenMasked` / `accessTokenExpiresAt`;
+  under the broker these describe the session token. Renaming them is a
+  schema migration and is deferred.
+
 ## 0.7.0 — real mounting
 
 Everything below was found by installing the plugin into a real DSH

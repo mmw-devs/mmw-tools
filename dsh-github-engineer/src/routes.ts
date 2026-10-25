@@ -18,8 +18,7 @@
  * themselves, then we either poll in the background or let the user
  * paste the callback URL into a "finish" form.
  */
-import type { TokenStore } from "./auth/token-store.js";
-import type { DeviceFlow, FlowResult } from "./auth/device-flow.js";
+import type { BrokerAuth, FlowResult, OpResult } from "./auth/broker-auth.js";
 
 /** Route paths — all prefixed with /api/github-engineer/. */
 export const API = {
@@ -136,8 +135,8 @@ function guard(
 }
 
 export interface RouteDeps {
-  store: TokenStore;
-  flow: DeviceFlow;
+  store: BrokerAuth;
+  flow: BrokerAuth;
 }
 
 /** Build all /api/github-engineer/* routes. */
@@ -207,7 +206,7 @@ export function makeRoutes(deps: RouteDeps): Array<{
       path: API.oauthRefresh,
       handler: async (req, res) => {
         if (!guard(req, res, "POST")) return;
-        const result: FlowResult = await flow.refresh();
+        const result: OpResult = await flow.refresh();
         writeJson(res, 200, { ok: result.ok, message: result.message });
       },
     },
