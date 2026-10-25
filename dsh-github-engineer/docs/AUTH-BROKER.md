@@ -306,50 +306,41 @@ race-ops-broker.mmw-team.icu
 https://race-ops-broker.mmw-team.icu/auth/github/callback
 ```
 
-### TLS 与共存
+### TLS：DNS-01 是唯一可行的方式（已上线）
 
-80/443 通常已经被同机上的另一个项目占用，所以**不要**直接装 Caddy —— 它会
-和现有服务抢端口。按现状二选一：
+最初计划用 certbot + HTTP-01。实测不可行：这台机器的入站 80 端口，对
+Let's Encrypt 的验证器（全部在境外）会返回腾讯的备案拦截页
+（`302 -> dnspod.qcloud.com/static/webblock.html?d=<域名>`）。权威 DNS 在
+所有 EDNS 分区都正确解析到本机，ACME 校验文件在国内访问也返回 200 ——
+失败的只有跨境入站。因此 HTTP-01 永远无法通过，与 nginx 配置无关。
 
-**（a）已有 nginx（含宝塔等面板）** —— 加一个 server 块，不动现有站点：
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name race-ops-broker.mmw-team.icu;
-
-    ssl_certificate     /etc/letsencrypt/live/race-ops-broker.mmw-team.icu/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/race-ops-broker.mmw-team.icu/privkey.pem;
-
-    location / {
-        proxy_pass         http://127.0.0.1:8787;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Forwarded-For $remote_addr;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-证书用现有 ACME 工具签：
-
-```bash
-certbot --nginx -d race-ops-broker.mmw-team.icu
-```
-
-**（b）端口空闲** —— Caddy 自动签发：
+改用 **DNS-01**：控制权通过 `_acme-challenge` TXT 记录证明，不需要任何
+入站访问。工具是 acme.sh（GitHub 在这台机器上拉不动，用 gitee 镜像安装）：
 
 ```
-race-ops-broker.mmw-team.icu {
-  reverse_proxy 127.0.0.1:8787
-}
+/root/.acme.sh/acme.sh          v3.1.5
+/etc/acme/tencent.env           Tencent_SecretId / Tencent_SecretKey，0600
+/etc/nginx/ssl/race-ops-broker/ fullchain.pem + privkey.pem
 ```
 
-两种情况都要求：
+签发命令见 `broker/deploy/issue-cert-tencent.sh`。证书由 Let's Encrypt 签发，
+`acme.sh --install-cert` 把文件装到固定路径并注册 `systemctl reload nginx`，
+所以续期时 nginx 配置不需要改动。
 
-- 腾讯云安全组与主机防火墙放行 **80 和 443**（HTTP-01 校验需要 80）
-- broker 自身只监听 **127.0.0.1:8787**，不对外
-- 若前面有 CDN/Cloudflare 代理：保持先 **DNS only** 把证书签下来，再开代理；
-  开代理时 `BROKER_PUBLIC_URL` 仍是 `https://race-ops-broker.mmw-team.icu`
+续期：acme.sh 自带 cron（每天 4 次），按 ARI 建议窗口在到期前约 30 天续期，
+本次窗口是 2026-12-23。
+
+**凭据说明**：`Tencent_SecretKey` 是腾讯云 API 密钥，能操作该账号下的 DNS
+解析。它只用于续期那一刻，broker 运行时不需要。建议用只含
+`QcloudDNSPodFullAccess` 的 CAM 子用户密钥，而不是主账号密钥。
+
+### 证书变更记录
+
+| 事项 | 结果 |
+|---|---|
+| HTTP-01（certbot + webroot） | ❌ 跨境入站被备案拦截页劫持 |
+| DNS-01（acme.sh + dns_tencent） | ✅ 2026-10-26 签发，`CN=race-ops-broker.mmw-team.icu`，至 2027-01-23 |
+| `ssl_session_cache` 名称 | 必须用独立名字（`SSL_BROKER`）：与现有站点的 `SSL` 区大小不同会让 nginx 拒绝加载 |
 
 ## 10. 分步实施（每步保持现有测试全绿）
 
