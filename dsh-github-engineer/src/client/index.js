@@ -1,167 +1,78 @@
 /**
- * dsh-github-engineer client entry — plain JavaScript.
+ * Settings panel — implementation of docs/PANEL-CONTRACT.md.
  *
- * Why plain JS: the DSH web loader wraps this file in a factory like
+ * The contract is the specification; this file is one rendering of it.
+ * Two rules govern everything here:
  *
- *   window.__ModuleLoader__.load({
- *     id: "dsh-github-engineer",
- *     factory: (require) => {
- *       let react = require("react");
- *       let jsxRuntime = require("react/jsx-runtime");
- *       // ... our code ...
- *       exports.apply = apply;
- *       return module.exports;
- *     }
- *   });
- *
- * The factory provides React + jsx-runtime via require() — we close
- * over those references inside this module. Writing plain JS keeps
- * the runtime behavior transparent (no ESM/CJS interop, no React
- * duplicated by the build).
- *
- * `api.ts` is plain TS that doesn't touch React. It's compiled by tsc
- * into client-build/api.js, then concatenated into the IIFE by
- * scripts/build-client.mjs.
+ *   1. At most two controls are visible at any time, and only the ones
+ *      the action-by-state table permits. A control that would be inert
+ *      must not be rendered — that was the original complaint.
+ *   2. The user never confirms something the browser already reported.
+ *      While `phase === "authorizing"` this component polls by itself.
  */
-import { githubApi, GithubApiError } from "./api.js";
 
-/** Inline styles — kept tiny and theme-agnostic. */
+const inject = ["slots"];
+
 const s = {
-  card: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    maxWidth: "640px",
-    padding: "14px 16px",
-    borderRadius: "10px",
-    border: "1px solid rgba(128,128,128,0.3)",
-    fontSize: "13px",
-    color: "inherit",
-  },
-  title: { fontWeight: 600, fontSize: "13px", margin: 0 },
-  hint: { fontSize: "12px", opacity: 0.85, lineHeight: 1.5, margin: 0 },
-  status: { fontSize: "12px", opacity: 0.85 },
-  statusWarn: { fontSize: "12px", opacity: 0.9, color: "#c9763a" },
-  statusErr: { fontSize: "12px", opacity: 0.9, color: "#c0392b" },
-  statusOk: { fontSize: "12px", opacity: 0.9, color: "#2e8b57" },
-  row: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
-  label: { fontSize: "12px", opacity: 0.85, whiteSpace: "nowrap" },
-  input: {
-    flex: 1,
-    minWidth: "180px",
-    boxSizing: "border-box",
-    padding: "5px 8px",
-    borderRadius: "6px",
-    border: "1px solid rgba(128,128,128,0.35)",
-    background: "rgba(128,128,128,0.08)",
-    color: "inherit",
-    fontSize: "12px",
-    fontFamily: "ui-monospace, SFMono-Regular, monospace",
-  },
+  root: { display: "flex", flexDirection: "column", gap: 8, fontSize: 13, lineHeight: 1.5 },
+  title: { margin: 0, fontWeight: 600, fontSize: 14 },
+  state: { margin: 0 },
+  dim: { margin: 0, opacity: 0.7 },
+  row: { display: "flex", gap: 8, flexWrap: "wrap" },
   button: {
-    padding: "4px 10px",
-    borderRadius: "6px",
-    cursor: "pointer",
-    border: "1px solid rgba(128,128,128,0.4)",
-    background: "rgba(128,128,128,0.14)",
+    padding: "4px 12px",
+    borderRadius: 6,
+    border: "1px solid rgba(127,127,127,0.4)",
+    background: "transparent",
     color: "inherit",
-    fontSize: "12px",
-  },
-  buttonPrimary: {
-    padding: "5px 12px",
-    borderRadius: "6px",
     cursor: "pointer",
-    border: "1px solid rgba(60,120,200,0.6)",
-    background: "rgba(60,120,200,0.18)",
-    color: "inherit",
-    fontSize: "12px",
-    fontWeight: 600,
+    font: "inherit",
   },
-  buttonDanger: {
-    padding: "4px 10px",
-    borderRadius: "6px",
+  primary: {
+    padding: "4px 12px",
+    borderRadius: 6,
+    border: "1px solid transparent",
+    background: "#2f6feb",
+    color: "#fff",
     cursor: "pointer",
-    border: "1px solid rgba(200,80,80,0.6)",
-    background: "rgba(200,80,80,0.14)",
-    color: "inherit",
-    fontSize: "12px",
+    font: "inherit",
   },
-  msg: {
-    fontSize: "12px",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-all",
-    opacity: 0.9,
-    padding: "6px 8px",
-    borderRadius: "6px",
-    background: "rgba(128,128,128,0.08)",
-  },
-  block: {
-    fontSize: "12px",
-    padding: "8px 10px",
-    borderRadius: "6px",
-    background: "rgba(60,120,200,0.08)",
-    border: "1px solid rgba(60,120,200,0.3)",
-    wordBreak: "break-all",
-  },
-  disabled: { opacity: 0.5, cursor: "not-allowed" },
+  disabled: { opacity: 0.5, cursor: "default" },
+  warn: { margin: 0, color: "#c26a00" },
+  error: { margin: 0, color: "#c62828" },
 };
 
-/** Format absolute Unix-ms as "Xh Ym" or "Y min" or "expired". */
-function formatRemaining(timestampMs) {
-  if (timestampMs <= 0) return "永不过期";
-  const remaining = timestampMs - Date.now();
-  if (remaining <= 0) return "已过期";
-  const minutes = Math.floor(remaining / 60000);
-  if (minutes < 60) return `${minutes} 分钟`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes - hours * 60;
-  return `${hours} 小时 ${mins} 分钟`;
+function mmss(totalSeconds) {
+  const secs = Math.max(0, Math.floor(totalSeconds));
+  const m = Math.floor(secs / 60);
+  const rest = secs % 60;
+  return `${m}:${String(rest).padStart(2, "0")}`;
 }
 
-/** Build the status line. */
-function statusText(view) {
-  if (view === null) return "加载中…";
-  switch (view.status) {
-    case "no_token":
-      return `未登录 · 点击下方 [登录 GitHub] 打开授权页`;
-    case "device_pending":
-      return `等待用户在浏览器完成授权（user_code 已展示在下方）`;
-    case "authorized":
-      return `已授权 · ${view.login || "(unknown)"} · scope: ${view.scope || "(none)"} · access_token ${formatRemaining(view.accessTokenExpiresAt)} 后过期`;
-    case "reauth_needed":
-      return `⚠️ 会话已过期 · 重新 [登录 GitHub]`;
+function hoursMinutes(totalSeconds) {
+  const secs = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** The one-line state sentence for each of the four phases (contract §6). */
+function stateLine(view) {
+  switch (view.phase) {
+    case "authorizing":
+      return `等待浏览器授权 · 剩余 ${mmss(view.session.secondsRemaining)}`;
+    case "signed_in":
+      return `已登录 · ${view.session.login} · 会话剩余 ${hoursMinutes(view.session.secondsRemaining)}`;
+    case "expired":
+      return "会话已过期，请重新登录";
+    default:
+      return "未登录";
   }
 }
 
-function statusStyle(view) {
-  if (view === null) return s.status;
-  switch (view.status) {
-    case "authorized":
-      return s.statusOk;
-    case "device_pending":
-      return s.statusWarn;
-    case "reauth_needed":
-      return s.statusErr;
-    case "no_token":
-      return s.status;
-  }
-}
-
-/**
- * Build the React panel component. Called inside the IIFE factory with
- * the runtime provided by `__ModuleLoader__`.
- *
- * @param {object} runtime - { react, jsxRuntime }
- * @returns {Function} a React component
- */
 function buildPanel(runtime) {
   // `react` / `react_jsx_runtime` are declared by the bundle wrapper in
   // this same scope (build-client.mjs: `let react = require("react")`).
-  // The DSH client loader calls apply(ctx) with no options, so the
-  // runtime is resolved from those locals — previously apply() insisted
-  // on `opts.runtime` / `ctx.__githubEngineerRuntime`, threw, and the
-  // catch below swallowed it: the panel never appeared and the only
-  // trace was a console.warn.
   const resolved =
     runtime ??
     (typeof react !== "undefined" && react
@@ -173,236 +84,162 @@ function buildPanel(runtime) {
   const { useState, useEffect, useCallback } = resolved.react;
   const { jsx: _jsx, jsxs: _jsxs } = resolved.jsxRuntime;
 
-  function GithubPanel() {
-    const [viewState, setView] = useState(null);
-    const [pending, setPending] = useState(null);
+  return function GithubEngineerPanel() {
+    const [view, setView] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [msg, setMsg] = useState("");
+    const [msg, setMsg] = useState(null);
     const [msgKind, setMsgKind] = useState("info");
 
-    const refresh = useCallback(async () => {
+    const load = useCallback(async () => {
       try {
-        const v = await githubApi.getStatus();
-        setView(v);
+        const next = await githubApi.getStatus();
+        setView(next);
+        return next;
       } catch (err) {
-        setMsg("读取状态失败: " + (err instanceof Error ? err.message : String(err)));
-        setMsgKind("err");
+        setMsg(`读取状态失败：${err.message}`);
+        setMsgKind("error");
+        return null;
       }
     }, []);
 
     useEffect(() => {
-      void refresh();
-    }, [refresh]);
+      void load();
+    }, [load]);
 
-    async function run(label, action) {
-      setBusy(true);
-      setMsg("");
-      try {
-        const result = await action();
-        setMsg(result ?? label);
-        setMsgKind("ok");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setMsg(`${label}: ${message}`);
-        setMsgKind("err");
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    const startOauth = () => {
-      void run("Connect GitHub", async () => {
-        const result = await githubApi.oauthStart();
-        if (!result.ok) {
-          throw new GithubApiError(result.error ?? "未知错误");
-        }
-        if (!result.verificationUri) {
-          throw new GithubApiError("broker 响应缺少登录链接");
-        }
-        setPending(result);
-        setMsg(
-          `请在浏览器打开 ${result.verificationUri} 完成 GitHub 授权（5 分钟内）。`
-        );
-        setMsgKind("info");
-      });
-    };
-
-    const finishOauth = () => {
-      void run("OAuth 完成轮询", async () => {
-        let attempts = 0;
-        while (attempts < 60) {
+    // §5.1: while authorizing, poll by ourselves. No confirm button exists.
+    const phase = view && view.phase;
+    useEffect(() => {
+      if (phase !== "authorizing") return undefined;
+      let stopped = false;
+      const timer = setInterval(async () => {
+        if (stopped) return;
+        try {
           const result = await githubApi.oauthFinish();
           if (result.ok) {
-            setPending(null);
-            await refresh();
-            return result.message;
-          }
-          await new Promise((r) => setTimeout(r, 2000));
-          attempts += 1;
-        }
-        throw new GithubApiError("轮询超时（用户未在浏览器完成授权）");
-      });
-    };
-
-    const refreshToken = () => {
-      void run("Refresh", async () => {
-        const result = await githubApi.oauthRefresh();
-        if (!result.ok) {
-          setMsgKind("err");
-          throw new GithubApiError(result.message);
-        }
-        await refresh();
-        return result.message;
-      });
-    };
-
-    const revokeAll = () => {
-      if (!window.confirm("确定要清空所有本地凭据？之后需要重新发起 Device Flow。")) return;
-      void run("Revoke", async () => {
-        const result = await githubApi.revoke();
-        if (!result.ok) {
-          setMsgKind("err");
-          throw new GithubApiError(result.message);
-        }
-        setPending(null);
-        await refresh();
-        return result.message;
-      });
-    };
-
-    const copyUserCode = () => {
-      if (pending && pending.userCode) {
-        const code = pending.userCode;
-        void navigator.clipboard.writeText(code).then(
-          () => {
-            setMsg(`user_code 已复制到剪贴板: ${code}`);
+            stopped = true;
+            clearInterval(timer);
+            setMsg("登录完成。");
             setMsgKind("info");
-          },
-          () => {
-            setMsg("复制失败 — 请手动选中复制");
-            setMsgKind("warn");
           }
+          await load();
+        } catch {
+          /* keep polling until the deadline; the state line shows progress */
+        }
+      }, 2000);
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+      };
+    }, [phase, load]);
+
+    const run = async (label, fn) => {
+      setBusy(true);
+      setMsg(null);
+      try {
+        await fn();
+      } catch (err) {
+        setMsg(`${label}失败：${err.message}`);
+        setMsgKind("error");
+      } finally {
+        setBusy(false);
+        await load();
+      }
+    };
+
+    const signIn = () =>
+      run("发起登录", async () => {
+        const started = await githubApi.oauthStart();
+        if (!started.verificationUri) throw new Error("broker 没有返回登录链接");
+        window.open(started.verificationUri, "_blank", "noopener,noreferrer");
+        setMsg("已在浏览器打开授权页，完成后这里会自动继续。");
+        setMsgKind("info");
+      });
+
+    const cancel = () => run("取消", () => githubApi.revoke());
+    const reacquire = () =>
+      run("获取仓库权限", async () => {
+        const r = await githubApi.oauthRefresh();
+        if (!r.ok) throw new Error(r.message || "broker 拒绝了请求");
+        setMsg("仓库权限已就绪。");
+        setMsgKind("info");
+      });
+    const signOut = () => run("退出登录", () => githubApi.revoke());
+
+    if (!view) {
+      return _jsx("div", {
+        style: s.root,
+        children: _jsx("p", { style: s.dim, children: "读取状态…" }),
+      });
+    }
+
+    const btn = busy ? Object.assign({}, s.button, s.disabled) : s.button;
+    const btnPrimary = busy ? Object.assign({}, s.primary, s.disabled) : s.primary;
+
+    // §4: the action-by-state table, expressed as data. Nothing outside it
+    // is rendered, which is the whole point of having the table.
+    const actions = [];
+    if (view.phase === "signed_out" || view.phase === "expired") {
+      actions.push(
+        _jsx(
+          "button",
+          { type: "button", style: btnPrimary, disabled: busy, onClick: signIn, children: "登录 GitHub" },
+          "in"
+        )
+      );
+    } else if (view.phase === "authorizing") {
+      actions.push(
+        _jsx("button", { type: "button", style: btn, disabled: busy, onClick: cancel, children: "取消" }, "cancel")
+      );
+    } else if (view.phase === "signed_in") {
+      if (view.repoAccess.state !== "ready") {
+        actions.push(
+          _jsx(
+            "button",
+            { type: "button", style: btnPrimary, disabled: busy, onClick: reacquire, children: "重新获取仓库权限" },
+            "reacquire"
+          )
         );
       }
-    };
-
-    const openVerificationUri = () => {
-      if (pending && pending.verificationUri) {
-        window.open(pending.verificationUri, "_blank", "noopener,noreferrer");
-      }
-    };
-
-    const isAuthorized = viewState && viewState.status === "authorized";
-    const isPending = viewState && viewState.status === "device_pending";
-    const btn = busy ? Object.assign({}, s.button, s.disabled) : s.button;
-    const btnPrimary = busy ? Object.assign({}, s.buttonPrimary, s.disabled) : s.buttonPrimary;
-    const btnDanger = busy ? Object.assign({}, s.buttonDanger, s.disabled) : s.buttonDanger;
+      actions.push(
+        _jsx("button", { type: "button", style: btn, disabled: busy, onClick: signOut, children: "退出登录" }, "out")
+      );
+    }
 
     const children = [
-      _jsx("p", { style: s.title, children: "GitHub Engineer" }),
-      _jsx("p", {
-        style: s.hint,
-        children:
-          "通过 race-ops broker 登录 GitHub。点「登录 GitHub」会在浏览器打开授权页，完成后回到这里点「刷新」。会话有效期 12 小时，保存在 ~/.dsh（mode 0600）；仓库写入使用 broker 签发的 1 小时 App 令牌，私钥不在本机。",
-      }),
-      _jsx("div", { style: statusStyle(viewState), children: statusText(viewState) }),
-      _jsxs("div", {
-        style: s.row,
-        children: [
-          _jsx("button", {
-            type: "button",
-            style: btnPrimary,
-            disabled: busy,
-            onClick: startOauth,
-            children: isPending ? "重新打开授权页" : "登录 GitHub",
-          }),
-          _jsx("button", {
-            type: "button",
-            style: btn,
-            disabled: busy || !isAuthorized,
-            onClick: refreshToken,
-            children: "Refresh",
-          }),
-          _jsx("button", {
-            type: "button",
-            style: btnDanger,
-            disabled: busy || !isAuthorized,
-            onClick: revokeAll,
-            children: "Revoke",
-          }),
-          _jsx("button", {
-            type: "button",
-            style: btn,
-            disabled: busy || !isPending,
-            onClick: finishOauth,
-            title: "用户在浏览器完成授权后点这个",
-            children: "我已完成授权",
-          }),
-        ],
-      }),
+      _jsx("p", { style: s.title, children: "GitHub Engineer" }, "t"),
+      _jsx("p", { style: s.state, children: stateLine(view) }, "state"),
     ];
 
-    if (pending !== null) {
+    if (view.phase === "authorizing") {
       children.push(
-        _jsxs("div", {
-          style: Object.assign({}, s.row, { marginTop: "2px" }),
-          children: [
-            _jsx("span", { style: s.label, children: "user_code:" }),
-            _jsx("input", {
-              style: s.input,
-              readOnly: true,
-              value: pending.userCode ?? "",
-              onClick: copyUserCode,
-              title: "点击复制",
-            }),
-            _jsx("button", {
-              type: "button",
-              style: btn,
-              onClick: copyUserCode,
-              children: "Copy",
-            }),
-            _jsx("button", {
-              type: "button",
-              style: btn,
-              onClick: openVerificationUri,
-              children: "Open github.com/login/device",
-            }),
-          ],
-        })
-      );
-      children.push(
-        _jsx("div", {
-          style: s.block,
-          children: `verification_uri: ${pending.verificationUri ?? ""}`,
-        })
+        _jsx("p", { style: s.dim, children: "请在浏览器完成授权，完成后会自动继续。" }, "hint")
       );
     }
-
-    if (msg !== "") {
-      let styleObj = s.msg;
-      if (msgKind === "err") styleObj = Object.assign({}, s.msg, { color: "#c0392b" });
-      else if (msgKind === "warn") styleObj = Object.assign({}, s.msg, { color: "#c9763a" });
-      else if (msgKind === "ok") styleObj = Object.assign({}, s.msg, { color: "#2e8b57" });
-      children.push(_jsx("div", { style: styleObj, children: msg }));
+    if (view.phase === "signed_in") {
+      const ready = view.repoAccess.state === "ready";
+      children.push(
+        _jsx(
+          "p",
+          {
+            style: ready ? s.dim : s.warn,
+            children: ready ? "仓库权限：就绪" : `仓库权限：不可用 · ${view.repoAccess.reason}`,
+          },
+          "repo"
+        )
+      );
     }
+    if (msg) {
+      children.push(_jsx("p", { style: msgKind === "error" ? s.error : s.dim, children: msg }, "msg"));
+    }
+    children.push(_jsx("div", { style: s.row, children: actions }, "actions"));
 
-    return _jsx("div", { style: s.card, children });
-  }
-
-  return GithubPanel;
+    return _jsx("div", { style: s.root, children });
+  };
 }
 
-/** Required DSH client services. */
-const inject = ["slots"];
-
 /**
- * Register the GitHub Engineer settings panel.
- * Called by the DSH web UI loader.
- *
- * @param {object} ctx - DSH client context with `slots`.
- * @param {object} [opts] - internal options, esp. `{ runtime }` so we
- *   can pre-build the panel without depending on a closure passed
- *   through ctx.
+ * Register the panel. React comes from the bundle wrapper's scope
+ * (build-client.mjs requires it and inlines this file beside it).
  */
 function apply(ctx, opts) {
   try {
@@ -419,9 +256,6 @@ function apply(ctx, opts) {
         GithubPanel
       )
     );
-    // One line, deliberately: without it there is no way to tell "apply
-    // never ran" from "apply ran and the panel is elsewhere in Settings",
-    // and that ambiguity cost several round trips.
     console.info("[dsh-github-engineer] client apply ok — settings section registered");
   } catch (err) {
     console.error("[dsh-github-engineer] settings panel registration FAILED:", err);
@@ -429,15 +263,6 @@ function apply(ctx, opts) {
   }
 }
 
-// Note: build-client.mjs rewrites the export below into CJS
-// `exports.apply = apply; exports.inject = inject; exports.buildPanel
-// = buildPanel;` before wrapping in the IIFE factory.
-export { apply, inject, buildPanel };
-
-/** Plugin id, as the host expects to find it on the returned object. */
 const name = "dsh-github-engineer";
-export { name };
 
-// Side-effect import: ensures api.js is parsed into the bundle.
-// eslint-disable-next-line no-unused-expressions
-githubApi;
+export { apply, inject, buildPanel, name };

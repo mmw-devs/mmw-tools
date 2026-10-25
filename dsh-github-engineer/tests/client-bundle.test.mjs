@@ -105,5 +105,31 @@ truthy(
   "getStatus() calls /api/github-engineer/status"
 );
 
+/* ============================================================== */
+/*  Test: the panel renders only PANEL-CONTRACT §4 controls         */
+/* ============================================================== */
+console.log("\n--- panel controls match the contract ---");
+{
+  const src = readFileSync(CLIENT_JS, "utf8");
+  const allowed = ["登录 GitHub", "重新获取仓库权限", "退出登录", "取消"];
+  const forbidden = ["我已完成授权", "Connect GitHub", "刷新", "user_code", "verification_uri"];
+
+  for (const text of allowed) {
+    truthy(src.includes(text), `control present: ${text}`);
+  }
+  for (const text of forbidden) {
+    truthy(!src.includes(text), `removed control absent: ${text}`);
+  }
+
+  // §5.1: authorizing polls itself, so no "I finished" step can exist.
+  truthy(/setInterval\(/.test(src), "the panel polls while authorizing");
+  truthy(/phase === "authorizing"/.test(src), "polling is gated on the authorizing phase");
+
+  // The four phases must all be handled by the renderer.
+  for (const phase of ["signed_out", "authorizing", "signed_in", "expired"]) {
+    truthy(src.includes(`"${phase}"`), `phase handled: ${phase}`);
+  }
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);
