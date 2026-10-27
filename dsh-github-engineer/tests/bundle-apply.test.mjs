@@ -38,7 +38,7 @@ if (!existsSync(MCP_DIST)) {
   process.exit(2);
 }
 
-const { apply, name: pluginId, mcpBindingEnv, normalizeBinding } = await import(
+const { apply, name: pluginId, mcpBindingEnv, normalizeBinding, mcpServerEntryPath } = await import(
   pathToFileURL(BUNDLE_DIST).href
 );
 
@@ -367,6 +367,26 @@ console.log("\n--- Test 7: repoBinding is injected into the MCP child env ---");
 
   const bareEnv = mcpBindingEnv(bare, "/w");
   eq(bareEnv.GHOST_BOOTSTRAP_CMD, undefined, "bootstrap vars omitted when unset");
+}
+
+/* ============================================================== */
+/*  Test 8: the MCP entry path is spawnable on this platform        */
+/* ============================================================== */
+console.log("\n--- Test 8: MCP entry path ---");
+{
+  // Regression: `.pathname` on a file: URL yields "/C:/..." on Windows,
+  // which spawn() cannot resolve - the MCP child never started and the
+  // agent had no repository tools, while everything else looked healthy.
+  const entry = mcpServerEntryPath(pathToFileURL(BUNDLE_DIST).href);
+  truthy(entry.includes("mcp-server"), "entry points into mcp-server");
+  truthy(entry.endsWith("index.js"), "entry names index.js");
+  truthy(
+    !entry.startsWith("/"),
+    `entry has no leading slash (got ${JSON.stringify(entry.slice(0, 24))})`
+  );
+  if (process.platform === "win32") {
+    truthy(/^[A-Za-z]:[\\/]/.test(entry), "entry is a drive-letter path on Windows");
+  }
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

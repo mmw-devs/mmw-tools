@@ -931,6 +931,7 @@ export const inject = CORDIS_INJECT;
 // Re-export auth internals for tests and the upcoming MCP bridge.
 // (The MCP child process imports from this same bundle via the lib
 //  entry — see NEXT-STEPS.md "Settings web panel".)
+export { mcpServerEntryPath } from "./const.js";
 export { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
 export { SessionStore } from "./auth/session-store.js";
 export { makeRoutes, API } from "./routes.js";

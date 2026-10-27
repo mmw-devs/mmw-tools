@@ -10,6 +10,10 @@
  * The strings MUST agree with the corresponding entries in
  *   - cordis.patch.yml  (the `- id:` and `name:` fields)
  *   - mcp-server/src/index.ts  (Server.serverInfo.name)
+ */
+import { fileURLToPath } from "node:url";
+
+/*
  *   - package.json  (the top-level `name` field)
  */
 export const PLUGIN_ID = "github-engineer";
@@ -50,7 +54,14 @@ export const CORDIS_INJECT = ["tools"];
 /** System-prompt section order (lower renders earlier). */
 export const SYSTEM_PROMPT_SECTION_ORDER = 210;
 
-/** Where the MCP server lives relative to the bundle dist. */
+/**
+ * Where the MCP server lives relative to the bundle dist.
+ *
+ * `fileURLToPath`, not `.pathname`: on Windows the latter yields
+ * `/C:/Users/...` with a leading slash, and `spawn` cannot resolve it — the
+ * MCP child never started and the agent had no repository tools at all,
+ * while everything else about the plugin looked healthy.
+ */
 export function mcpServerEntryPath(importMetaUrl: string): string {
-  return new URL("../mcp-server/dist/index.js", importMetaUrl).pathname;
+  return fileURLToPath(new URL("../mcp-server/dist/index.js", importMetaUrl));
 }
