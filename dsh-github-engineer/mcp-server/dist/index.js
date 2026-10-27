@@ -21,6 +21,7 @@ import { repoSearch } from "./tools/repo-search.js";
 import { repoEdit } from "./tools/repo-edit.js";
 import { prCreate } from "./tools/pr-create.js";
 import { prList } from "./tools/pr-list.js";
+import { prMerge } from "./tools/pr-merge.js";
 import { GithubRefusedError, redactTokens, } from "./guard.js";
 const server = new Server({ name: PLUGIN_DISPLAY_NAME, version: PLUGIN_VERSION }, { capabilities: { tools: {} } });
 /**
@@ -216,6 +217,26 @@ const TOOLS = [
         call: (input) => prList({
             state: input.state,
             base: input.base,
+        }, config()),
+    },
+    {
+        name: "pr_merge",
+        description: "合并一个 PR。必须由用户明确要求后才调用 —— 宿主会在执行前弹出确认，未确认则不会合并。" +
+            "仅合并 content/* 分支的 PR；是否可合并以 GitHub 的分支保护结论（mergeStateStatus）为准。",
+        inputSchema: {
+            type: "object",
+            properties: {
+                pr_number: { type: "number" },
+                merge_method: { type: "string", enum: ["merge", "squash", "rebase"] },
+                commit_title: { type: "string" },
+            },
+            required: ["pr_number"],
+            additionalProperties: false,
+        },
+        call: (input) => prMerge({
+            pr_number: input.pr_number,
+            merge_method: input.merge_method,
+            commit_title: input.commit_title,
         }, config()),
     },
 ];

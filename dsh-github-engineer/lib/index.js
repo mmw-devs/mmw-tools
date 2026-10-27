@@ -168,6 +168,38 @@ export function registerSkills(ctx, logger) {
         return [];
     }
 }
+/**
+ * Require explicit human consent before a PR is merged.
+ *
+ * `tools/pre-execute` is a waterfall: returning `ask` makes the host prompt
+ * the user, and a host without approval support turns `ask` into a denial.
+ * That is the point - the guarantee is that the call cannot complete without
+ * a person, not that the prompt text asks the model nicely.
+ *
+ * This is the only place that decides "may it happen now". What counts as a
+ * mergeable PR is GitHub's call, relayed by the tool.
+ */
+function installMergeGate(ctx, logger) {
+    const on = ctx.on;
+    if (typeof on !== "function") {
+        logger.warn("github-engineer: tools/pre-execute unavailable; pr_merge would be ungated");
+        return;
+    }
+    try {
+        on.call(ctx, "tools/pre-execute", async (exec, next) => {
+            if (typeof exec?.name === "string" && exec.name.endsWith("pr_merge")) {
+                return {
+                    kind: "ask",
+                    reason: "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
+                };
+            }
+            return next();
+        });
+    }
+    catch (err) {
+        logger.warn(`github-engineer: merge gate not installed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
 function publicToolName(rawName) {
     const sanitized = rawName.replace(/[^A-Za-z0-9_-]/g, "_");
     return PLUGIN_NAMESPACE + sanitized;
@@ -769,6 +801,7 @@ export function apply(ctx, config) {
         const dispose = whenService(serviceGetter(ctx, "webServer"), () => {
             const ws = safeAccess(serviceGetter(ctx, "webServer"));
             disposers.push(...registerSkills(ctx, logger));
+            installMergeGate(ctx, logger);
             disposers = makeRoutes({
                 store,
                 flow,

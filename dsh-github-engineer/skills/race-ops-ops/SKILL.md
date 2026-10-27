@@ -39,14 +39,11 @@ content: t2 DRK 停止直播（streaming true → false）
 
 要点：
 
-- 用**四个反引号**包住（三个也能匹配，但仓库习惯四个）
-- 必填 `operator` / `timestamp` / `changes`
-- `changes[].field` 是**叶子路径**：`teams[0].players[0].streaming`，不是 `teams`
-- `from` / `to` 必须与实际 diff 完全一致
-- 允许声明祖先路径（如声明 `news` 覆盖 `news[2].text`），但精确到叶子最稳妥
-- PR 里有多个 commit 时，**每个 commit 的日志都会被校验**
+格式的**唯一判据**是 `scripts/validate-op-log.ts`。插件在 `pr_create` 推送前会调用它，
+并把校验器的原始输出原样返回 —— 以那段输出为准，不要凭这里的描述记规则。
 
-判据以 `scripts/validate-op-log.ts` 为准，别凭记忆。
+要读源码时看三个函数：`parseLogFromMessage`（怎么提取块）、`validateLogStructure`（字段要求）、
+`deepDiff` + `isAncestorField`（声明与真实 diff 怎么对应）。
 
 ## preflight ≠ CI
 
@@ -67,7 +64,8 @@ content: t2 DRK 停止直播（streaming true → false）
 
 ## 不要做的事
 
-- **不要合并 PR** —— 合并由人做。插件的凭据在技术上具备合并能力，所以这条只能靠约束，不能靠权限。
+- **不要自行发起合并**。用户明确要求时才调用 `pr_merge`；宿主会在执行前弹窗要求用户确认，未确认就不会合并。
+- 是否「可合并」（检查是否通过、是否有 review、有无冲突）**以 GitHub 的分支保护为准**，工具只转述 `mergeStateStatus`，不要在别处重新判断一遍。
 - 不要直接 push 到 `main`
 - 不要为了让校验通过而放宽校验、注释掉检查、或在 denylist 上找绕路
 - 改动被拒绝时，先读拒绝原因（它来自仓库自己的脚本），不要重试同样的操作
