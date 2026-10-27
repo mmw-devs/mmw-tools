@@ -45,6 +45,46 @@ import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_A
 export const pathToConnect = mcpServerEntryPath(import.meta.url);
 
 /** Sanitize a raw MCP tool name into a model-facing DSH agent name. */
+/**
+ * Convert an MCP tool's JSON Schema into DSH's flat ParameterSchemaSpec.
+ *
+ * DSH wants one entry per parameter with `required: true` inline, not a
+ * JSON-Schema object root. Types are narrowed to the four it accepts;
+ * `integer` becomes `number` and anything exotic becomes `object`, which
+ * still lets the caller pass a structured value.
+ */
+function mcpParameters(inputSchema: unknown): Record<
+  string,
+  { type: string; description?: string; required?: boolean }
+> {
+  const schema = (inputSchema ?? {}) as {
+    properties?: Record<string, { type?: unknown; description?: unknown }>;
+    required?: string[];
+  };
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  const out: Record<string, { type: string; description?: string; required?: boolean }> = {};
+
+  for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+    const rawType = typeof prop?.type === "string" ? prop.type : "object";
+    const type =
+      rawType === "integer"
+        ? "number"
+        : ["string", "number", "boolean", "array", "object"].includes(rawType)
+        ? rawType
+        : "object";
+    out[key] = {
+      type,
+      ...(typeof prop?.description === "string" && prop.description.length > 0
+        ? { description: prop.description.slice(0, 300) }
+        : {}),
+      ...(required.has(key) ? { required: true } : {}),
+    };
+  }
+
+  // A tool with no declared properties still needs a valid (empty) spec.
+  return out;
+}
+
 function publicToolName(rawName: string): string {
   const sanitized = rawName.replace(/[^A-Za-z0-9_-]/g, "_");
   return PLUGIN_NAMESPACE + sanitized;
@@ -873,9 +913,12 @@ export function apply(
             defineTool({
               name: publicName,
               description: tool.description ?? "",
-              parameters: {
-                __mcp_raw: { type: "json", required: true },
-              } as never,
+              // Real per-property specs, converted from the MCP tool's
+              // inputSchema. The previous `{ __mcp_raw: { type: "json" } }`
+              // was a placeholder with an invalid type, so the host built a
+              // validator from undefined and every call failed with
+              // "Cannot read properties of undefined (reading '_zod')".
+              parameters: mcpParameters(tool.inputSchema) as never,
               output: {
                 schema: { type: "json" },
                 render(_args, value) {
