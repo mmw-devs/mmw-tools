@@ -23,7 +23,7 @@
  */
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema, ListToolsResultSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -763,7 +763,13 @@ export function apply(ctx, config) {
                             const result = (await client.request({
                                 method: "tools/call",
                                 params: { name: tool.name, arguments: forwardArgs },
-                            }, undefined, { signal: exec.signal, timeout: 30_000 }));
+                            }, 
+                            // The SDK requires a result schema and dereferences it
+                            // (`schema._zod`) while validating the reply. Passing
+                            // `undefined` here threw "Cannot read properties of
+                            // undefined (reading '_zod')" on every call - the tool was
+                            // registered fine, so only the invocation failed.
+                            CallToolResultSchema, { signal: exec.signal, timeout: 30_000 }));
                             if (result.isError === true) {
                                 throw new Error(extractText(result.content, tool.name));
                             }
