@@ -197,6 +197,20 @@ Authorization: Bearer <sessionToken>
 | `list` | 用户名命中 `BROKER_ALLOWED_USERS`（逗号分隔） | 无额外调用 |
 
 `org` 模式更好：权限管理留在 GitHub 组织里，不用维护第二份名单。
+
+**2026-10-27 已切换到 `org` 模式并验证通过。** 前提是给 App 加上
+`Organization → Members: Read-only`，并且**在安装上接受新权限**（只改 App 权限
+不重新批准安装，用户 token 依然拿不到该权限，表现为 `allowlist-check-failed`）。
+切换后的实测日志：
+
+```
+session_start      -> session_authorized login=weunimix
+                   -> installation_token_issued
+/health            -> allowMode: org, activeSessions: 1
+```
+
+`BROKER_ALLOWED_USERS` 现在为空且不再参与判断；保留它是为了随时能用
+`BROKER_ALLOW_MODE=list` 回退。
 `list` 模式用于临时给外部人员开个口子。
 
 无论哪种模式，`BROKER_DENIED_USERS` 里的用户名一律拒绝（应急拉黑）。
