@@ -12,12 +12,15 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 
+import { existsSync } from "node:fs";
+
 import {
   assertBranchPrefix,
   assertWithinLimit,
   assertNoTokens,
   GithubRefusedError,
   LIMITS,
+  runPreflight,
 } from "../guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -83,6 +86,7 @@ export async function prCreate(
 
   // ---------- Push ----------
   const remote = cfg.remoteName ?? "origin";
+  await assertRepoGates(cfg);
   await pushBranch(cfg.workingDir, cfg, head);
 
   // ---------- Create PR via gh CLI ----------
@@ -166,6 +170,39 @@ export async function prCreate(
   }
 
   return { number, url: urlLine, head_sha: headSha };
+}
+
+/**
+ * Run the repository's own pre-push gate, if it has one.
+ *
+ * `mmw-devs/ffxiv-race-ops` validates every `content/*` commit message in
+ * CI: it must carry a structured op-log block, and the declared changes
+ * must match the actual `data.json` diff. Our `preflight` (`npm run
+ * validate`) covers schema and value rules only, so a commit could pass
+ * locally and still fail CI - which is exactly what happened on PR #19.
+ *
+ * Rather than reimplement that rule (and drift from it), run the script
+ * the repository already uses. When a repo has no such script this is a
+ * no-op, so the plugin stays repo-agnostic.
+ */
+async function assertRepoGates(cfg: PrCreateConfig): Promise<void> {
+  const script = join(cfg.workingDir, "scripts", "validate-op-log.ts");
+  if (!existsSync(script)) return;
+
+  const result = await runPreflight({
+    cmd: `npx tsx scripts/validate-op-log.ts origin/${cfg.baseBranch}`,
+    cwd: cfg.workingDir,
+    timeoutSeconds: 120,
+  });
+  if (result.exitCode === 0) return;
+
+  const detail = `${result.stdout}\n${result.stderr}`.trim().slice(-1500);
+  throw new GithubRefusedError(
+    "op-log-invalid",
+    `commit message 未通过仓库的操作日志校验（scripts/validate-op-log.ts）。` +
+      `每个 commit 需要一段 \`\`\`\`json 包住的结构化日志块，必填 operator / timestamp / changes，` +
+      `且 changes 必须与 data.json 的实际改动一致。校验输出：\n${detail}`
+  );
 }
 
 async function pushBranch(
