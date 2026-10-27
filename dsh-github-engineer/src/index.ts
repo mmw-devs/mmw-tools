@@ -102,7 +102,7 @@ function mcpParameters(inputSchema: unknown): Record<
  * Failures here are swallowed on purpose: a broken skill must never stop the
  * repository tools from working.
  */
-function registerSkills(ctx: unknown, logger: { warn: (m: string) => void }): Array<() => void> {
+export function registerSkills(ctx: unknown, logger: { warn: (m: string) => void }): Array<() => void> {
   const getSkills = serviceGetter(ctx, "skills");
   const skills = safeAccess(getSkills) as
     | { registerProvider?: (create: unknown) => () => void }
@@ -144,14 +144,44 @@ function registerSkills(ctx: unknown, logger: { warn: (m: string) => void }): Ar
 
   if (loaded.length === 0) return [];
 
+  const providerName = "github-engineer";
+
+  // The registry validates two different shapes: `list()` returns candidates
+  // (name, description, source, rank, provider), and `get(candidate)` returns
+  // the definition that carries the body. Both need `source` as a string and
+  // `provider` equal to this provider's name.
+  const definitions = loaded.map((entry) => ({
+    name: entry.name,
+    description: entry.description,
+    source: "plugin",
+    provider: providerName,
+    content: entry.content,
+  }));
+
+  const candidates = definitions.map((definition, index) => ({
+    name: definition.name,
+    description: definition.description,
+    source: definition.source,
+    provider: providerName,
+    rank: 100 + index,
+    locator: definition,
+  }));
+
   try {
     const dispose = skills.registerProvider(() => ({
-      name: "github-engineer",
+      name: providerName,
       async list() {
-        return loaded;
+        return candidates;
+      },
+      async get(candidate: { locator?: unknown }) {
+        return candidate.locator ?? null;
       },
     }));
-    logger.warn(`github-engineer: published ${loaded.length} skill(s): ${loaded.map((s) => s.name).join(", ")}`);
+    logger.warn(
+      `github-engineer: published ${definitions.length} skill(s): ${definitions
+        .map((d) => d.name)
+        .join(", ")}`
+    );
     return typeof dispose === "function" ? [dispose] : [];
   } catch (err) {
     logger.warn(
