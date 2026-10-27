@@ -63,12 +63,25 @@ for (const candidate of candidates) {
   truthy(typeof candidate.source === "string", `${label}: source is a string`);
   truthy(typeof candidate.provider === "string" && candidate.provider === provider.name, `${label}: provider matches`);
   truthy(typeof candidate.rank === "number" && Number.isFinite(candidate.rank), `${label}: rank is finite`);
+  // isModelInvocable() reads skill.invocation.modelInvocable with no fallback,
+  // so an unresolved invocation crashes the session rather than the provider.
+  truthy(
+    candidate.invocation !== undefined &&
+      typeof candidate.invocation.modelInvocable === "boolean" &&
+      typeof candidate.invocation.userInvocable === "boolean",
+    `${label}: candidate carries resolved invocation`
+  );
 
   const definition = await provider.get(candidate);
   truthy(definition !== null && typeof definition === "object", `${label}: get() returns a definition`);
   truthy(typeof definition.content === "string" && definition.content.length > 0, `${label}: definition has content`);
   eq(definition.provider, provider.name, `${label}: definition provider`);
   truthy(typeof definition.source === "string", `${label}: definition source`);
+  truthy(
+    definition.invocation !== undefined &&
+      typeof definition.invocation.modelInvocable === "boolean",
+    `${label}: definition carries resolved invocation`
+  );
 
   // The body must not be swallowed by its own example fences.
   truthy(definition.content.includes("preflight"), `${label}: body survived fence nesting`);

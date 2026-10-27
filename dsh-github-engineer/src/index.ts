@@ -150,11 +150,18 @@ export function registerSkills(ctx: unknown, logger: { warn: (m: string) => void
   // (name, description, source, rank, provider), and `get(candidate)` returns
   // the definition that carries the body. Both need `source` as a string and
   // `provider` equal to this provider's name.
+  // `invocation` must be resolved here. `isModelInvocable()` reads
+  // `skill.invocation.modelInvocable` with no fallback, and only the bundled
+  // runtime path fills the default in - a provider definition that omits it
+  // crashes the session on load.
+  const invocation = { modelInvocable: true, userInvocable: true };
+
   const definitions = loaded.map((entry) => ({
     name: entry.name,
     description: entry.description,
     source: "plugin",
     provider: providerName,
+    invocation,
     content: entry.content,
   }));
 
@@ -164,6 +171,7 @@ export function registerSkills(ctx: unknown, logger: { warn: (m: string) => void
     source: definition.source,
     provider: providerName,
     rank: 100 + index,
+    invocation,
     locator: definition,
   }));
 
