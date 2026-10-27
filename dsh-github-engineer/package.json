@@ -83,7 +83,8 @@
     "docs",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "skills"
   ],
   "keywords": [
     "dsh",

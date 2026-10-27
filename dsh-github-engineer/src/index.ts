@@ -31,6 +31,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   PLUGIN_ID,
   PLUGIN_DISPLAY_NAME,
@@ -86,6 +88,77 @@ function mcpParameters(inputSchema: unknown): Record<
 
   // A tool with no declared properties still needs a valid (empty) spec.
   return out;
+}
+
+/**
+ * Expose the plugin's own skills through DSH's skill registry.
+ *
+ * `dsh-skill-filesystem` reads project/custom/user roots, none of which is
+ * inside an installed plugin, so a plugin that ships a skill has to publish
+ * it itself. The registry takes a provider with an async `list()`, and each
+ * runtime skill needs only name / description / content - `invocation` and
+ * `provider` default when omitted.
+ *
+ * Failures here are swallowed on purpose: a broken skill must never stop the
+ * repository tools from working.
+ */
+function registerSkills(ctx: unknown, logger: { warn: (m: string) => void }): Array<() => void> {
+  const getSkills = serviceGetter(ctx, "skills");
+  const skills = safeAccess(getSkills) as
+    | { registerProvider?: (create: unknown) => () => void }
+    | undefined;
+  if (!skills || typeof skills.registerProvider !== "function") {
+    logger.warn("github-engineer: skills registry unavailable; skill not published");
+    return [];
+  }
+
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "skills");
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+
+  const loaded = entries
+    .map((name) => {
+      try {
+        const raw = readFileSync(path.join(dir, name, "SKILL.md"), "utf8");
+        const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw);
+        if (!match) return undefined;
+        const description = /^description:\s*(.+)$/m.exec(match[1])?.[1]?.trim();
+        const declared = /^name:\s*(.+)$/m.exec(match[1])?.[1]?.trim();
+        if (!description) return undefined;
+        return {
+          name: declared ?? name,
+          description,
+          content: match[2].trim(),
+        };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((s): s is { name: string; description: string; content: string } => s !== undefined);
+
+  if (loaded.length === 0) return [];
+
+  try {
+    const dispose = skills.registerProvider(() => ({
+      name: "github-engineer",
+      async list() {
+        return loaded;
+      },
+    }));
+    logger.warn(`github-engineer: published ${loaded.length} skill(s): ${loaded.map((s) => s.name).join(", ")}`);
+    return typeof dispose === "function" ? [dispose] : [];
+  } catch (err) {
+    logger.warn(
+      `github-engineer: skill publishing failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return [];
+  }
 }
 
 function publicToolName(rawName: string): string {
@@ -812,7 +885,9 @@ export function apply(
         const ws = safeAccess(serviceGetter(ctx, "webServer")) as {
           register: (route: unknown) => () => void;
         };
-        disposers = makeRoutes({
+        disposers.push(...registerSkills(ctx, logger));
+
+      disposers = makeRoutes({
           store,
           flow,
           brokerUrl,
