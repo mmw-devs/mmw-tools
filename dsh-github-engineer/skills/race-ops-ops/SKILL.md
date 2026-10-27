@@ -23,7 +23,7 @@ description: 在 mmw-devs/ffxiv-race-ops 仓库执行内容变更时使用。说
 
 一个可用的提交信息长这样：
 
-```
+`````
 content: t2 DRK 停止直播（streaming true → false）
 
 ````json
@@ -35,7 +35,7 @@ content: t2 DRK 停止直播（streaming true → false）
   ]
 }
 ````
-```
+`````
 
 要点：
 
