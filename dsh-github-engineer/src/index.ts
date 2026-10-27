@@ -920,7 +920,14 @@ export function apply(
               // "Cannot read properties of undefined (reading '_zod')".
               parameters: mcpParameters(tool.inputSchema) as never,
               output: {
-                schema: { type: "json" },
+                // An object spec, not `{ type: "json" }`.
+                //
+                // `json` is a legal authoring type but the host derives a
+                // validator from this to check the returned value, and for
+                // `json` that derivation yields undefined - every call died
+                // on `reading '_zod'` before the result could be rendered.
+                // The two tools that work (status, run) use object specs.
+                schema: { type: "object", properties: {}, additionalProperties: true },
                 render(_args, value) {
                   const v = (value ?? {}) as Record<string, unknown>;
                   return [{ type: "text" as const, text: extractText(v.content, tool.name) }];
