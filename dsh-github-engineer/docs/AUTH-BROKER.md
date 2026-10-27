@@ -342,7 +342,25 @@ Let's Encrypt 的验证器（全部在境外）会返回腾讯的备案拦截页
 | DNS-01（acme.sh + dns_tencent） | ✅ 2026-10-26 签发，`CN=race-ops-broker.mmw-team.icu`，至 2027-01-23 |
 | `ssl_session_cache` 名称 | 必须用独立名字（`SSL_BROKER`）：与现有站点的 `SSL` 区大小不同会让 nginx 拒绝加载 |
 
-### 已知阻塞：备案审核中的域名不可用
+### 已解除：备案审核中导致的域名不可用
+
+**2026-10-27 备案通过，以下现象全部消失。** 复核结果（从开发机，无隧道、无代理）：
+
+| 检查 | 备案前 | 备案后 |
+|---|---|---|
+| `http://mmw-team.icu/` | 302 → webblock 页 | **301 → https** |
+| `http://race-ops-broker.mmw-team.icu/health` | 301（nginx 可达） | 301 |
+| **`https://race-ops-broker.mmw-team.icu/health`** | **TLS 被 RST** | **200, verify=0** |
+| `https://mmw-team.icu/` | 连接失败 | **200** |
+| Node `fetch`（插件用的路径） | `ECONNRESET` | **200** |
+
+因此 SSH 隧道已不再需要，`~/.dsh/rc-tunnel.pem` 已删除，
+`GHOST_BROKER_URL` 也不再设置 —— 插件直接用
+`cordis.patch.yml` 里的公网 HTTPS 地址。
+
+以下为当时的诊断记录，保留以便对照。
+
+### 历史：备案审核中的域名不可用
 
 2026-10-26 定位到一条与本项目无关、但会阻塞上线的外部条件：
 
