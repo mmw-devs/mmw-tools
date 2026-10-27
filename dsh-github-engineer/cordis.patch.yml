@@ -43,6 +43,13 @@
         announceToAgent: true
         enabled: true
 
+        # Where repo_clone puts the checkout and where engineer_run reads
+        # AGENTS.md. This lives here, with the rest of this deployment's
+        # fixed facts, because a profile-level override *replaces* the
+        # plugin's config instead of merging into it - overriding just this
+        # one key wiped repoBinding and every tool would have failed.
+        workingDir: C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+
         # Auth is delegated to the broker: no OAuth App, no scopes, no
         # user token. See docs/AUTH-BROKER.md.
         brokerUrl: https://race-ops-broker.mmw-team.icu

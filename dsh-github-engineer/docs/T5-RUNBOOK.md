@@ -99,8 +99,14 @@ before you next run the suites.
 
 ## 4. Point it at a working directory
 
-The plugin deliberately does **not** ship a `workingDir` — it is
-machine-specific. Supply it one of two ways.
+**Corrected 2026-10-27:** the plugin *does* ship `workingDir` in its own
+`cordis.patch.yml`, next to the repo binding. The original plan was to keep it
+out and override it per profile, but a profile-level entry **replaces** the
+plugin's config rather than merging into it — overriding only `workingDir`
+wiped `repoBinding`, and every tool then failed with an empty binding. One
+source of truth beats a merge that does not happen.
+
+To use a different checkout, override the whole `config` block, not one key.
 
 Quickest (per session):
 
