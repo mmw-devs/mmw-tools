@@ -67,9 +67,9 @@ function fakeGithub({ login = "octocat", membership = "active" } = {}) {
     if (String(url).endsWith("/user")) {
       return json({ login: state.login });
     }
-    if (String(url).includes("/user/memberships/orgs/")) {
-      if (state.membership === "none") return json({ message: "Not Found" }, 404);
-      return json({ state: state.membership, role: "member" });
+    if (String(url).includes("/orgs/") && String(url).includes("/members/")) {
+      // GitHub answers 204 with no body for a member, 404 otherwise.
+      return state.membership === "none" ? json({ message: "Not Found" }, 404) : json({}, 204);
     }
     return json({ message: "unexpected" }, 500);
   };
@@ -204,6 +204,13 @@ console.log("\n--- completeLogin: refusals ---");
     repo: "ffxiv-race-ops",
     fetchImpl: gh.impl,
     now: () => NOW,
+    // The membership check uses an installation token, so this core needs
+    // a mint too - otherwise it tries to sign a real JWT with the fake key.
+    mintInstallationToken: async () => ({
+      token: "ghs_check",
+      expiresAt: NOW + 3_600_000,
+      permissions: {},
+    }),
   });
   const started = c2.startSession();
   await rejectsWith(() => c2.completeLogin({ code: "c", state: started.state }), "not-allowed", "a non-member is refused");

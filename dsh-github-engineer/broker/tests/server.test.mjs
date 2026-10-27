@@ -47,8 +47,9 @@ function fakeGithub({ membership = "active" } = {}) {
     const u = String(url);
     if (u.includes("/login/oauth/access_token")) return json({ access_token: "user-token-abc" });
     if (u.endsWith("/user")) return json({ login: state.login });
-    if (u.includes("/user/memberships/orgs/")) {
-      return state.membership === "none" ? json({ message: "Not Found" }, 404) : json({ state: state.membership });
+    if (String(url).includes("/orgs/") && String(url).includes("/members/")) {
+      // GitHub answers 204 with no body for a member, 404 otherwise.
+      return state.membership === "none" ? json({ message: "Not Found" }, 404) : json({}, 204);
     }
     return json({ message: "unexpected" }, 500);
   };

@@ -69,6 +69,7 @@ export class BrokerCore {
   #sessions = new Map(); // state -> { pollSecret, status, createdAt, expiresAt, login, reason }
   #tokens = new Map(); // sha256(sessionToken) -> { login, expiresAt, createdAt }
   #allowCache = new Map(); // login -> { allowed, checkedAt }
+  #mintCache = null; // installation token reused for membership checks
 
   constructor(opts) {
     const required = [
@@ -178,7 +179,7 @@ export class BrokerCore {
     const userToken = await this.#exchangeCode(code);
     const login = await this.#fetchLogin(userToken);
 
-    const verdict = await this.#checkAllowlist(login, userToken);
+    const verdict = await this.#checkAllowlist(login);
     if (!verdict.allowed) {
       entry.status = "denied";
       entry.reason = verdict.reason;
@@ -248,7 +249,7 @@ export class BrokerCore {
    * Allowlist. `org` mode asks GitHub for the caller's membership, which
    * keeps the source of truth in one place; `list` mode compares names.
    */
-  async #checkAllowlist(login, userToken) {
+  async #checkAllowlist(login) {
     const lower = login.toLowerCase();
     if (this.denyList.includes(lower)) {
       return { allowed: false, reason: "explicitly-denied" };
@@ -265,32 +266,53 @@ export class BrokerCore {
         ? { allowed: true, reason: "allowlisted" }
         : { allowed: false, reason: "not-allowlisted" };
     } else {
+      // Checked with an *installation* token, not the user's.
+      //
+      // The user token is deliberately discarded after login, so a check
+      // that needed it could only ever run once - and the re-check at
+      // token-issue time sent `Bearer null`, which GitHub answers with 401.
+      // `GET /orgs/{org}/members/{login}` needs only the App's
+      // Members: read permission, so the same call works at login and at
+      // every later mint.
+      const token = await this.#installationTokenForChecks();
       const res = await this.fetchImpl(
-        `${GITHUB_API}/user/memberships/orgs/${encodeURIComponent(this.org)}`,
+        `${GITHUB_API}/orgs/${encodeURIComponent(this.org)}/members/${encodeURIComponent(login)}`,
         {
           headers: {
-            Authorization: `Bearer ${userToken}`,
+            Authorization: `Bearer ${token}`,
             Accept: "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "dsh-race-ops-broker",
           },
         }
       );
-      if (res.status === 404) {
+      if (res.status === 204) {
+        verdict = { allowed: true, reason: `member-of-${this.org}` };
+      } else if (res.status === 404) {
         verdict = { allowed: false, reason: `not-a-member-of-${this.org}` };
-      } else if (!res.ok) {
-        throw new BrokerRefused("allowlist-check-failed", `org check failed (HTTP ${res.status})`, 502);
       } else {
-        const body = await res.json().catch(() => ({}));
-        verdict =
-          body.state === "active"
-            ? { allowed: true, reason: `member-of-${this.org}` }
-            : { allowed: false, reason: `membership-${String(body.state)}` };
+        throw new BrokerRefused(
+          "allowlist-check-failed",
+          `org membership check failed (HTTP ${res.status})`,
+          502
+        );
       }
     }
 
     this.#allowCache.set(lower, { ...verdict, checkedAt: this.now() });
     return verdict;
+  }
+
+  /** One installation token, reused briefly for membership checks. */
+  async #installationTokenForChecks() {
+    const now = this.now();
+    if (this.#mintCache && this.#mintCache.expiresAt - 60_000 > now) {
+      return this.#mintCache.token;
+    }
+    const mint = this.mintInstallationToken ?? defaultMint(this);
+    const issued = await mint();
+    this.#mintCache = { token: issued.token, expiresAt: issued.expiresAt };
+    return issued.token;
   }
 
   /* ---------------- polling ---------------- */
@@ -342,7 +364,7 @@ export class BrokerCore {
 
     // Re-check: the allowlist is the revocation mechanism, so a cached
     // verdict from sign-in time is not good enough here.
-    const verdict = await this.#checkAllowlist(record.login, null);
+    const verdict = await this.#checkAllowlist(record.login);
     if (!verdict.allowed) {
       this.#revokeByLogin(record.login);
       throw new BrokerRefused("not-allowed", `no longer allowed: ${verdict.reason}`, 403);
