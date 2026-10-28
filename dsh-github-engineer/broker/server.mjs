@@ -20,6 +20,10 @@ const MAX_BODY_BYTES = 8 * 1024;
 const SWEEP_MS = 60_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 60;
+/** How long the browser page waits for GitHub before it is answered anyway. */
+const BROWSER_WAIT_MS = 5_000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ---------------- config ---------------- */
 
@@ -132,9 +136,24 @@ function bearer(req) {
 
 export function createBrokerServer(core, opts = {}) {
   const limiter = opts.limiter ?? makeLimiter();
-  const clientIp = opts.clientIp ?? ((req) => req.socket.remoteAddress ?? "unknown");
+  // The broker only ever listens on loopback, so the peer is nginx for
+  // every request. Without the forwarded header every user shares one
+  // rate-limit bucket (and one ban).
+  const clientIp =
+    opts.clientIp ??
+    ((req) => {
+      const forwarded = req.headers["x-forwarded-for"];
+      if (typeof forwarded === "string" && forwarded.trim() !== "") {
+        return forwarded.split(",")[0].trim();
+      }
+      return req.socket.remoteAddress ?? "unknown";
+    });
+  const browserWaitMs = opts.browserWaitMs ?? BROWSER_WAIT_MS;
 
   const server = createServer(async (req, res) => {
+    // nginx can close this socket first (that is what made the 504). An
+    // unhandled 'error' on the response would take the process down.
+    res.on("error", () => {});
     const ip = clientIp(req);
     if (!limiter.allow(ip)) {
       sendJson(res, 429, { error: "rate-limited", message: "too many requests" });
@@ -189,18 +208,44 @@ export function createBrokerServer(core, opts = {}) {
           sendHtml(res, 400, "GitHub 返回了错误，授权未完成。可以关闭此页面并重试。");
           return;
         }
-        try {
-          const result = await core.completeLogin({ code, state });
-          log("session_authorized", { state, login: result.login });
-          sendHtml(res, 200, `已授权为 <b>${escapeHtml(result.login)}</b>。可以关闭此页面，回到 DSH 继续。`);
-        } catch (err) {
-          if (err instanceof BrokerRefused && err.code === "not-allowed") {
-            log("session_denied", { state, reason: err.message });
-            sendHtml(res, 403, "这个 GitHub 账号没有使用权限。请联系管理员。");
+        if (!core.hasPendingLogin(state)) {
+          sendHtml(res, 400, "这个登录链接已过期或已被使用。请回到 DSH 重新点击登录。");
+          return;
+        }
+
+        // The browser is not allowed to wait on GitHub. The exchange is
+        // server-to-server and, when the cross-border path to github.com
+        // stalls, used to take longer than nginx's proxy_read_timeout —
+        // the user saw a 504 instead of a login. Give it `browserWaitMs`
+        // to finish so the happy path still names the account, then answer
+        // and let the poller collect the result.
+        const settled = core.completeLogin({ code, state }).then(
+          (result) => ({ result, error: null }),
+          (error) => ({ result: null, error })
+        );
+        const outcome = await Promise.race([settled, sleep(browserWaitMs).then(() => null)]);
+
+        if (outcome === null) {
+          sendHtml(res, 200, "已收到 GitHub 授权，正在确认身份。可以关闭此页面，回到 DSH 会自动继续。");
+          void settled.then((late) => logLogin(state, late));
+          return;
+        }
+
+        logLogin(state, outcome);
+        if (outcome.error) {
+          if (outcome.error instanceof BrokerRefused) {
+            const refusal = outcome.error.code;
+            if (refusal === "not-allowed") {
+              sendHtml(res, 403, "这个 GitHub 账号没有使用权限。请联系管理员。");
+              return;
+            }
+            sendHtml(res, outcome.error.status ?? 502, `授权校验失败（${escapeHtml(refusal)}）。请回到 DSH 重试，或重新点击登录。`);
             return;
           }
-          throw err;
+          throw outcome.error;
         }
+
+        sendHtml(res, 200, `已授权为 <b>${escapeHtml(outcome.result.login)}</b>。可以关闭此页面，回到 DSH 继续。`);
         return;
       }
 
@@ -261,6 +306,27 @@ export function createBrokerServer(core, opts = {}) {
 
   server.on("close", () => clearInterval(sweep));
   return server;
+}
+
+/**
+ * One log line per finished login, whether it was answered by the browser
+ * request or by the background task that outlived it.
+ */
+function logLogin(state, outcome) {
+  const prefix = String(state).slice(0, 8);
+  if (!outcome.error) {
+    log("session_authorized", { state: prefix, login: outcome.result.login });
+    return;
+  }
+  if (outcome.error instanceof BrokerRefused) {
+    if (outcome.error.code === "not-allowed") {
+      log("session_denied", { state: prefix, reason: outcome.error.message });
+    } else {
+      log("login_failed", { state: prefix, code: outcome.error.code });
+    }
+    return;
+  }
+  log("error", { path: "/auth/github/callback", message: String(outcome.error?.message ?? outcome.error) });
 }
 
 function escapeHtml(value) {

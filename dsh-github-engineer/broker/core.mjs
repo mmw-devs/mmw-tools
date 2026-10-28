@@ -28,6 +28,10 @@ const GITHUB_API = "https://api.github.com";
 
 /** How long a browser has to finish a login after it is started. */
 const STATE_TTL_MS = 5 * 60 * 1000;
+/** Per-attempt ceiling for a GitHub call. `fetch` has no default timeout. */
+const GITHUB_TIMEOUT_MS = 8_000;
+/** One retry covers a dropped connection; it does not cover a dead network. */
+const GITHUB_ATTEMPTS = 2;
 /** Session lifetime; short enough that revocation is mostly belt-and-braces. */
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 /** How long an allowlist verdict is trusted before asking GitHub again. */
@@ -106,6 +110,8 @@ export class BrokerCore {
     this.sessionTtlMs = opts.sessionTtlMs ?? SESSION_TTL_MS;
     this.stateTtlMs = opts.stateTtlMs ?? STATE_TTL_MS;
     this.allowCacheMs = opts.allowCacheMs ?? ALLOW_CACHE_MS;
+    this.githubTimeoutMs = opts.githubTimeoutMs ?? GITHUB_TIMEOUT_MS;
+    this.githubAttempts = opts.githubAttempts ?? GITHUB_ATTEMPTS;
     this.mintInstallationToken = opts.mintInstallationToken; // injectable for tests
   }
 
@@ -136,6 +142,17 @@ export class BrokerCore {
       loginUrl: `${this.publicUrl}/auth/github/start?state=${encodeURIComponent(state)}`,
       expiresAt: now + this.stateTtlMs,
     };
+  }
+
+  /**
+   * Whether a browser link is still worth answering.
+   *
+   * The HTTP layer asks this before it starts an exchange, so a stale or
+   * replayed link gets a page that says so instead of a blank 500.
+   */
+  hasPendingLogin(state) {
+    const entry = this.#lookupState(state);
+    return Boolean(entry) && entry.status === "pending";
   }
 
   /** Where `/auth/github/start` sends the browser. */
@@ -176,33 +193,85 @@ export class BrokerCore {
     // replay cannot race this request.
     entry.status = "consumed";
 
-    const userToken = await this.#exchangeCode(code);
-    const login = await this.#fetchLogin(userToken);
+    try {
+      const userToken = await this.#exchangeCode(code);
+      const login = await this.#fetchLogin(userToken);
 
-    const verdict = await this.#checkAllowlist(login);
-    if (!verdict.allowed) {
-      entry.status = "denied";
-      entry.reason = verdict.reason;
-      throw new BrokerRefused("not-allowed", `not allowed: ${verdict.reason}`, 403);
+      const verdict = await this.#checkAllowlist(login);
+      if (!verdict.allowed) {
+        entry.status = "denied";
+        entry.reason = verdict.reason;
+        throw new BrokerRefused("not-allowed", `not allowed: ${verdict.reason}`, 403);
+      }
+
+      const sessionToken = randomToken(32);
+      const now = this.now();
+      this.#tokens.set(sha256(sessionToken), {
+        login,
+        createdAt: now,
+        expiresAt: now + this.sessionTtlMs,
+      });
+
+      entry.status = "authorized";
+      entry.login = login;
+      entry.sessionToken = sessionToken;
+      entry.sessionExpiresAt = now + this.sessionTtlMs;
+      // The state now outlives its 5-minute browser window: it holds a
+      // session that a poller may still be about to pick up.
+      entry.expiresAt = now + this.sessionTtlMs;
+      return { login, sessionToken, expiresAt: now + this.sessionTtlMs };
+    } catch (err) {
+      // The state is already burnt. Without a terminal status the poller
+      // would sit on "pending" until the 5-minute expiry, which is exactly
+      // how a failed exchange used to look: the browser showed a 504 and
+      // the panel kept saying "waiting for the browser".
+      if (entry.status === "consumed") {
+        entry.status = "failed";
+        entry.reason = err instanceof BrokerRefused ? err.code : "login-failed";
+      }
+      throw err;
     }
+  }
 
-    const sessionToken = randomToken(32);
-    const now = this.now();
-    this.#tokens.set(sha256(sessionToken), {
-      login,
-      createdAt: now,
-      expiresAt: now + this.sessionTtlMs,
-    });
-
-    entry.status = "authorized";
-    entry.login = login;
-    entry.sessionToken = sessionToken;
-    entry.sessionExpiresAt = now + this.sessionTtlMs;
-    return { login, sessionToken, expiresAt: now + this.sessionTtlMs };
+  /**
+   * One bounded GitHub call.
+   *
+   * `fetch` has no default timeout, so a stalled cross-border connection to
+   * github.com hangs until the OS gives up. On 2026-10-29 that hang went
+   * past nginx's 20s `proxy_read_timeout` and the user got a 504 in the
+   * browser instead of a login. Every GitHub call here therefore either
+   * answers or gives up, and a dropped connection is retried once.
+   *
+   * Only network failures are retried: re-sending the code exchange is
+   * harmless while it never reached GitHub, and a lost response is rare
+   * enough that the alternative (no retry at all) is worse.
+   */
+  async #github(url, init = {}) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.githubAttempts; attempt++) {
+      try {
+        const signal =
+          typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(this.githubTimeoutMs)
+            : undefined;
+        return await this.fetchImpl(url, { ...init, signal });
+      } catch (err) {
+        lastError = err;
+        if (attempt < this.githubAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        }
+      }
+    }
+    throw new BrokerRefused(
+      "github-unreachable",
+      `GitHub did not answer within ${this.githubTimeoutMs / 1000}s ` +
+        `(${lastError?.name ?? "network error"})`,
+      502
+    );
   }
 
   async #exchangeCode(code) {
-    const res = await this.fetchImpl(`${GITHUB_OAUTH}/access_token`, {
+    const res = await this.#github(`${GITHUB_OAUTH}/access_token`, {
       method: "POST",
       headers: { Accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({
@@ -227,7 +296,7 @@ export class BrokerCore {
   }
 
   async #fetchLogin(userToken) {
-    const res = await this.fetchImpl(`${GITHUB_API}/user`, {
+    const res = await this.#github(`${GITHUB_API}/user`, {
       headers: {
         Authorization: `Bearer ${userToken}`,
         Accept: "application/vnd.github+json",
@@ -275,7 +344,7 @@ export class BrokerCore {
       // Members: read permission, so the same call works at login and at
       // every later mint.
       const token = await this.#installationTokenForChecks();
-      const res = await this.fetchImpl(
+      const res = await this.#github(
         `${GITHUB_API}/orgs/${encodeURIComponent(this.org)}/members/${encodeURIComponent(login)}`,
         {
           headers: {
@@ -329,6 +398,11 @@ export class BrokerCore {
     }
     if (entry.status === "pending") return { status: "pending" };
     if (entry.status === "denied") return { status: "denied", reason: entry.reason ?? "denied" };
+    // The plugin only understands pending / denied / expired / authorized,
+    // so a failed exchange is reported as a denial with its own reason.
+    // The panel then stops polling and shows why, instead of waiting out
+    // the state TTL on a "pending" that can never change.
+    if (entry.status === "failed") return { status: "denied", reason: entry.reason ?? "login-failed" };
     if (entry.status === "consumed") return { status: "pending" };
     if (entry.status === "authorized") {
       const out = {
@@ -398,8 +472,10 @@ export class BrokerCore {
   /** Drop expired state. Called by the server on a timer. */
   sweep() {
     const now = this.now();
+    // Every status, not only "pending": a denied or failed entry that was
+    // never polled would otherwise sit in the map forever.
     for (const [state, entry] of this.#sessions) {
-      if (entry.expiresAt <= now && entry.status === "pending") this.#sessions.delete(state);
+      if (entry.expiresAt <= now) this.#sessions.delete(state);
     }
     for (const [key, record] of this.#tokens) {
       if (record.expiresAt <= now) this.#tokens.delete(key);

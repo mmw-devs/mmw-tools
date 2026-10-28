@@ -147,6 +147,20 @@ https://github.com/login/oauth/authorize
 5. 立刻丢弃 user token（不落盘、不写日志）。
 6. 渲染一个最小 HTML 页：`已授权，可以关闭此页面。`
 
+**浏览器不参与等待。** 上面 1–3 全是 server-to-server 调用，浏览器只
+需要拿到一个页面。所以回调最多等 GitHub 5 秒：正常时照旧渲染「已授权为
+`login`」；超过 5 秒就先回答「正在确认身份」，exchange 继续在后台跑，
+结果由插件轮询 `/session/{state}` 取走。返回给浏览器的状态码仅用于告知：
+200（已确认或正在确认）、403（不在允许名单）、502（校验失败）、400
+（链接过期或已使用）。
+
+> **2026-10-29 事故**：此前回调是同步的，且 GitHub 调用没有超时。跨境链路
+> 抖动时 handler 活过了 nginx 的 `proxy_read_timeout 20s`，用户看到的是
+> `504 Gateway Time-out` 而不是登录页；同时失败的 state 停在 `consumed`，
+> 轮询一直读作 `pending`，面板只能干等到 5 分钟过期。现在两者都已修正
+> （见 CHANGELOG）。**注意 `proxy_read_timeout` 仍是 20s，但不再需要改**，
+> 因为慢路径在 5s 内就已回答。
+
 ### `GET /session/{state}?secret=<pollSecret>`
 
 插件轮询。

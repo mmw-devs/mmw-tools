@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — the browser no longer waits on GitHub
+
+A login could end in nginx's `504 Gateway Time-out` instead of a session.
+The callback handler exchanged the code, read `/user`, and checked org
+membership *before* answering the browser; those calls had no timeout, so
+when the cross-border path to github.com stalled the handler outlived
+nginx's 20s `proxy_read_timeout` and the user saw a 504. Reproduced from
+outside the server on 2026-10-29: `/health` 121 ms, `/session/start` 200,
+`/auth/github/start` 302 in 81 ms, callback **504 at 20.03 s**.
+
+### Fixed
+
+- `broker/server.mjs` — the callback gives GitHub 5 s, then answers with
+  "正在确认身份" and lets the poller collect the result. The 5 s covers the
+  ordinary case, so the page still names the account; a stalled GitHub
+  can no longer produce a gateway error.
+- `broker/core.mjs` — every GitHub call is bounded (`githubTimeoutMs`,
+  8 s) and retried once on a network failure; a stalled connection now
+  ends as `github-unreachable` instead of hanging.
+- `broker/core.mjs` — a failed exchange used to leave the state
+  `consumed`, which the poller reads as `pending`, so the panel waited out
+  the full 5-minute TTL. The state is now terminal (`failed` → `denied` +
+  reason) and the panel shows why.
+- `broker/server.mjs` — a stale or replayed link answers 400 with an
+  explanation instead of starting an exchange that cannot succeed.
+- `broker/server.mjs` — the rate limiter used `req.socket.remoteAddress`,
+  which is `127.0.0.1` for every request behind nginx, so all users shared
+  one 60/min bucket. It now uses `X-Forwarded-For`, which nginx sets.
+
+No nginx change is needed: the slow path is answered at ~5 s, inside the
+existing 20 s read timeout.
+
 ## 0.8.0 — broker auth
 
 Authentication is no longer performed by the plugin. It holds a 12-hour

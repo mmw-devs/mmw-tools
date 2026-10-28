@@ -340,6 +340,51 @@ console.log("\n--- secrets never appear in errors ---");
   truthy(!String(caught?.message).includes("user-token-abc"), "no user token is echoed");
 }
 
+console.log("\n--- a failed exchange is terminal for the poller ---");
+{
+  const { core } = makeCore({
+    fetchImpl: async () => {
+      throw new TypeError("fetch failed");
+    },
+    githubAttempts: 1,
+  });
+  const { state, pollSecret } = core.startSession();
+  eq(core.hasPendingLogin(state), true, "a fresh link is usable");
+  await rejectsWith(() => core.completeLogin({ code: "c", state }), "github-unreachable", "a dead network is refused");
+  eq(core.hasPendingLogin(state), false, "a failed link cannot be replayed");
+
+  const polled = core.poll(state, pollSecret);
+  eq(polled.status, "denied", "the poller learns it failed rather than waiting");
+  truthy(/github-unreachable/.test(polled.reason ?? ""), "the reason names the cause");
+  eq(core.stats().activeSessions, 0, "no session was created");
+}
+
+console.log("\n--- a hung GitHub call is bounded ---");
+{
+  // A stub that never answers on its own but does honour the abort signal,
+  // the way undici's fetch does in production.
+  const { core } = makeCore({
+    fetchImpl: (url, init = {}) =>
+      new Promise((_, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal.reason));
+      }),
+    githubTimeoutMs: 30,
+    githubAttempts: 1,
+  });
+  const { state } = core.startSession();
+  const t = Date.now();
+  // AbortSignal.timeout uses an unref'd timer, so with no socket open the
+  // event loop would drain before it fires. Keep the loop alive for the
+  // duration, as a real request would.
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    await rejectsWith(() => core.completeLogin({ code: "c", state }), "github-unreachable", "a hung call gives up");
+    truthy(Date.now() - t < 2000, `gave up after ${Date.now() - t}ms instead of hanging`);
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
 console.log("\n--- safeEqual ---");
 {
   eq(safeEqual("abc", "abc"), true, "equal strings match");

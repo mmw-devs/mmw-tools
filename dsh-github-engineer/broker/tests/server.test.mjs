@@ -191,6 +191,67 @@ await withServer({}, async ({ base }) => {
   truthy((await res.text()).includes("授权未完成"), "the page explains it in plain language");
 });
 
+console.log("\n--- a stalled GitHub does not stall the browser (the 504 regression) ---");
+// 2026-10-29: the callback awaited GitHub, the cross-border path stalled,
+// nginx hit proxy_read_timeout 20s and the user got "504 Gateway Time-out"
+// instead of a login. The browser must be answered even when the exchange
+// never finishes.
+await withServer(
+  { fetchImpl: () => new Promise(() => {}), githubAttempts: 1 },
+  async ({ base }) => {
+    const started = await (await post(base, "/session/start")).json();
+    const t = Date.now();
+    const res = await get(base, `/auth/github/callback?code=abc&state=${encodeURIComponent(started.state)}`);
+    const elapsed = Date.now() - t;
+    eq(res.status, 200, "the browser gets a page while GitHub is still thinking");
+    truthy(elapsed < 2000, `answered in ${elapsed}ms, well inside nginx's 20s`);
+    const body = await res.text();
+    truthy(body.includes("正在确认身份"), "the page says the check continues in the background");
+    truthy(!body.includes("504"), "no gateway error in the page");
+
+    const polled = await (await get(base, `/session/${encodeURIComponent(started.state)}?secret=${encodeURIComponent(started.pollSecret)}`)).json();
+    eq(polled.status, "pending", "the poller is still waiting, not told to give up");
+  },
+  { browserWaitMs: 25 }
+);
+
+console.log("\n--- a failed exchange reaches the poller instead of hanging ---");
+await withServer({ fetchImpl: async () => { throw new TypeError("fetch failed"); }, githubAttempts: 1 }, async ({ base }) => {
+  const started = await (await post(base, "/session/start")).json();
+  const res = await get(base, `/auth/github/callback?code=abc&state=${encodeURIComponent(started.state)}`);
+  eq(res.status, 502, "the browser is told the check failed");
+  truthy((await res.text()).includes("授权校验失败"), "the page explains it in plain language");
+
+  const polled = await (await get(base, `/session/${encodeURIComponent(started.state)}?secret=${encodeURIComponent(started.pollSecret)}`)).json();
+  eq(polled.status, "denied", "the poller learns it failed");
+  truthy(/github-unreachable/.test(polled.reason ?? ""), "the reason names the cause");
+});
+
+console.log("\n--- a stale link says so instead of erroring ---");
+await withServer({}, async ({ base }) => {
+  const res = await get(base, "/auth/github/callback?code=abc&state=never-issued");
+  eq(res.status, 400, "an unknown state is refused");
+  truthy((await res.text()).includes("已过期或已被使用"), "the page says why");
+});
+
+console.log("\n--- behind nginx, each user gets their own rate-limit bucket ---");
+{
+  const core = makeCore().core;
+  const server = createBrokerServer(core); // default clientIp: X-Forwarded-For
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const b = `http://127.0.0.1:${server.address().port}`;
+  const hit = (ip) => fetch(`${b}/health`, { headers: { "x-forwarded-for": ip } });
+  try {
+    for (let i = 0; i < 60; i++) await hit("203.0.113.7");
+    const capped = await hit("203.0.113.7");
+    eq(capped.status, 429, "the 61st request from one address is limited");
+    const neighbour = await hit("203.0.113.8");
+    eq(neighbour.status, 200, "another user is unaffected");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
 console.log("\n--- poll secret is enforced over HTTP ---");
 await withServer({}, async ({ base }) => {
   const started = await (await post(base, "/session/start")).json();
