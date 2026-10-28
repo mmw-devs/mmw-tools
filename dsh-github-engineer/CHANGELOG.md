@@ -29,6 +29,17 @@ outside the server on 2026-10-29: `/health` 121 ms, `/session/start` 200,
   which is `127.0.0.1` for every request behind nginx, so all users shared
   one 60/min bucket. It now uses `X-Forwarded-For`, which nginx sets.
 
+### Operational
+
+- `/opt/race-ops-broker/.env` now routes egress through the host's mihomo
+  HTTP listener (`NODE_USE_ENV_PROXY=1`, `HTTPS_PROXY=http://127.0.0.1:7890`).
+  Direct cross-border connections were the source of the stall; the
+  timeout handling above only turns a stall into a reportable error. Proven
+  rather than assumed: point `HTTPS_PROXY` at a closed port and the same
+  Node call fails `ECONNREFUSED`; the configured listener answers 200.
+  See docs/AUTH-BROKER.md §9. Requires Node ≥ 24 for `NODE_USE_ENV_PROXY`
+  (the host runs v24.22.1).
+
 No nginx change is needed: the slow path is answered at ~5 s, inside the
 existing 20 s read timeout.
 

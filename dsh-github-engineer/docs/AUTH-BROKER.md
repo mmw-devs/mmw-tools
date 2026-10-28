@@ -290,7 +290,36 @@ BROKER_ALLOW_MODE=org
 BROKER_ALLOWED_USERS=
 BROKER_DENIED_USERS=
 PORT=8787
+# 出网走本机 mihomo（Clash）的 HTTP 监听口；不开这个，跨境到 github.com
+# 偶尔会卡住（2026-10-29 那次 504 的直接原因）。Node ≥ 24 的 fetch 才会
+# 认 NODE_USE_ENV_PROXY，`/usr/local/bin/node -v` 要先确认版本。
+NODE_USE_ENV_PROXY=1
+HTTPS_PROXY=http://127.0.0.1:7890
+HTTP_PROXY=http://127.0.0.1:7890
+NO_PROXY=127.0.0.1,localhost,::1
 ```
+
+### 出网代理（2026-10-29 起）
+
+这台机器上 mihomo（Clash.Meta，`/etc/mihomo/config.yaml`）已经在跑：
+`port: 7890` 是 HTTP 代理，`socks-port: 7891` 是 SOCKS，7892 是 redir。
+Node 的 `fetch` 只认 HTTP(S) 代理，所以只写 7890。
+
+broker 是 systemd 服务，不会继承登录 shell 的 `no_proxy`，所以四个变量
+必须写进上面那份 `.env`（`EnvironmentFile` 会带进进程），改完
+`systemctl restart race-ops-broker` 生效。
+
+验证「变量真的生效」而不是自我安慰：把 `HTTPS_PROXY` 指到一个关着的端口，
+同一个 Node 调 GitHub 应当立刻 `ECONNREFUSED`；只有配对的代理才返回 200。
+另一种确认方式是看进程自己的环境：
+
+```bash
+PID=$(systemctl show -p MainPID --value race-ops-broker)
+sudo sh -c "tr '\0' '\n' < /proc/$PID/environ | grep -E '^(HTTPS_PROXY|NODE_USE_ENV_PROXY)='"
+```
+
+> 只改 App 的 callback URL 或 DNS 不受影响；`NO_PROXY` 只排除回环，
+> 不要把它写成 `github.com`，否则代理等于没配。
 
 systemd（只监听回环，TLS 由 Caddy 终止）：
 
