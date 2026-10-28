@@ -14,7 +14,22 @@ Two distribution channels. They differ in one important way: **whether the build
 - `lib/client.js` — the settings panel (`exports["./client"]`)
 - `mcp-server/dist/index.js` — the spawned MCP server
 
-Both `lib/` and `mcp-server/dist/` are currently in `.gitignore`, which means **git install does not work as the tree stands.** npm and `link:` do.
+Both `lib/` and `mcp-server/dist/` are listed in `.gitignore`, but that is
+not the same as absent: **the files are already tracked** (13 under `lib/`,
+11 under `mcp-server/dist/` at the time of writing), and gitignore never
+applies to tracked paths. So git install does work as the tree stands —
+0.8.1 was verified to ship `mcp-server/dist/guard.js` with the current
+limit.
+
+The trap is the other direction: `git add` silently skips a *newly
+generated* file under an ignored directory, so a build that emits a new
+module needs `git add -f`. Rebuild and commit the output in the same
+commit as the source change, always.
+
+To refresh an existing install after a new commit lands on `main`, re-run
+the same add command; `dsh plugin add` re-resolves the branch head. The
+spawned MCP server is created at plugin load, so the app has to restart
+before a new `mcp-server/dist` takes effect.
 
 ## Choosing
 
@@ -24,11 +39,11 @@ Both `lib/` and `mcp-server/dist/` are currently in `.gitignore`, which means **
 - One command for users.
 - `prepublishOnly` guarantees the tarball matches the source.
 
-**Also support git install** — do this if users must be able to install without npm:
+**Also support git install** — already true, since 0.8.x:
 
-1. Remove `lib/` from `dsh-github-engineer/.gitignore` and `dist/` from `mcp-server/.gitignore`.
+1. `lib/` and `mcp-server/dist/` stay tracked even though both are in `.gitignore`; leave them tracked.
 2. Run `pnpm build:all` and `pnpm --filter dsh-github-engineer-mcp build`.
-3. Commit the output together with the source change that produced it, in the same commit. A source-only commit leaves the published artifact stale, which is worse than either extreme.
+3. Commit the output together with the source change that produced it, in the same commit. A source-only commit leaves the published artifact stale, which is worse than either extreme. A newly emitted file needs `git add -f` because of the ignore rule.
 
 The cost is that every source change now touches generated files. Do not mix the two: if `lib/` is committed, it must be regenerated in every commit that changes `src/`.
 
