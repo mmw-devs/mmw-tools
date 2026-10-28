@@ -484,7 +484,22 @@ export const LIMITS = {
   READ_MAX_BYTES: 100 * 1024, // 100 KiB
   READ_HARD_CAP_BYTES: 500 * 1024,
   EDIT_CONTENT_MAX_BYTES: 100 * 1024,
-  COMMIT_MESSAGE_MAX_BYTES: 500,
+  // 64 KiB, not 500 bytes.
+  //
+  // The target repository requires a structured op-log in every commit
+  // message, and for a *new* top-level object that log must spell out
+  // `from: null → to: { ... }` in full — the whole object, not a hash or
+  // a path. `public/data.json` already holds ~10 KB objects, so the
+  // honest message for such a change runs to several KB. A 500-byte cap
+  // made the repository's own rule impossible to satisfy and forced an
+  // agent to either fabricate the log or give up; 0.8.0 did the latter
+  // (reported 2026-10-29, 2179 bytes for a new ops object).
+  //
+  // This limit exists to stop a runaway message, not to police size, so
+  // it is set well above any single top-level object and in line with
+  // PR_BODY_MAX_BYTES. The subject-line limit below is what keeps the
+  // message readable.
+  COMMIT_MESSAGE_MAX_BYTES: 64 * 1024,
   COMMIT_MESSAGE_SUBJECT_MAX_CHARS: 72,
   PR_TITLE_MAX_BYTES: 200,
   PR_BODY_MAX_BYTES: 65 * 1024,

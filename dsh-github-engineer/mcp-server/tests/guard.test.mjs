@@ -330,6 +330,46 @@ throws(
 eq(guard.LIMITS.READ_MAX_BYTES, 100 * 1024, "READ_MAX_BYTES = 100 KiB");
 eq(guard.LIMITS.COMMIT_MESSAGE_SUBJECT_MAX_CHARS, 72, "subject max = 72 chars");
 eq(guard.LIMITS.EDITS_PER_COMMIT_MAX, 5, "max 5 edits per commit");
+eq(guard.LIMITS.COMMIT_MESSAGE_MAX_BYTES, 64 * 1024, "commit message max = 64 KiB");
+
+// Regression for the 0.8.0 report (2026-10-29): the target repository's
+// op-log has to declare a new top-level object in full, so the message is
+// several KB. With a 500-byte cap the agent could only have fabricated the
+// log or refused — it refused.
+const newOpsObject = {
+  ops: Array.from({ length: 8 }, (_, t) => ({
+    id: `t${t}`,
+    name: `Team ${t}`,
+    players: Array.from({ length: 4 }, (_, p) => ({
+      id: `p${t}${p}`,
+      handle: `player-${t}-${p}`,
+      streaming: false,
+    })),
+  })),
+};
+const opLogMessage = [
+  "content: ops 新增 ops 顶层对象",
+  "",
+  "````json",
+  JSON.stringify(
+    {
+      operator: "weunimix",
+      timestamp: "2026-10-29T00:00:00Z",
+      changes: [{ field: "ops", from: null, to: newOpsObject }],
+    },
+    null,
+    2
+  ),
+  "````",
+].join("\n");
+truthy(
+  Buffer.byteLength(opLogMessage) > 2000,
+  `op-log fixture is ${Buffer.byteLength(opLogMessage)} bytes — the size that used to be refused`
+);
+truthy(
+  guard.assertWithinLimit(opLogMessage, guard.LIMITS.COMMIT_MESSAGE_MAX_BYTES, "commit_message"),
+  "a full from:null → to:{...} op-log fits"
+);
 
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail > 0) process.exit(1);

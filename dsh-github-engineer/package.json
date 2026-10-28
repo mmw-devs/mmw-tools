@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-engineer",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "DeepSeek Harness plugin: lets the DSH agent read AGENTS.md, edit a single configured repo under allowlist, run pre-flight, and open a draft PR on a content/* branch. OAuth Device Flow with the user's GitHub identity.",
   "type": "module",

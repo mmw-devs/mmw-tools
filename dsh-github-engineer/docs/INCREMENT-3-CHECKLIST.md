@@ -143,7 +143,7 @@ This is the highest-risk tool. Every guard below is mandatory.
 | ↳ `edits[].replace` (replace mode) | Non-empty string. Length ≤ 100 KiB. |
 | ↳ `edits[].content` (insert mode) | Non-empty string. Length ≤ 100 KiB. |
 | ↳ `edits[].patch` (patch mode) | Non-empty string. Diff-format. Length ≤ 100 KiB. |
-| `commit_message: string` | Non-empty. Length ≤ 500 chars. **redactTokens blacklist** (regex matches token-shaped strings → refuse). No newlines in subject (use multi-line commit_message only if first line ≤ 72 chars). |
+| `commit_message: string` | Non-empty. Length ≤ 64 KiB (raised from 500 bytes in 0.8.1: the target repo's op-log must declare a new top-level object in full, which does not fit in 500). **redactTokens blacklist** (regex matches token-shaped strings → refuse). No newlines in subject (use multi-line commit_message only if first line ≤ 72 chars). |
 
 **Execution order** (state machine — abort on first failure):
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — the browser no longer waits on GitHub
+## 0.8.1 — commit messages sized for the op-log, and a browser that never waits
 
 A login could end in nginx's `504 Gateway Time-out` instead of a session.
 The callback handler exchanged the code, read `/user`, and checked org
@@ -10,8 +10,20 @@ nginx's 20s `proxy_read_timeout` and the user saw a 504. Reproduced from
 outside the server on 2026-10-29: `/health` 121 ms, `/session/start` 200,
 `/auth/github/start` 302 in 81 ms, callback **504 at 20.03 s**.
 
+Separately, `repo_edit` refused the operation the target repository
+requires: `COMMIT_MESSAGE_MAX_BYTES` was 500, while an op-log that declares
+a **new top-level object** must spell out `from: null → to: { ... }` in
+full. The reported message for one such object was 2179 bytes, so the only
+ways through were to fabricate the log or to stop — the right answer was
+neither. The cap is now 64 KiB, which covers any single top-level object in
+`public/data.json` (the largest today is ~10 KB) and matches
+`PR_BODY_MAX_BYTES`; the 72-character subject limit, which is what actually
+keeps a message readable, is unchanged.
+
 ### Fixed
 
+- `mcp-server/src/guard.ts` — `COMMIT_MESSAGE_MAX_BYTES` 500 → 64 KiB.
+  `mcp-server/dist/**` is rebuilt in the same commit.
 - `broker/server.mjs` — the callback gives GitHub 5 s, then answers with
   "正在确认身份" and lets the poller collect the result. The 5 s covers the
   ordinary case, so the page still names the account; a stalled GitHub
