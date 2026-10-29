@@ -36,38 +36,79 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | | |
 |---|---|
 | DSH | `>= 0.1.5-rc.1` |
-| Node | `^22.19.0 \|\| >= 24.0.0` |
-| `git` | on `PATH` |
+| Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
+| `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub | a self-built OAuth App with **Device Flow enabled** |
+| GitHub | the operator's account must pass the broker's allowlist (default: an active member of `mmw-devs`) |
+| Network | `https://race-ops-broker.mmw-team.icu` reachable |
 
-`git` and `gh` are resolved at call time; the MCP server does not bundle either.
+No OAuth App, client id or client secret is needed on the operator's machine:
+authentication goes through the broker (docs/AUTH-BROKER.md), and the login
+token is exchanged there for a short-lived installation token.
 
 ## Install
 
-### From source (development)
+### From the plugin panel (recommended)
+
+DSH 侧边栏 → **插件（Plugins）** → **添加插件** → **安装第三方插件**：
+
+```
+git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools
+```
+
+The panel accepts npm package names, git repositories and local directories;
+this one is a subdirectory of a monorepo, hence the `#path:` selector. Install,
+enable it, then **restart DSH** (the host bundle and the MCP child are loaded
+at startup).
+
+If the panel rejects the address, clone the repository and point the same
+dialog at the local directory `<clone>/dsh-mmw-tools` instead — the build
+output (`lib/`, `mcp-server/dist/`) is committed, so no build step is needed
+on the operator's machine.
+
+Then open **Settings → MMW Tools** and press **登录 GitHub**.
+
+### From the command line
+
+```sh
+dsh plugin --profile <profile> add "git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools"
+# restart DSH
+```
+
+### From a local checkout (development)
 
 ```sh
 git clone https://github.com/mmw-devs/mmw-tools.git
 cd mmw-tools/dsh-mmw-tools
 pnpm install
 pnpm --filter dsh-mmw-tools-mcp build   # MCP child
-pnpm build:all                                # host bundle + client bundle
+pnpm build:all                          # host bundle + client bundle
 
-dsh plugin --profile web add file:$PWD   # `file:`, not `link:` — see below
+dsh plugin --profile <profile> add file:$PWD   # `file:`, not `link:` — see below
 # restart `dsh web`
 ```
-
-Then open **Settings → MMW Tools** and press **Connect GitHub**.
 
 ### From npm (once published)
 
 ```sh
-dsh plugin --profile web add dsh-mmw-tools
-# restart `dsh web`
+dsh plugin --profile <profile> add dsh-mmw-tools
 ```
 
-See [`docs/PUBLISHING.md`](docs/PUBLISHING.md) for the release checklist and for the `git+https://…` install form, which additionally requires the build output to be committed.
+See [`docs/PUBLISHING.md`](docs/PUBLISHING.md) for the release checklist.
+
+### Updating
+
+There is no auto-update for third-party plugins: uninstall and install again
+from the new commit. Settings and the session live in `~/.dsh/`, so a
+reinstall keeps the login unless the package name or data-file names changed
+(they did in 0.9.0 — see [`CHANGELOG.md`](CHANGELOG.md)).
+
+### First run
+
+`repo_clone` puts the checkout at
+`~/.dsh/workspaces/<owner>/<name>` unless `workingDir` is configured, and the
+first `repo_edit` bootstraps it with `npm ci` (up to 5 minutes) because the
+repo's own pre-flight runs through its dev dependencies.
 
 ## Configure
 
