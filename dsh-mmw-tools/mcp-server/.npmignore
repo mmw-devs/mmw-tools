@@ -1,0 +1,22 @@
+# Packing rules for the MCP server sub-package.
+#
+# This file exists for one reason: npm falls back to a directory's
+# .gitignore when that directory has no .npmignore, and mcp-server/.gitignore
+# excludes `dist/`. The result was a tarball whose `files` allowlist said
+# `mcp-server` but which shipped no `mcp-server/dist/index.js` — an install
+# (git, tarball or npm) that looked complete and then had no MCP tools,
+# because the spawned entry point was missing.
+#
+# With this file present, npm-packlist uses it instead of .gitignore for this
+# subtree, and `dist/` ships. It also means the root .npmignore's
+# `mcp-server/src/` rule no longer reaches this subtree, so the source
+# exclusions have to be repeated here.
+
+src/
+tests/
+node_modules/
+*.tsbuildinfo
+*.log
+.DS_Store
+.env
+.env.local

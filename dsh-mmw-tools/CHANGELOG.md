@@ -19,6 +19,14 @@ throughout; nothing about what it does changed.
 
 ### Fixed
 
+- **The tarball now ships the MCP server.** `mcp-server/.gitignore`
+  excludes `dist/`, and npm falls back to a directory's `.gitignore` when
+  that directory has no `.npmignore`. A git or tarball install therefore
+  contained `mcp-server/` with no compiled entry point: the plugin loaded,
+  the panel appeared, and no `mcp__mmw-tools__*` tools existed. Added
+  `mcp-server/.npmignore`; the pack checker now asserts it exists, that it
+  keeps `dist/` packable, and it models npm's per-directory ignore rules
+  instead of assuming the root rules reach into subdirectories.
 - **The package is installable by someone else.** The shipped
   `cordis.patch.yml` pinned `workingDir` to the original developer's
   Windows path (`C:\Users\weunimix\...`), so a colleague's install would

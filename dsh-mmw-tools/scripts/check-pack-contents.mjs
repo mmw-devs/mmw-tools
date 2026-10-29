@@ -39,10 +39,44 @@ if (!existsSync(path.join(ROOT, ".npmignore"))) {
   fail(".npmignore is missing — npm would fall back to .gitignore, which excludes lib/");
 }
 
+/* ---------- nested ignore files ---------- */
+
+/*
+ * npm-packlist applies ignore rules per directory: a directory with a
+ * `.npmignore` uses it, and a directory without one falls back to its
+ * `.gitignore`. `mcp-server/.gitignore` excludes `dist/`, so before
+ * `mcp-server/.npmignore` existed the tarball shipped no compiled MCP
+ * entry point — the package installed "successfully" and then had no
+ * tools, because the spawned `mcp-server/dist/index.js` was absent.
+ *
+ * This checker walks `files` with the root rules only, which cannot see
+ * that fallback, so it asserts the nested file directly.
+ */
+const MCP_DIR = path.join(ROOT, "mcp-server");
+const MCP_NPMIGNORE = path.join(MCP_DIR, ".npmignore");
+
+console.log("\n--- nested ignore rules ---");
+if (!existsSync(MCP_NPMIGNORE)) {
+  fail(
+    "mcp-server/.npmignore is missing — npm would fall back to mcp-server/.gitignore, " +
+      "which excludes dist/, so mcp-server/dist/index.js would not ship"
+  );
+} else {
+  const nested = readFileSync(MCP_NPMIGNORE, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"))
+    .map((l) => l.replace(/\/+$/, "").replace(/^!/, ""));
+  if (nested.some((p) => p === "dist" || p === "dist/**" || p === "/dist")) {
+    fail("mcp-server/.npmignore excludes dist/ — the compiled MCP entry would not ship");
+  } else {
+    pass("mcp-server/.npmignore keeps dist/ packable");
+  }
+}
+
 /* ---------- compile .npmignore rules ---------- */
 
-function loadIgnoreRules() {
-  const file = path.join(ROOT, ".npmignore");
+function loadIgnoreRules(file) {
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
@@ -55,12 +89,13 @@ function loadIgnoreRules() {
     });
 }
 
-const rules = loadIgnoreRules();
+const rules = loadIgnoreRules(path.join(ROOT, ".npmignore"));
+const mcpRules = loadIgnoreRules(MCP_NPMIGNORE);
 
-/** Match a posix relative path against the ignore rules. */
-function ignored(relPath) {
+/** Match a posix relative path against a set of ignore rules. */
+function matches(ruleList, relPath) {
   const segments = relPath.split("/");
-  for (const { pattern, dirOnly } of rules) {
+  for (const { pattern, dirOnly } of ruleList) {
     // Exact file match.
     if (!dirOnly && (pattern === relPath || segments[segments.length - 1] === pattern)) {
       return true;
@@ -72,6 +107,18 @@ function ignored(relPath) {
     if (pattern.startsWith("*.") && relPath.endsWith(pattern.slice(1))) return true;
   }
   return false;
+}
+
+/**
+ * npm applies a directory's own `.npmignore` to that subtree; the root file
+ * does not reach into it. Mirror that, or the walker would claim a path is
+ * excluded while `npm pack` ships it.
+ */
+function ignored(relPath) {
+  if (relPath === "mcp-server" || relPath.startsWith("mcp-server/")) {
+    return matches(mcpRules, relPath.slice("mcp-server/".length));
+  }
+  return matches(rules, relPath);
 }
 
 /* ---------- walk the allowlist ---------- */
