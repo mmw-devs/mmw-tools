@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import path from "node:path";
 import http from "node:http";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,7 @@ if (!existsSync(BUNDLE_DIST) || !existsSync(MCP_DIST)) {
   process.exit(2);
 }
 
-const { apply, makeRoutes, API } = await import(
+const { apply, makeRoutes, API, resolveWorkingDir } = await import(
   pathToFileURL(BUNDLE_DIST).href
 );
 
@@ -42,6 +43,31 @@ function eq(actual, want, label) {
   else bad(label, `expected ${JSON.stringify(want)}, got ${JSON.stringify(actual)}`);
 }
 function truthy(v, label) { if (v) ok(label); else bad(label, "expected truthy"); }
+
+/* ============================================================== */
+/*  Portability: the checkout path is derived, not shipped         */
+/* ============================================================== */
+
+console.log("\n--- workingDir resolution ---");
+{
+  const binding = { owner: "mmw-devs", name: "ffxiv-race-ops" };
+  eq(
+    resolveWorkingDir(undefined, binding, {}),
+    path.join(homedir(), ".dsh", "workspaces", "mmw-devs", "ffxiv-race-ops"),
+    "defaults under ~/.dsh/workspaces/<owner>/<name>"
+  );
+  eq(resolveWorkingDir("/tmp/pinned", binding, {}), "/tmp/pinned", "explicit config wins");
+  eq(
+    resolveWorkingDir(undefined, binding, { GHOST_WORKING_DIR: "/tmp/from-env" }),
+    "/tmp/from-env",
+    "GHOST_WORKING_DIR overrides the default"
+  );
+  eq(
+    resolveWorkingDir("", binding, {}),
+    path.join(homedir(), ".dsh", "workspaces", "mmw-devs", "ffxiv-race-ops"),
+    "an empty string still means unset"
+  );
+}
 
 /* ============================================================== */
 /*  Stand up a real http.Server                                    */

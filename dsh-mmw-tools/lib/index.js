@@ -28,6 +28,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync } from "node:fs";
 import { PLUGIN_ID, PLUGIN_DISPLAY_NAME, PLUGIN_NAMESPACE, CORDIS_INJECT, SYSTEM_PROMPT_SECTION_ORDER, mcpServerEntryPath, } from "./const.js";
@@ -289,6 +290,26 @@ const DEFAULT_DENYLIST = [
     ".pi/**",
     "dist/**",
 ];
+/**
+ * Where `repo_clone` puts the checkout.
+ *
+ * Explicit config wins, then the deployment override (`GHOST_WORKING_DIR`),
+ * then a per-user default under `~/.dsh/workspaces/<owner>/<name>`.
+ *
+ * The default is what makes the package portable: the previous shipped
+ * `cordis.patch.yml` pinned this to one developer's Windows path, so anyone
+ * else installing the plugin would have written into a directory that does
+ * not exist on their machine. It is derived from the binding rather than
+ * hard-coded so the same build works for every checkout.
+ */
+export function resolveWorkingDir(configWorkingDir, binding, env = process.env) {
+    if (configWorkingDir && configWorkingDir.length > 0)
+        return configWorkingDir;
+    if (env.GHOST_WORKING_DIR && env.GHOST_WORKING_DIR.length > 0) {
+        return env.GHOST_WORKING_DIR;
+    }
+    return path.join(homedir(), ".dsh", "workspaces", binding.owner, binding.name);
+}
 export function normalizeBinding(raw) {
     const str = (v, fallback) => typeof v === "string" && v.length > 0 ? v : fallback;
     const list = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
@@ -707,9 +728,7 @@ export function apply(ctx, config) {
     };
     const logger = safeAccess(() => ctx.logger) ?? consoleLogger;
     const scopes = [];
-    const workingDir = config?.workingDir && config.workingDir.length > 0
-        ? config.workingDir
-        : process.env.GHOST_WORKING_DIR ?? "";
+    const workingDir = resolveWorkingDir(config?.workingDir, binding);
     // Construct audit + redacting loggers once, share across tools.
     const audit = createAuditLogger({
         file: auditPath(),

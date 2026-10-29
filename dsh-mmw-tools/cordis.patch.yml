@@ -44,11 +44,17 @@
         enabled: true
 
         # Where repo_clone puts the checkout and where mmw_tools_run reads
-        # AGENTS.md. This lives here, with the rest of this deployment's
-        # fixed facts, because a profile-level override *replaces* the
-        # plugin's config instead of merging into it - overriding just this
-        # one key wiped repoBinding and every tool would have failed.
-        workingDir: C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+        # AGENTS.md.
+        #
+        # Deliberately NOT set here: the plugin defaults to
+        #   ~/.dsh/workspaces/<repoBinding.owner>/<repoBinding.name>
+        # so an install on someone else's machine does not inherit this
+        # one's absolute path. Set it only if that default is wrong for a
+        # deployment - and when you do, copy the whole config block, because
+        # a profile-level override *replaces* the plugin's config instead of
+        # merging into it (overriding just this key once wiped repoBinding
+        # and every tool failed).
+        # workingDir: /absolute/path/to/checkout
 
         # Auth is delegated to the broker: no OAuth App, no scopes, no
         # user token. See docs/AUTH-BROKER.md.

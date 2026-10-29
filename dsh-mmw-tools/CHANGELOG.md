@@ -17,6 +17,17 @@ throughout; nothing about what it does changed.
 | Repo directory | `dsh-github-engineer/` | `dsh-mmw-tools/` |
 | Settings panel | "GitHub Engineer" | "MMW Tools" |
 
+### Fixed
+
+- **The package is installable by someone else.** The shipped
+  `cordis.patch.yml` pinned `workingDir` to the original developer's
+  Windows path (`C:\Users\weunimix\...`), so a colleague's install would
+  have written into a directory that does not exist on their machine. The
+  plugin now derives it: `workingDir` config → `GHOST_WORKING_DIR` →
+  `~/.dsh/workspaces/<repoBinding.owner>/<repoBinding.name>`. The old
+  explicit value happens to equal the new default on this machine, so
+  nothing changes locally.
+
 ### Breaking
 
 - **Reinstall the plugin in every profile.** The package name and the
