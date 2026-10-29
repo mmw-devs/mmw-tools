@@ -1,0 +1,31 @@
+{
+  "name": "dsh-mmw-tools-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for dsh-mmw-tools: exposes repo_read / repo_edit / pr_create / etc. Skeleton ships only an echo tool.",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/guard.test.mjs && node tests/tools-list-schema.test.mjs",
+    "test:smoke": "node tests/tools-list.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "ajv": "^8.20.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "~5.7.2"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT"
+}

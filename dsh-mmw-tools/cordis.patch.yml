@@ -1,0 +1,88 @@
+# dsh-mmw-tools bundle patch
+#
+# Inserts the plugin row into the profile roster. The bundle is loaded
+# as a profile bundle layer (declared by the dsh.bundle.patch field in
+# package.json).
+#
+# Activate:
+#   dsh plugin --profile web add link:/path/to/dsh-mmw-tools
+#   # then restart `dsh web`
+#
+# githubOAuthClientId — your GitHub OAuth App's Client ID. Register at
+#   https://github.com/settings/developers → New OAuth App, then enable
+#   Device Flow. See docs/github-oauth-app-checklist.md.
+#
+# defaultScopes — the OAuth scopes requested during Device Flow.
+#   Keep `repo` for branch pushes + PR; add `workflow` to fire Actions;
+#   add `offline_access` to receive a refresh token.
+#
+# repoBinding — the SINGLE repository this plugin operates on. Editing
+#   this does not affect GitHub; it is purely a client-side guard rail.
+#
+# ⚠️  SSOT WARNING — MIRRORED FACTS
+# ─────────────────────────────────
+# The following fields MIRROR facts in
+# `mmw-devs/ffxiv-race-ops/AGENTS.md`:
+#
+#     cordis.patch.yml field       AGENTS.md source
+#     ───────────────────────     ──────────────────────────────────
+#     repoBinding.allowlistPaths  "唯一允许修改: public/data.json"
+#     repoBinding.denylistPaths   derived from the "不可改动" list
+#     repoBinding.branchPrefix    "content/* 分支前缀"
+#     preflight.cmd               "本地校验: npm run validate"
+#
+# The plugin's `mmw_tools_run` tool fetches AGENTS.md at startup and
+# compares it to these fields. A mismatch logs a WARNING but does NOT
+# block execution — AGENTS.md is the authority; this file is the cache.
+# See docs/OPERATIONS-SYNC.md for the maintenance contract.
+
+- insert:
+    - id: mmw-tools
+      name: dsh-mmw-tools
+      config:
+        announceToAgent: true
+        enabled: true
+
+        # Where repo_clone puts the checkout and where mmw_tools_run reads
+        # AGENTS.md. This lives here, with the rest of this deployment's
+        # fixed facts, because a profile-level override *replaces* the
+        # plugin's config instead of merging into it - overriding just this
+        # one key wiped repoBinding and every tool would have failed.
+        workingDir: C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+
+        # Auth is delegated to the broker: no OAuth App, no scopes, no
+        # user token. See docs/AUTH-BROKER.md.
+        brokerUrl: https://race-ops-broker.mmw-team.icu
+
+        repoBinding:
+          owner: mmw-devs
+          name: ffxiv-race-ops
+          baseBranch: main
+          branchPrefix: content/
+          allowlistPaths:
+            - public/data.json
+          denylistPaths:
+            - .github/workflows/**
+            - schema/**
+            - scripts/**
+            - constants.js
+            - AGENTS.md
+            - README.md
+            - .pi/**
+            - dist/**
+          preflight:
+            enabled: true
+            cmd: npm run validate
+            timeoutSeconds: 60
+          # `npm run validate` runs scripts/validate-data.ts through tsx,
+          # which lives in devDependencies. A fresh clone has no
+          # node_modules, so without this bootstrap every commit is
+          # refused by its own pre-flight with "tsx: not found".
+          # Runs once per working directory, before the first edit.
+          bootstrap:
+            cmd: npm ci
+            whenMissing: node_modules
+            timeoutSeconds: 300
+          pr:
+            defaultDraft: true
+            titlePrefix: "[ops]"

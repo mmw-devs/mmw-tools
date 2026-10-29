@@ -1,0 +1,101 @@
+{
+  "name": "dsh-mmw-tools",
+  "version": "0.9.0",
+  "private": true,
+  "description": "DeepSeek Harness plugin: lets the DSH agent read AGENTS.md, edit a single configured repo under allowlist, run pre-flight, and open a draft PR on a content/* branch. OAuth Device Flow with the user's GitHub identity.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmw-devs/mmw-tools.git",
+    "directory": "dsh-mmw-tools"
+  },
+  "homepage": "https://github.com/mmw-devs/mmw-tools/tree/main/dsh-mmw-tools#readme",
+  "bugs": {
+    "url": "https://github.com/mmw-devs/mmw-tools/issues"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    },
+    "engines": {
+      "dsh": ">=0.1.5-rc.1"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:client": "tsc -p tsconfig.client.json && node scripts/build-client.mjs",
+    "build:all": "pnpm build && pnpm build:client",
+    "watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/skills.test.mjs && node tests/client-bundle.test.mjs && node tests/bundle-apply.test.mjs && node tests/routes-integration.test.mjs && node tests/mmw-tools-run.test.mjs && node tests/audit.test.mjs && node tests/github-app.test.mjs && node tests/session-store.test.mjs && node tests/broker-client.test.mjs && node broker/tests/core.test.mjs && node broker/tests/server.test.mjs",
+    "test:smoke": "node mcp-server/tests/tools-list.test.mjs",
+    "test:integration": "node tests/integration-git.test.mjs",
+    "check:namespace": "node scripts/check-namespace-consistency.mjs",
+    "check:pack": "node scripts/check-pack-contents.mjs",
+    "check": "pnpm typecheck && pnpm check:namespace && pnpm test && pnpm check:pack",
+    "prepublishOnly": "pnpm build:all"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.5-rc.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@types/node": "^22.20.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "~5.7.2"
+  },
+  "files": [
+    "lib",
+    "mcp-server",
+    "cordis.patch.yml",
+    "scripts",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "skills"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "github",
+    "mcp",
+    "model-context-protocol",
+    "oauth-device-flow",
+    "pull-request",
+    "agents-md"
+  ],
+  "license": "MIT"
+}

@@ -116,7 +116,7 @@ your-plugin/
 ```ts
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
-export const name = "github-engineer";  // 插件 ID
+export const name = "mmw-tools";  // 插件 ID
 export const inject = ["webServer", "tools", "systemPrompt"];
 
 export function apply(ctx, config) {
@@ -126,15 +126,15 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     const disposers = buildTools(ctx).map((tool) => ctx.tools.register(tool));
     return () => disposers.forEach(d => d());
-  }, "github-engineer: tools");
+  }, "mmw-tools: tools");
 
   ctx.effect(() => {
     const disposers = makeRoutes(ctx).map((route) => ctx.webServer.register(route));
     return () => disposers.forEach(d => d());
-  }, "github-engineer: routes");
+  }, "mmw-tools: routes");
 
   ctx.systemPrompt.section({
-    name: "plugin:github-engineer",
+    name: "plugin:mmw-tools",
     order: 210,
     text: "..."  // 给 LLM 的公告
   });
@@ -161,8 +161,8 @@ export function apply(ctx, config) {
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
 const statusTool = defineTool({
-  name: "engineer_status",
-  description: "查看 dsh-github-engineer 状态…",
+  name: "mmw_tools_status",
+  description: "查看 dsh-mmw-tools 状态…",
   parameters: {},  // JSON Schema
   output: {
     schema: { /* JSON Schema，additionalProperties:false */ },
@@ -204,7 +204,7 @@ const transport = new StdioClientTransport({
 });
 
 // 2. 建 client
-const client = new Client({ name: "dsh-github-engineer", version: "0.1.0" }, { capabilities: {} });
+const client = new Client({ name: "dsh-mmw-tools", version: "0.1.0" }, { capabilities: {} });
 await client.connect(transport);
 
 // 3. 列出工具
@@ -258,7 +258,7 @@ DSH 的 webServer 路由形如：
 ```ts
 ctx.webServer.register({
   kind: "exact",
-  path: "/api/github-engineer/status",
+  path: "/api/mmw-tools/status",
   handler: async (req, res) => {
     if (!isLoopbackRequest(req)) {
       res.writeHead(403); res.end(); return;
@@ -322,7 +322,7 @@ loopback 守卫（参考 dsh-feishu-mcp）：
 ```jsonc
 // package.json
 {
-  "name": "dsh-github-engineer",
+  "name": "dsh-mmw-tools",
   "version": "0.1.0",
   "type": "module",
   "main": "lib/index.js",
@@ -343,8 +343,8 @@ loopback 守卫（参考 dsh-feishu-mcp）：
 ```yaml
 # cordis.patch.yml
 - insert:
-    - id: github-engineer
-      name: dsh-github-engineer
+    - id: mmw-tools
+      name: dsh-mmw-tools
       config:
         announceToAgent: true
         enabled: true
@@ -354,14 +354,14 @@ loopback 守卫（参考 dsh-feishu-mcp）：
 // src/index.ts
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
-export const name = "github-engineer";
+export const name = "mmw-tools";
 export const inject = ["tools", "systemPrompt"];
 
 export function apply(ctx, config) {
   ctx.effect(() => {
     const dispose = ctx.tools.register(defineTool({
-      name: "engineer_status",
-      description: "查看 dsh-github-engineer 状态",
+      name: "mmw_tools_status",
+      description: "查看 dsh-mmw-tools 状态",
       parameters: {},
       output: {
         schema: {
@@ -375,16 +375,16 @@ export function apply(ctx, config) {
         render: (_args, value) => [{ type: "text", text: String(value.message ?? "") }]
       },
       async execute() {
-        return { ok: true, message: "dsh-github-engineer 已加载（骨架）。" };
+        return { ok: true, message: "dsh-mmw-tools 已加载（骨架）。" };
       }
     }));
     return dispose;
-  }, "github-engineer: tools");
+  }, "mmw-tools: tools");
 
   ctx.systemPrompt.section({
-    name: "plugin:github-engineer",
+    name: "plugin:mmw-tools",
     order: 210,
-    text: "本机已安装 dsh-github-engineer 插件（GitHub 仓库工程脚手架）。"
+    text: "本机已安装 dsh-mmw-tools 插件（GitHub 仓库工程脚手架）。"
   });
 }
 ```
@@ -392,9 +392,9 @@ export function apply(ctx, config) {
 骨架确认可跑通的最小指令序列：
 1. `pnpm install`
 2. `pnpm build`（出 `lib/index.js`）
-3. `dsh plugin --profile web add link:/path/to/dsh-github-engineer`
+3. `dsh plugin --profile web add link:/path/to/dsh-mmw-tools`
 4. 重启 `dsh web`
-5. 在 DSH 对话框呼 `engineer_status`，应该看到 "dsh-github-engineer 已加载（骨架）。"
+5. 在 DSH 对话框呼 `mmw_tools_status`，应该看到 "dsh-mmw-tools 已加载（骨架）。"
 
 ---
 

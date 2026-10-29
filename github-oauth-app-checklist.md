@@ -1,4 +1,4 @@
-# GitHub OAuth App 注册 Checklist（dsh-github-engineer 用）
+# GitHub OAuth App 注册 Checklist（dsh-mmw-tools 用）
 
 > 适用：OAuth Device Flow + 单一用户身份推 PR 到 `mmw-devs/ffxiv-race-ops`。
 > 预计时间：5 分钟。
@@ -17,8 +17,8 @@
 
 | 字段 | 填什么 | 说明 |
 |---|---|---|
-| **Application name** | `dsh-github-engineer` | 显示名，可改 |
-| **Homepage URL** | 你的插件 README URL（先用占位 `https://github.com/<your-name>/dsh-github-engineer`） | GitHub 强制要求 |
+| **Application name** | `dsh-mmw-tools` | 显示名，可改 |
+| **Homepage URL** | 你的插件 README URL（先用占位 `https://github.com/<your-name>/dsh-mmw-tools`） | GitHub 强制要求 |
 | **Application description** | `DeepSeek Harness plugin: connects to a single configured repo and operates AGENTS.md-constrained workflows.` | 可选 |
 | **Authorization callback URL** | `http://127.0.0.1:3000/oauth/callback` | **占位即可**：Device Flow 不需要真的回调 URL；任何 loopback URL 都能让 GitHub 接受 |
 
@@ -60,8 +60,8 @@ v1 推荐 scope（写入 plugin manifest 默认值）：
 ```yaml
 # cordis.patch.yml
 - insert:
-    - id: github-engineer
-      name: dsh-github-engineer
+    - id: mmw-tools
+      name: dsh-mmw-tools
       config:
         announceToAgent: true
         enabled: true
@@ -145,7 +145,7 @@ curl -H "Authorization: Bearer gho_..." \
 | Device Flow 拿不到 `refresh_token` | scope 里必须有 `offline_access` |
 | 用户拒绝授权 | Device Flow 立刻返回 `access_denied`，plugin 落到 `no_token` |
 | App 撤销 token 后再次调用 | 401 → plugin refresh 失败 → `reauth_needed` 红条 |
-| 多人共用 OAuth App | 可以：每个用户独立 authorize 一次；plugin 把 token 存到自己的 `~/.dsh/dsh-github-engineer.json`，互不干扰 |
+| 多人共用 OAuth App | 可以：每个用户独立 authorize 一次；plugin 把 token 存到自己的 `~/.dsh/dsh-mmw-tools.json`，互不干扰 |
 
 ---
 
