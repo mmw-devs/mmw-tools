@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.1 — an outsider can actually sign in
+
+The broker treated `BROKER_ALLOW_MODE=org` and `BROKER_ALLOWED_USERS` as
+mutually exclusive: in org mode the explicit list was never consulted, and
+production ran org mode with an empty list. So the one capability the
+broker exists to provide — letting someone **outside** `mmw-devs` operate
+the repository, proving only their identity while the App installation
+supplies the write — could not happen at all. An invited outsider failed
+at the callback with `not-a-member-of-mmw-devs`.
+
+`BROKER_ALLOWED_USERS` is now an additional grant in every mode:
+
+```
+deny list → refuse
+allow list → admit (no GitHub call)
+list mode → refuse
+otherwise → org membership
+```
+
+`list` mode is unchanged: the list is the only grant there. Revocation is
+still immediate on either path, because every installation-token request
+re-checks the allowlist.
+
+Operators: add an outsider's GitHub username to `BROKER_ALLOWED_USERS` in
+`/opt/race-ops-broker/.env` and restart the service. `/health` now reports
+`allowListSize` so the deploy is visible. Covered by four new assertions in
+`broker/tests/core.test.mjs`, including the mint-time re-check.
+
 ## 0.9.0 — renamed to dsh-mmw-tools
 
 The plugin was called `dsh-github-engineer` while it lives in the mmw-tools

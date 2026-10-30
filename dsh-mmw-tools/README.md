@@ -39,7 +39,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
 | `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub | the operator's account must pass the broker's allowlist (default: an active member of `mmw-devs`) |
+| GitHub | the operator's account must pass the broker's allowlist: a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. The second path is the reason the plugin exists — an outsider can operate the repo without joining the org |
 | Network | `https://race-ops-broker.mmw-team.icu` reachable |
 
 No OAuth App, client id or client secret is needed on the operator's machine:

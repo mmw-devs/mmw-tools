@@ -203,29 +203,42 @@ Authorization: Bearer <sessionToken>
 
 ## 6. 允许名单
 
-两种模式，配置里二选一（`BROKER_ALLOW_MODE`）：
+**决定顺序**（`broker/core.mjs` 的 `#checkAllowlist`）：
 
-| 模式 | 规则 | 校验调用 |
-|---|---|---|
-| `org`（默认） | 必须是 `mmw-devs` 的 active 成员 | `GET /user/memberships/orgs/mmw-devs`，要求 `state === "active"` |
-| `list` | 用户名命中 `BROKER_ALLOWED_USERS`（逗号分隔） | 无额外调用 |
+1. `BROKER_DENIED_USERS` 命中 → 拒绝（应急拉黑，任何模式都生效）
+2. `BROKER_ALLOWED_USERS` 命中 → 放行，不调 GitHub
+3. `BROKER_ALLOW_MODE=list` → 拒绝（名单是唯一授权来源）
+4. 否则查组织成员：`GET /orgs/mmw-devs/members/{login}`，204 放行、404 拒绝
 
-`org` 模式更好：权限管理留在 GitHub 组织里，不用维护第二份名单。
+`BROKER_ALLOWED_USERS` 是**叠加授权**，不是与 `org` 互斥的第二种模式。这一点是
+设计上的要害：本插件存在的理由就是让**不在 `mmw-devs` 的人**也能操作仓库 ——
+他们用 GitHub 账号证明身份，写权限来自 App 安装（§1），因此不需要是组织成员、
+不需要是协作者、也不需要 `repo` scope。如果 `org` 模式把显式名单排除在外，
+"邀请一个外部协作者"这件事就无从实现：他连登录都完不成。
 
-**2026-10-27 已切换到 `org` 模式并验证通过。** 前提是给 App 加上
-`Organization → Members: Read-only`，并且**在安装上接受新权限**（只改 App 权限
-不重新批准安装，用户 token 依然拿不到该权限，表现为 `allowlist-check-failed`）。
-切换后的实测日志：
+> 2026-10-29 修正：此前实现把 `org` / `list` 做成二选一，线上 `org` 模式下
+> `BROKER_ALLOWED_USERS` 根本不参与判断，外部用户会在回调阶段被
+> `not-a-member-of-mmw-devs` 拒绝。现在名单在两种模式下都生效。
+
+| 配置 | 谁能登录 |
+|---|---|
+| `BROKER_ALLOW_MODE=org`（默认）+ 名单 | 组织成员 ∪ 名单 |
+| `BROKER_ALLOW_MODE=list` + 名单 | 仅名单 |
+
+**给外部人员开权限**：把他的 GitHub 用户名加进 `.env` 的
+`BROKER_ALLOWED_USERS`（逗号分隔，大小写不敏感），
+`sudo systemctl restart race-ops-broker` 即可；移除同理，且立即生效
+（installation token 每次签发都会重新校验，最多等缓存 10 分钟）。
+
+组织模式的既有前提不变：App 需要 `Organization → Members: Read-only`，并且
+**在安装上接受新权限**（只改 App 权限不重新批准安装，会表现为
+`allowlist-check-failed`）。切换后的实测日志：
 
 ```
 session_start      -> session_authorized login=weunimix
                    -> installation_token_issued
 /health            -> allowMode: org, activeSessions: 1
 ```
-
-`BROKER_ALLOWED_USERS` 现在为空且不再参与判断；保留它是为了随时能用
-`BROKER_ALLOW_MODE=list` 回退。
-`list` 模式用于临时给外部人员开个口子。
 
 无论哪种模式，`BROKER_DENIED_USERS` 里的用户名一律拒绝（应急拉黑）。
 

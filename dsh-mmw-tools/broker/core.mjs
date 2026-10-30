@@ -315,8 +315,24 @@ export class BrokerCore {
   }
 
   /**
-   * Allowlist. `org` mode asks GitHub for the caller's membership, which
-   * keeps the source of truth in one place; `list` mode compares names.
+   * Allowlist.
+   *
+   * `BROKER_ALLOWED_USERS` is an *additional* grant, not an alternative mode:
+   *
+   *   deny list  → refuse, always
+   *   allowed    → admit, no org call
+   *   otherwise  → org membership (or, in `list` mode, refuse)
+   *
+   * The explicit list is what makes the plugin useful to people outside the
+   * organisation. That is the whole point of the broker: an outsider proves
+   * *who they are*, and the repository write comes from the App installation,
+   * so they do not need org membership, collaborator status or `repo` scope
+   * (docs/AUTH-BROKER.md §1). Treating `org` and `list` as mutually
+   * exclusive made the "org" setting silently revoke that capability — an
+   * invited outsider could not even complete a login.
+   *
+   * In `list` mode the same branch still works: the list is the only grant,
+   * and a miss is a refusal without asking GitHub.
    */
   async #checkAllowlist(login) {
     const lower = login.toLowerCase();
@@ -330,10 +346,10 @@ export class BrokerCore {
     }
 
     let verdict;
-    if (this.allowMode === "list") {
-      verdict = this.allowList.includes(lower)
-        ? { allowed: true, reason: "allowlisted" }
-        : { allowed: false, reason: "not-allowlisted" };
+    if (this.allowList.includes(lower)) {
+      verdict = { allowed: true, reason: "allowlisted" };
+    } else if (this.allowMode === "list") {
+      verdict = { allowed: false, reason: "not-allowlisted" };
     } else {
       // Checked with an *installation* token, not the user's.
       //
@@ -491,6 +507,9 @@ export class BrokerCore {
       pendingSessions: [...this.#sessions.values()].filter((s) => s.status === "pending").length,
       activeSessions: this.#tokens.size,
       allowCacheEntries: this.#allowCache.size,
+      // Makes the explicit grant visible on /health after a deploy: the
+      // count, never the names.
+      allowListSize: this.allowList.length,
     };
   }
 }

@@ -242,6 +242,80 @@ console.log("\n--- allowlist modes ---");
   );
 }
 
+console.log("\n--- an explicit allowlist admits outsiders in org mode ---");
+{
+  // The whole point of the broker: an outsider proves identity, the App
+  // installation supplies the repository write. Requiring org membership
+  // made an invited outsider unable to log in at all.
+  const gh = fakeGithub({ login: "outsider", membership: "none" });
+  const core = new BrokerCore({
+    appId: 1,
+    privateKeyPem: "x",
+    installationId: 1,
+    clientId: "c",
+    clientSecret: "s",
+    publicUrl: PUB,
+    owner: "mmw-devs",
+    repo: "ffxiv-race-ops",
+    allowMode: "org",
+    allowList: ["Outsider"],
+    fetchImpl: gh.impl,
+    now: () => NOW,
+    mintInstallationToken: async () => ({
+      token: "ghs_outsider",
+      expiresAt: NOW + 3_600_000,
+      permissions: { contents: "write" },
+    }),
+  });
+
+  const started = core.startSession();
+  const res = await core.completeLogin({ code: "c", state: started.state });
+  eq(res.login, "outsider", "an allowlisted non-member signs in under org mode");
+  eq(core.poll(started.state, started.pollSecret).status, "authorized", "and receives a session");
+  eq(
+    gh.calls.filter((c) => c.url.includes("/orgs/")).length,
+    0,
+    "no org membership call is made for an allowlisted user"
+  );
+
+  // The same verdict has to hold at mint time: this is where a session
+  // actually becomes repository write access.
+  const minted = await core.issueInstallationToken(res.sessionToken);
+  eq(minted.token, "ghs_outsider", "the outsider can mint an installation token");
+  eq(core.stats().activeSessions, 1, "the allowlisted session stays active");
+}
+{
+  const { core } = makeCore({ allowList: ["someone-else"] });
+  const { state } = core.startSession();
+  const res = await core.completeLogin({ code: "c", state });
+  eq(res.login, "octocat", "org members still sign in when an allowlist exists");
+}
+{
+  const gh = fakeGithub({ login: "outsider", membership: "none" });
+  const core = new BrokerCore({
+    appId: 1,
+    privateKeyPem: "x",
+    installationId: 1,
+    clientId: "c",
+    clientSecret: "s",
+    publicUrl: PUB,
+    owner: "mmw-devs",
+    repo: "ffxiv-race-ops",
+    allowMode: "org",
+    allowList: ["outsider"],
+    denyList: ["outsider"],
+    fetchImpl: gh.impl,
+    now: () => NOW,
+    mintInstallationToken: async () => ({ token: "x", expiresAt: NOW + 3_600_000, permissions: {} }),
+  });
+  const { state } = core.startSession();
+  await rejectsWith(
+    () => core.completeLogin({ code: "c", state }),
+    "not-allowed",
+    "the deny list still wins over the explicit allowlist"
+  );
+}
+
 console.log("\n--- poll secret ---");
 {
   const { core } = makeCore();
