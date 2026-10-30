@@ -52,6 +52,13 @@ function readPackageName(file) {
   return typeof pkg.name === "string" ? pkg.name : null;
 }
 
+/** Read package.json's top-level `version`. */
+function readPackageVersion(file) {
+  if (!existsSync(file)) return null;
+  const pkg = JSON.parse(readFileSync(file, "utf8"));
+  return typeof pkg.version === "string" ? pkg.version : null;
+}
+
 /**
  * Read MCP server's `Server({ name: ..., version: ... })` literal.
  * Accepts either string literals or const references exported from the
@@ -85,6 +92,7 @@ const mcpConsts = readConstExports(files.mcpConstTs);
 const mcpInfo = readMcpServerInfo(files.mcpSrc, mcpConsts);
 const bundleName = readPackageName(files.bundlePkg);
 const mcpName = readPackageName(files.mcpPkg);
+const mcpVersion = readPackageVersion(files.mcpPkg);
 
 /** True if lib/client.js exists AND registers an id matching
  *  `dsh-mmw-tools` via __ModuleLoader__. */
@@ -118,6 +126,20 @@ const checks = [
     label: "mcp-server package.json `name` is `dsh-mmw-tools-mcp`",
     actual: mcpName,
     expected: "dsh-mmw-tools-mcp",
+  },
+  {
+    // The MCP package carries its own version (it ships inside the bundle but
+    // is a separate pnpm project). Two copies of one number: the constant is
+    // what `serverInfo.version` reports, the package.json is what tooling
+    // reads. Nothing used to compare them.
+    label: "mcp-server package.json `version` matches mcp-server PLUGIN_VERSION",
+    actual: mcpVersion,
+    expected: mcpConsts.PLUGIN_VERSION,
+  },
+  {
+    label: "mcp-server Server.serverInfo.version reports PLUGIN_VERSION",
+    actual: mcpInfo.version,
+    expected: mcpConsts.PLUGIN_VERSION,
   },
   {
     label: "mcp-server Server.serverInfo.name matches PLUGIN_DISPLAY_NAME",

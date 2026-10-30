@@ -81,8 +81,6 @@ const ctx = {
   logger: { info: () => {}, warn: () => {}, error: () => {} },
 };
 apply(ctx, {
-  githubOAuthClientId: "Ov23liakpz9LHG1E0dE5",
-  defaultScopes: ["repo", "workflow", "offline_access"],
   repoBinding: {
     owner: "mmw-devs", name: "ffxiv-race-ops", baseBranch: "main",
     branchPrefix: "content/", allowlistPaths: ["public/data.json"],

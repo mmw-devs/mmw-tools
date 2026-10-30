@@ -98,10 +98,21 @@ Permissions —— **只给这些，其他全部 No access**：
 ### `GET /health`
 
 ```json
-{ "ok": true, "appId": 123456, "org": "mmw-devs", "allowlistSize": 3 }
+{
+  "ok": true,
+  "appId": "5469681",
+  "repository": "mmw-devs/ffxiv-race-ops",
+  "allowMode": "org",
+  "org": "mmw-devs",
+  "pendingSessions": 0,
+  "activeSessions": 0,
+  "allowCacheEntries": 0,
+  "allowListSize": 3
+}
 ```
 
-不返回任何密钥。
+`allowListSize` 是名单人数（`allowListSize`，不是 `allowlistSize`），部署后用它确认新配置
+真的被加载；不返回姓名，也不返回任何密钥。
 
 ### `POST /session/start`
 

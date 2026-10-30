@@ -1,11 +1,8 @@
-/** Route paths — all prefixed with /api/mmw-tools/. */
-export const API = {
-    status: "/api/mmw-tools/status",
-    oauthStart: "/api/mmw-tools/oauth/start",
-    oauthFinish: "/api/mmw-tools/oauth/finish",
-    oauthRefresh: "/api/mmw-tools/oauth/refresh",
-    revoke: "/api/mmw-tools/revoke",
-};
+import { API } from "./shared/api-paths.js";
+// Defined in src/shared/api-paths.ts and re-exported here: the host bundle,
+// the tests and the panel must agree on these strings, and the only way to
+// guarantee that is to keep one copy of them.
+export { API };
 /** Max JSON body size: 256 KiB. */
 const MAX_JSON_BODY_BYTES = 256 * 1024;
 function getHeader(req, name) {

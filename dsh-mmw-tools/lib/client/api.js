@@ -7,6 +7,7 @@
  * The routes already gate on loopback origin, so this client can be
  * called from `fetch('/api/...')` without explicit CORS preflight.
  */
+import { API } from "../shared/api-paths.js";
 export class GithubApiError extends Error {
     constructor(message) {
         super(message);
@@ -41,31 +42,31 @@ async function request(path, init) {
 }
 export class GithubApi {
     getStatus() {
-        return request("/api/mmw-tools/status");
+        return request(API.status);
     }
     oauthStart() {
-        return request("/api/mmw-tools/oauth/start", {
+        return request(API.oauthStart, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
         });
     }
     oauthFinish() {
-        return request("/api/mmw-tools/oauth/finish", {
+        return request(API.oauthFinish, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
         });
     }
     oauthRefresh() {
-        return request("/api/mmw-tools/oauth/refresh", {
+        return request(API.oauthRefresh, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),
         });
     }
     revoke() {
-        return request("/api/mmw-tools/revoke", {
+        return request(API.revoke, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({}),

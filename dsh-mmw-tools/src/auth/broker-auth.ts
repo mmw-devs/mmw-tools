@@ -73,6 +73,12 @@ export interface BrokerAuthOptions {
   brokerUrl: string;
   /** Where the child reads `accessToken` from. */
   installationTokenFile: string;
+  /**
+   * `owner/name` this plugin edits. The broker decides which repository a
+   * token can write to; comparing the two turns a misconfiguration into a
+   * clear error instead of an unexplained 403 halfway through an edit.
+   */
+  repository?: string;
   store?: SessionStore;
   broker?: BrokerClient;
   now?: () => number;
@@ -99,6 +105,7 @@ export class BrokerAuth {
   private readonly broker: BrokerClient;
   private readonly now: () => number;
   private readonly tokenFile: string;
+  private readonly repository: string;
 
   private pending: Pending | null = null;
   private installation: InstallationTokenResult | null = null;
@@ -110,6 +117,21 @@ export class BrokerAuth {
       new BrokerClient({ brokerUrl: opts.brokerUrl });
     this.now = opts.now ?? (() => Date.now());
     this.tokenFile = opts.installationTokenFile;
+    this.repository = (opts.repository ?? "").trim();
+  }
+
+  /**
+   * The broker and the plugin each know "which repository"; refuse to write a
+   * token file when they disagree. Without this the mismatch surfaced much
+   * later as a 403 from GitHub, after the agent had already spent a turn.
+   */
+  private assertRepository(issued: InstallationTokenResult): void {
+    if (!this.repository || !issued.repository) return; // older broker: nothing to compare
+    if (issued.repository === this.repository) return;
+    throw new BrokerError(
+      "repo-mismatch",
+      `broker signed a token for ${issued.repository}, but this plugin is bound to ${this.repository}`
+    );
   }
 
   /** Nothing to load at boot; kept for the effect that calls it. */
@@ -275,6 +297,7 @@ export class BrokerAuth {
     }
 
     const issued = await this.broker.getInstallationToken(session.sessionToken);
+    this.assertRepository(issued);
     this.installation = issued;
     await this.writeTokenFile(issued);
     return issued.token;
@@ -306,6 +329,7 @@ export class BrokerAuth {
     }
     try {
       const issued = await this.broker.getInstallationToken(session.sessionToken);
+      this.assertRepository(issued);
       this.installation = issued;
       await this.writeTokenFile(issued);
       return {

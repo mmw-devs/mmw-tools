@@ -20,7 +20,8 @@ export type BrokerErrorCode =
   | "broker-bad-response"
   | "session-required"
   | "session-rejected"
-  | "login-denied";
+  | "login-denied"
+  | "repo-mismatch";
 
 export class BrokerError extends Error {
   readonly code: BrokerErrorCode;

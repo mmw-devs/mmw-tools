@@ -8,6 +8,8 @@
  * called from `fetch('/api/...')` without explicit CORS preflight.
  */
 
+import { API } from "../shared/api-paths.js";
+
 export interface StatusView {
   configured: boolean;
   hasAccessToken: boolean;
@@ -75,11 +77,11 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
 
 export class GithubApi {
   getStatus(): Promise<StatusView> {
-    return request("/api/mmw-tools/status") as Promise<StatusView>;
+    return request(API.status) as Promise<StatusView>;
   }
 
   oauthStart(): Promise<OauthStartResult> {
-    return request("/api/mmw-tools/oauth/start", {
+    return request(API.oauthStart, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -87,7 +89,7 @@ export class GithubApi {
   }
 
   oauthFinish(): Promise<SimpleResult> {
-    return request("/api/mmw-tools/oauth/finish", {
+    return request(API.oauthFinish, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -95,7 +97,7 @@ export class GithubApi {
   }
 
   oauthRefresh(): Promise<SimpleResult> {
-    return request("/api/mmw-tools/oauth/refresh", {
+    return request(API.oauthRefresh, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -103,7 +105,7 @@ export class GithubApi {
   }
 
   revoke(): Promise<SimpleResult> {
-    return request("/api/mmw-tools/revoke", {
+    return request(API.revoke, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),

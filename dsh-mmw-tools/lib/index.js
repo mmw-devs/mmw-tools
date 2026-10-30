@@ -344,14 +344,9 @@ const STATUS_OUTPUT_SCHEMA = {
         ok: { type: "boolean", required: true },
         message: { type: "string", required: true },
         pluginId: { type: "string" },
-        oauthClientIdMasked: { type: "string" },
         repoOwner: { type: "string" },
         repoName: { type: "string" },
         baseBranch: { type: "string" },
-        defaultScopes: {
-            type: "array",
-            items: { type: "string" },
-        },
         mcpServerPath: { type: "string" },
         auth: {
             type: "object",
@@ -406,7 +401,7 @@ function formatExpiry(timestampMs) {
 function makeStatusTool(deps) {
     return defineTool({
         name: "mmw_tools_status",
-        description: "查看 dsh-mmw-tools 插件状态：OAuth 配置、token 状态、repo binding、AGENTS.md 漂移检查、当前授权阶段。不会泄露任何密钥。",
+        description: "查看 dsh-mmw-tools 插件状态：broker 登录、token 状态、repo binding、AGENTS.md 漂移检查、当前授权阶段。不会泄露任何密钥。",
         parameters: STATUS_PARAMS,
         output: {
             schema: STATUS_OUTPUT_SCHEMA,
@@ -446,17 +441,14 @@ function makeStatusTool(deps) {
                     `Broker: ${brokerLine}\n` +
                     `Repo binding: ${String(deps.repo.owner ?? "?")}/${String(deps.repo.name ?? "?")} (${String(deps.repo.baseBranch ?? "main")})\n` +
                     `Allowed paths: ${Array.isArray(deps.repo.allowlistPaths) ? deps.repo.allowlistPaths.join(", ") : "(空)"}\n` +
-                    `Default scopes: ${deps.scopes.join(" ") || "(空)"}\n` +
                     `MCP server entry: ${pathToConnect}\n` +
                     `\n--- Auth ---\n${authLines.join("\n")}\n` +
                     `\n--- AGENTS.md ---\n${driftLine}\n` +
                     `\n下一步：请用户在面板里完成 GitHub 登录（agent 不参与登录）。`,
                 pluginId: PLUGIN_ID,
-                oauthClientIdMasked: "",
                 repoOwner: String(deps.repo.owner ?? ""),
                 repoName: String(deps.repo.name ?? ""),
                 baseBranch: String(deps.repo.baseBranch ?? "main"),
-                defaultScopes: deps.scopes,
                 mcpServerPath: pathToConnect,
                 auth: {
                     status,
@@ -727,7 +719,6 @@ export function apply(ctx, config) {
         error: (m) => console.error(m),
     };
     const logger = safeAccess(() => ctx.logger) ?? consoleLogger;
-    const scopes = [];
     const workingDir = resolveWorkingDir(config?.workingDir, binding);
     // Construct audit + redacting loggers once, share across tools.
     const audit = createAuditLogger({
@@ -743,6 +734,10 @@ export function apply(ctx, config) {
     const auth = new BrokerAuth({
         brokerUrl,
         installationTokenFile: installationTokenPath(),
+        // The broker decides which repository a token writes to; this plugin
+        // decides which repository it edits. Passing the binding here lets the
+        // two be compared instead of failing later as a bare 403.
+        repository: `${binding.owner}/${binding.name}`,
     });
     const store = auth;
     const flow = auth;
@@ -792,7 +787,7 @@ export function apply(ctx, config) {
     }, "mmw-tools: agents-md drift");
     // 1. Register the status tool.
     ctx.effect(() => {
-        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, scopes, agentsMdDrift, store, flow }));
+        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, store, flow }));
     }, "mmw-tools: status tool");
     // 2. Register the OAuth tools.
     // 2.5. Register mmw_tools_run (v0.5.0 bootstrap).

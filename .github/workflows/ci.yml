@@ -68,6 +68,21 @@ jobs:
       - name: Build host bundle and client bundle
         working-directory: dsh-mmw-tools
         run: pnpm build:all
+      # The committed bundles are what a git install actually runs
+      # (docs/PUBLISHING.md): the build steps above just overwrote them in the
+      # working tree, so without this check a stale commit passes everything —
+      # the suites test the fresh files, and the repository keeps the old ones.
+      - name: Committed bundles match the source
+        working-directory: dsh-mmw-tools
+        run: |
+          set -e
+          changed=$(git diff --name-only --ignore-cr-at-eol -- lib mcp-server/dist)
+          stray=$(git status --porcelain --ignored -- lib mcp-server/dist | sed -n 's/^!! //p' | grep -v node_modules || true)
+          if [ -n "$changed" ] || [ -n "$stray" ]; then
+            echo "::error::lib/ or mcp-server/dist/ is stale relative to src/. Rebuild and commit the output."
+            printf '%s\n' "$changed" "$stray"
+            exit 1
+          fi
 
       - name: Typecheck, namespace consistency, unit and integration suites, pack contents
         working-directory: dsh-mmw-tools

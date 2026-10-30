@@ -95,14 +95,18 @@ truthy(
   "panel built from runtime (no top-level React imports)"
 );
 
-// 5. api.js was inlined.
+// 5. api.js and the shared route table were inlined.
 truthy(
   /class\s+GithubApiError/.test(src),
   "GithubApiError class inlined from api.ts"
 );
 truthy(
-  /getStatus\(\)\s*\{[\s\S]*?\/api\/mmw-tools\/status/.test(src),
-  "getStatus() calls /api/mmw-tools/status"
+  /const API = \{[\s\S]*?status:\s*"\/api\/mmw-tools\/status"/.test(src),
+  "shared route table inlined from src/shared/api-paths.ts"
+);
+truthy(
+  /getStatus\(\)\s*\{[\s\S]*?request\(API\.status\)/.test(src),
+  "getStatus() uses the shared API.status constant"
 );
 
 /* ============================================================== */

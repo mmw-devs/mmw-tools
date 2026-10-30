@@ -68,7 +68,7 @@ Do **not** install into `desktop` — that is the profile you are using
 right now, and a half-loaded plugin would spoil it. `t5` is disposable.
 
 ```powershell
-$dsh = "C:\Users\weunimix\AppData\Local\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
+$dsh = "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
 & $dsh --profile t5 --from-default-profile web --dump-config
 ```
 
@@ -78,7 +78,7 @@ down without booting anything.
 ## 3. Install the plugin
 
 ```powershell
-& $dsh plugin --profile t5 add file:C:\Users\weunimix\Desktop\WorkLibrary\ffxivStrategy\mmw-tools\dsh-mmw-tools
+& $dsh plugin --profile t5 add file:<repo>\dsh-mmw-tools   # <repo> = your clone of mmw-tools
 ```
 
 Then confirm the row is in the composed profile:
@@ -111,7 +111,7 @@ To use a different checkout, override the whole `config` block, not one key.
 Quickest (per session):
 
 ```powershell
-$env:GHOST_WORKING_DIR = "C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops"
+$env:GHOST_WORKING_DIR = "$env:USERPROFILE\.dsh\workspaces\mmw-devs\ffxiv-race-ops"
 ```
 
 Durable (survives restarts): create `t5-overlay.yml` anywhere outside
@@ -122,7 +122,7 @@ the profile:
     - id: mmw-tools
       name: dsh-mmw-tools
       config:
-        workingDir: C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+        workingDir: C:\Users\<you>\.dsh\workspaces\mmw-devs\ffxiv-race-ops
 ```
 
 and boot with `& $dsh web --profile t5 --patch .\t5-overlay.yml`.
@@ -193,7 +193,7 @@ Expected on the first edit: `bootstrap.ran` = `true`, `preflight.exit_code`
 Expect refusal with `preflight-failed`. Then verify from PowerShell:
 
 ```powershell
-cd C:\Users\weunimix\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+cd "$env:USERPROFILE\.dsh\workspaces\mmw-devs\ffxiv-race-ops"
 git status --porcelain      # expect empty
 git log --oneline -1        # expect the step-8 commit, not a new one
 ```

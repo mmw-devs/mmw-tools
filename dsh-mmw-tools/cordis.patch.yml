@@ -5,16 +5,11 @@
 # package.json).
 #
 # Activate:
-#   dsh plugin --profile web add link:/path/to/dsh-mmw-tools
-#   # then restart `dsh web`
+#   dsh plugin --profile <profile> add file:/path/to/dsh-mmw-tools
+#   # then restart DSH
 #
-# githubOAuthClientId — your GitHub OAuth App's Client ID. Register at
-#   https://github.com/settings/developers → New OAuth App, then enable
-#   Device Flow. See docs/github-oauth-app-checklist.md.
-#
-# defaultScopes — the OAuth scopes requested during Device Flow.
-#   Keep `repo` for branch pushes + PR; add `workflow` to fire Actions;
-#   add `offline_access` to receive a refresh token.
+# Authentication is delegated to the broker: no OAuth App, no client id and
+# no scope list on this machine. See docs/AUTH-BROKER.md.
 #
 # repoBinding — the SINGLE repository this plugin operates on. Editing
 #   this does not affect GitHub; it is purely a client-side guard rail.

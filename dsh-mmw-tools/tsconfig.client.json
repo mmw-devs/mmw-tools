@@ -11,10 +11,10 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "client-build",
-    "rootDir": "src/client",
+    "rootDir": "src",
     "types": []
   },
-  "include": ["src/client/api.ts"],
+  "include": ["src/client/api.ts", "src/shared/api-paths.ts"],
   "exclude": [
     "node_modules",
     "lib",

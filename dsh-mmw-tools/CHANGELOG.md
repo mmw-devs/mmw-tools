@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.9.3 — close the single-source-of-truth gaps
+
+An audit of the tree found that the security/process facts were already
+single-sourced, but four pairs of copies had no detector. All four now do.
+
+### Fixed
+
+- **The committed bundles are verified against the source.** CI rebuilt
+  `lib/` and `mcp-server/dist/` and then ran the suites against those fresh
+  files, so a source change that was never rebuilt passed everything while
+  the repository kept the old artifacts — and a git install ships exactly
+  those. The workflow now fails when the rebuild differs from the commit
+  (tracked diff, plus ignored-but-new files).
+- **Route paths have one definition.** `src/shared/api-paths.ts` is imported
+  by `src/routes.ts` and `src/client/api.ts`; the client build inlines it.
+  The two copies were previously tied together by nothing, so a renamed
+  route would have 404'd every panel call without failing a test.
+- **The plugin refuses a token signed for another repository.**
+  `BrokerAuth` compares the broker's `repository` with its own binding and
+  fails with `repo-mismatch` instead of letting the mismatch surface later
+  as a bare 403. Covered by `tests/broker-auth.test.mjs` (11 assertions).
+- **Version drift is checked.** `check:namespace` now requires the MCP
+  package's `version` and `serverInfo.version` to match its
+  `PLUGIN_VERSION` (10 checks, was 8).
+
+### Removed
+
+- `defaultScopes` and `oauthClientIdMasked`: dead since the broker replaced
+  Device Flow — the schema, the status line and the tests still carried them.
+  `cordis.patch.yml` no longer documents OAuth-App fields; it points at
+  docs/AUTH-BROKER.md instead.
+
+### Docs
+
+- `AUTH-BROKER.md` `/health` example now matches the implementation
+  (`allowListSize`, plus the fields that are actually returned).
+- `T5-RUNBOOK.md` no longer hard-codes one developer's Windows paths.
+
 ## 0.9.2 — the approval loop is complete: preview, then merge
 
 The intended operation loop is: edit `data.json` → open a PR → show the

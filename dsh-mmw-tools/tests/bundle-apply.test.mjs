@@ -152,8 +152,6 @@ function makeCtx() {
 }
 
 const TEST_CONFIG = {
-  githubOAuthClientId: "Ov23liakpz9LHG1E0dE5",
-  defaultScopes: ["repo", "workflow", "offline_access"],
   repoBinding: {
     owner: "mmw-devs",
     name: "ffxiv-race-ops",
