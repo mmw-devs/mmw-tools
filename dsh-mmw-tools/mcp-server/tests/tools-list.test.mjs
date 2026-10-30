@@ -28,7 +28,9 @@ const ENTRY = path.resolve(__dirname, "..", "dist", "index.js");
 
 const EXPECTED = [
   "pr_create",
+  "pr_preview",
   "pr_list",
+  "pr_merge",
   "repo_clone",
   "repo_edit",
   "repo_pull",
@@ -174,7 +176,7 @@ const tools = toolsResp?.result?.tools ?? [];
 check(Array.isArray(tools), "result.tools is an array");
 
 const names = tools.map((t) => t.name).sort();
-check(names.length === 8, `tools/list advertises 8 tools (got ${names.length})`, names.join(", "));
+check(names.length === 10, `tools/list advertises 10 tools (got ${names.length})`, names.join(", "));
 for (const name of EXPECTED) {
   check(names.includes(name), `${name} advertised`);
 }

@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.2 — the approval loop is complete: preview, then merge
+
+The intended operation loop is: edit `data.json` → open a PR → show the
+operator the preview → merge once they approve. Two pieces were missing.
+
+### Added
+
+- `mcp-server/src/tools/pr-preview.ts` — `pr_preview` reads the hosting
+  integration's check run and returns both `preview_url` (that exact commit)
+  and `branch_preview_url` (the branch; the one to show a reviewer), plus
+  check states and draft/merge state. Read-only. `wait_seconds` polls for
+  the deployment, because the check appears 20–60 s after the push. Links
+  are accepted only over HTTPS on `pages.dev`, so a compromised check cannot
+  put an arbitrary URL in front of the operator.
+
+### Changed
+
+- `pr_merge` marks a draft ready before merging. The operator already
+  approved "merge this PR" through the host prompt; making them leave the
+  chat to click *Ready for review* added a step without adding a decision.
+  Branch-prefix scope and `mergeStateStatus` are still enforced, and a
+  just-transitioned PR gets a few seconds for GitHub to recompute.
+
+### Fixed
+
+- README said "no merge tool exists" and "does not merge PRs" — untrue
+  since `pr_merge` landed — and still advertised Device Flow and the removed
+  `engineer_oauth_*` tools. Corrected, including the token file names.
+
 ## 0.9.1 — an outsider can actually sign in
 
 The broker treated `BROKER_ALLOW_MODE=org` and `BROKER_ALLOWED_USERS` as

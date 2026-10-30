@@ -27,6 +27,7 @@ import { repoEdit } from "./tools/repo-edit.js";
 import { prCreate } from "./tools/pr-create.js";
 import { prList } from "./tools/pr-list.js";
 import { prMerge } from "./tools/pr-merge.js";
+import { prPreview } from "./tools/pr-preview.js";
 import {
   GithubRefusedError,
   redactTokens,
@@ -271,6 +272,30 @@ const TOOLS: ToolDef[] = [
         {
           state: input.state as "open" | "closed" | "all" | undefined,
           base: input.base as string | undefined,
+        },
+        config()
+      ),
+  },
+  {
+    name: "pr_preview",
+    description:
+      "读取一个 PR 的预览地址和检查状态：从 Cloudflare Pages 的 check 里取 Preview URL（对应提交）与" +
+      " Branch Preview URL（对应分支，给用户看这个），并返回 checks/is_draft/merge_state。" +
+      "只读，不改动任何东西。刚创建 PR 时 CI 还没跑完，传 wait_seconds（例如 60）等它出现。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pr_number: { type: "number" },
+        wait_seconds: { type: "number" },
+      },
+      required: ["pr_number"],
+      additionalProperties: false,
+    },
+    call: (input) =>
+      prPreview(
+        {
+          pr_number: input.pr_number as number,
+          wait_seconds: input.wait_seconds as number | undefined,
         },
         config()
       ),

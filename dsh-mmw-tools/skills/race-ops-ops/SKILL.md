@@ -60,12 +60,18 @@ content: t2 DRK 停止直播（streaming true → false）
 1. `mmw_tools_run` 读上下文（含 AGENTS.md 摘要）
 2. 读文件确认现状，别凭印象改
 3. `repo_edit`：一次改一个语义单元，日志块如实声明
-4. `pr_create`：draft PR，交人审
+4. `pr_create`：推送分支并开 PR（默认 draft；这条流程要合并的话传 `draft: false`，或让 `pr_merge` 自己转 ready）
+5. `pr_preview`：CI 跑完后取预览地址，把 **Branch Preview URL** 发给用户看
+6. 等用户明确同意合并，再调用 `pr_merge`（宿主会再弹一次确认）
+
+预览不是从 GitHub 页面上抄的，而是 hosting（Cloudflare Pages）check 里给出的链接；
+刚开 PR 时它还没生成，`pr_preview` 传 `wait_seconds`（例如 60）等它出现即可。
 
 ## 不要做的事
 
-- **不要自行发起合并**。用户明确要求时才调用 `pr_merge`；宿主会在执行前弹窗要求用户确认，未确认就不会合并。
-- 是否「可合并」（检查是否通过、是否有 review、有无冲突）**以 GitHub 的分支保护为准**，工具只转述 `mergeStateStatus`，不要在别处重新判断一遍。
+- **用户没有明确同意前不要合并**。同意后正常调用 `pr_merge`；draft 状态会被自动转成 ready，
+  不需要让用户去网页上点。宿主在执行前还会再确认一次。
+- 是否「可合并」（检查是否通过、有无冲突）**以 GitHub 的分支保护为准**，工具只转述 `mergeStateStatus`，不要在别处重新判断一遍。
 - 不要直接 push 到 `main`
 - 不要为了让校验通过而放宽校验、注释掉检查、或在 denylist 上找绕路
 - 改动被拒绝时，先读拒绝原因（它来自仓库自己的脚本），不要重试同样的操作

@@ -1,14 +1,16 @@
 # dsh-mmw-tools
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, and open a **draft** pull request that CI and a human still have to approve.
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge it.
 
-Personal OAuth Device Flow only. No GitHub App, no server, no webhook, no auto-merge.
+Authentication is broker-mediated (GitHub App); no webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which the host gates behind an explicit confirmation.
 
 ```
 agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
        ──▶ repo_read / repo_search ──▶ understand the current state
        ──▶ repo_edit ──▶ allowlist check + preflight + commit
-       ──▶ pr_create ──▶ push content/* + open draft PR
+       ──▶ pr_create ──▶ push content/* + open the PR
+       ──▶ pr_preview ──▶ the preview URL the operator reviews
+       ──▶ pr_merge ──▶ merge, after the operator confirms in the UI
 ```
 
 ## Why
@@ -21,12 +23,12 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 - **Denylist beats allowlist** — a path matching both is refused.
 - **Branch prefix** — a commit lands on `content/*` or it does not land.
 - **Pre-flight** — `repo_edit` runs the configured command and rolls the working tree back if it fails.
-- **No merge tool exists.** Merging is CI's and a human's job.
+- **Merge is gated, not automatic.** `pr_merge` asks the operator to confirm in the UI before it runs, and `mergeStateStatus` — GitHub's own verdict — still decides whether merging is allowed.
 
 ## What it does not do
 
 - Does not drive an LLM. `mmw_tools_run` prepares context; the DSH agent runs the loop.
-- Does not merge PRs. There is no merge tool.
+- Does not merge without the operator confirming the host's prompt, and never bypasses branch protection.
 - Does not push to the base branch.
 - Does not work across multiple repositories. One binding per install.
 - Does not receive webhooks, and needs no public IP.
@@ -174,10 +176,6 @@ Status line shows the login, granted scopes, and the remaining lifetime of the a
 | Tool | Purpose |
 |---|---|
 | `mmw_tools_status` | Auth state, repo binding, `AGENTS.md` drift |
-| `engineer_oauth_start` | Begin Device Flow; returns `user_code` + `verification_uri` |
-| `engineer_oauth_finish` | Poll once for the authorization result |
-| `engineer_oauth_refresh` | Force a refresh (a 60 s watchdog also refreshes automatically) |
-| `engineer_oauth_revoke` | Wipe local credentials |
 | `mmw_tools_run` | Prepare project context + operating rules; the agent then drives the MCP tools |
 
 ### MCP (`mcp__mmw-tools__*`)
@@ -190,14 +188,16 @@ Status line shows the login, granted scopes, and the remaining lifetime of the a
 | `repo_read` | Read one file (100 KiB default, 500 KiB hard cap, refuses binary) |
 | `repo_search` | `git grep`, capped results, redacted snippets |
 | `repo_edit` | Validate → apply edits atomically → preflight → commit (no push) |
-| `pr_create` | Push the branch and open a **draft** PR |
+| `pr_create` | Push the branch and open a PR (draft by default; pass `draft: false` to open it ready) |
+| `pr_preview` | Preview URLs from the hosting check, plus check states and draft/merge state; read-only, optionally waits for the deployment |
 | `pr_list` | List PRs (titles and bodies redacted) |
+| `pr_merge` | Mark a draft ready if needed, then merge — only after the host's confirmation prompt |
 
 ## Security model
 
 **Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
 
-**Tokens.** Stored in `~/.dsh/dsh-mmw-tools.json` at mode `0600`; masked in every view the agent can read; never written to logs, commit messages, PR bodies, or the audit trail. `engineer_oauth_revoke` wipes the local copy — revoking the grant on GitHub's side is a separate step.
+**Tokens.** The session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. Both are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker to drop the session.
 
 **Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
 
