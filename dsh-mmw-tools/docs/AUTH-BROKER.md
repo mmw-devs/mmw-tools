@@ -227,8 +227,16 @@ Authorization: Bearer <sessionToken>
 
 **给外部人员开权限**：把他的 GitHub 用户名加进 `.env` 的
 `BROKER_ALLOWED_USERS`（逗号分隔，大小写不敏感），
-`sudo systemctl restart race-ops-broker` 即可；移除同理，且立即生效
-（installation token 每次签发都会重新校验，最多等缓存 10 分钟）。
+`sudo systemctl restart race-ops-broker`；`.env` 只在启动时读，所以重启是必须的。
+
+生效时机（容易误判"没修好"）：
+
+| 动作 | 生效时间 |
+|---|---|
+| 加入 `BROKER_ALLOWED_USERS` | 重启后，对方下一次尝试即可（显式放行在缓存之前判定，不会被他上次被拒的缓存挡住） |
+| 移出 `BROKER_ALLOWED_USERS` | 下一次签发 installation token 即拒绝（名单命中不写缓存） |
+| 加入 `BROKER_DENIED_USERS` | 下次请求即拒绝（拒绝判定在缓存之前） |
+| 从 GitHub 组织移除成员 | 最多 10 分钟（组织成员判定有缓存） |
 
 组织模式的既有前提不变：App 需要 `Organization → Members: Read-only`，并且
 **在安装上接受新权限**（只改 App 权限不重新批准安装，会表现为

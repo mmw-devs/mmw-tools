@@ -316,6 +316,41 @@ console.log("\n--- an explicit allowlist admits outsiders in org mode ---");
   );
 }
 
+console.log("\n--- adding a name takes effect on the next attempt ---");
+{
+  // A failed attempt caches a refusal. If the explicit grant were evaluated
+  // after the cache, the operator would add the name and still watch the
+  // user be refused for ten minutes - indistinguishable from a broken deploy.
+  const gh = fakeGithub({ login: "outsider", membership: "none" });
+  const core = new BrokerCore({
+    appId: 1,
+    privateKeyPem: "x",
+    installationId: 1,
+    clientId: "c",
+    clientSecret: "s",
+    publicUrl: PUB,
+    owner: "mmw-devs",
+    repo: "ffxiv-race-ops",
+    allowMode: "org",
+    allowList: [],
+    fetchImpl: gh.impl,
+    now: () => NOW,
+    mintInstallationToken: async () => ({ token: "x", expiresAt: NOW + 3_600_000, permissions: {} }),
+  });
+
+  const before = core.startSession();
+  await rejectsWith(
+    () => core.completeLogin({ code: "c", state: before.state }),
+    "not-allowed",
+    "refused while not listed"
+  );
+
+  core.allowList.push("outsider");
+  const after = core.startSession();
+  const res = await core.completeLogin({ code: "c", state: after.state });
+  eq(res.login, "outsider", "the same login succeeds once the name is listed");
+}
+
 console.log("\n--- poll secret ---");
 {
   const { core } = makeCore();

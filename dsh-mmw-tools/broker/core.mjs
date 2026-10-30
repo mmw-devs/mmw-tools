@@ -340,15 +340,21 @@ export class BrokerCore {
       return { allowed: false, reason: "explicitly-denied" };
     }
 
+    // Checked before the cache on purpose: a person who just failed a login
+    // has a cached refusal, and adding them to the list should work on their
+    // next attempt, not ten minutes later. This branch makes no GitHub call,
+    // so it is free to run every time.
+    if (this.allowList.includes(lower)) {
+      return { allowed: true, reason: "allowlisted" };
+    }
+
     const cached = this.#allowCache.get(lower);
     if (cached && this.now() - cached.checkedAt < this.allowCacheMs) {
       return { allowed: cached.allowed, reason: cached.reason };
     }
 
     let verdict;
-    if (this.allowList.includes(lower)) {
-      verdict = { allowed: true, reason: "allowlisted" };
-    } else if (this.allowMode === "list") {
+    if (this.allowMode === "list") {
       verdict = { allowed: false, reason: "not-allowlisted" };
     } else {
       // Checked with an *installation* token, not the user's.
