@@ -44,6 +44,9 @@ import {
 } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
 import { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+import { FeishuAuth } from "./auth/feishu-auth.js";
+import { PolicyGate, installToolGate } from "./gate/gate.js";
+import { installWorkspaceGuard, type UnavailablePolicy } from "./gate/workspace-guard.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
 
@@ -197,41 +200,6 @@ export function registerSkills(ctx: unknown, logger: { warn: (m: string) => void
       `mmw-tools: skill publishing failed: ${err instanceof Error ? err.message : String(err)}`
     );
     return [];
-  }
-}
-
-/**
- * Require explicit human consent before a PR is merged.
- *
- * `tools/pre-execute` is a waterfall: returning `ask` makes the host prompt
- * the user, and a host without approval support turns `ask` into a denial.
- * That is the point - the guarantee is that the call cannot complete without
- * a person, not that the prompt text asks the model nicely.
- *
- * This is the only place that decides "may it happen now". What counts as a
- * mergeable PR is GitHub's call, relayed by the tool.
- */
-function installMergeGate(ctx: unknown, logger: { warn: (m: string) => void }): void {
-  const on = (ctx as { on?: (event: string, fn: unknown) => unknown }).on;
-  if (typeof on !== "function") {
-    logger.warn("mmw-tools: tools/pre-execute unavailable; pr_merge would be ungated");
-    return;
-  }
-  try {
-    on.call(ctx, "tools/pre-execute", async (exec: { name?: string }, next: () => Promise<unknown>) => {
-      if (typeof exec?.name === "string" && exec.name.endsWith("pr_merge")) {
-        return {
-          kind: "ask",
-          reason:
-            "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
-        };
-      }
-      return next();
-    });
-  } catch (err) {
-    logger.warn(
-      `mmw-tools: merge gate not installed: ${err instanceof Error ? err.message : String(err)}`
-    );
   }
 }
 
@@ -733,6 +701,64 @@ interface BundleConfig {
    * fall back to that env var when `workingDir` is not provided.
    */
   workingDir?: string;
+  /**
+   * Feishu tool authorization. When enabled, every business tool call must
+   * pass the policy gate; `mmw_tools_status` stays available for diagnostics.
+   */
+  feishu?: {
+    enabled?: boolean;
+    authServiceUrl?: string;
+    /**
+     * How wide the gate reaches.
+     *
+     * - `"mmw-tools"` (default): the gate governs only this plugin's own
+     *   tools (`mcp__mmw-tools__*` / `mmw_tools_*`). Every other tool in
+     *   the session — the host's `read`, `pwsh`, `glob`, … — passes through
+     *   untouched.
+     * - `"session"`: the gate is an exclusive allowlist for the WHOLE
+     *   session, so any tool outside the MMW Tools contract is denied.
+     *   This is a footgun: the plugin is loaded per profile, and a profile
+     *   shared by several workspaces would lose its file and shell tools
+     *   everywhere. Only use it in a profile dedicated to this repository.
+     */
+    gateScope?: "mmw-tools" | "session";
+  };
+  /**
+   * Which sessions may use these tools.
+   *
+   * The plugin is loaded per PROFILE, but it operates on ONE repository, and a
+   * profile hosts every workspace it is opened in. Without this guard a session
+   * opened in an unrelated directory still sees all eleven tools and can drive
+   * the bound repository from there — the tools are merely noise there, and
+   * worse, their error messages are indistinguishable from real failures.
+   *
+   * The guard compares the *session's* working directory (read from the host's
+   * `workingDirectory` service, no filesystem I/O) against the roots below, on
+   * every call, so a mid-session `cd` is respected.
+   */
+  workspaceGuard?: {
+    /** Default true. Set false only for a profile dedicated to one workspace. */
+    enabled?: boolean;
+    /**
+     * Additional roots. These are ADDED to the bound repository's checkout
+     * (`workingDir`, which already resolves from config / GHOST_WORKING_DIR /
+     * `~/.dsh/workspaces/<owner>/<name>`). Never a replacement — a second
+     * literal copy of that path is exactly the kind of mirror this project
+     * avoids.
+     */
+    allowPaths?: string[];
+    /**
+     * What to do when the host exposes no working directory (an older profile,
+     * or a call with no agent behind it).
+     *
+     * - `"deny"` (default): the guard cannot judge, so it refuses the
+     *   plugin's business tools. `mmw_tools_status` stays callable.
+     * - `"allow"`: explicit fail-open for a host that cannot report the
+     *   directory. Only use it after verifying that host; the Feishu gate and
+     *   the repository sandbox still apply.
+     */
+    onUnavailable?: "allow" | "deny";
+  };
 }
 
 /**
@@ -843,6 +869,11 @@ export function apply(
     process.env.GHOST_BROKER_URL ?? config?.brokerUrl ?? "https://race-ops-broker.mmw-team.icu";
   const repo = config?.repoBinding ?? {};
   const binding = normalizeBinding(repo);
+  const feishuEnabled = config?.feishu?.enabled === true;
+  const feishuAuthUrl =
+    process.env.MMW_TOOLS_AUTH_URL ??
+    config?.feishu?.authServiceUrl ??
+    "https://mmw-tools.mmw-team.icu";
 
   // `logger` is optional in CORDIS_INJECT: a profile that does not
   // provide it must not leave this entry pending forever. Fall back to
@@ -877,12 +908,56 @@ export function apply(
   });
   const store = auth;
   const flow = auth;
+  const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
+  const gate = new PolicyGate({
+    auth: feishu,
+    enabled: feishuEnabled,
+    // Default: the gate governs this plugin's own tools only. The
+    // session-wide allowlist is opt-in, because a profile is shared by
+    // every workspace it hosts and an exclusive allowlist would strip the
+    // host's `read` / `pwsh` / … out of all of them.
+    sessionWide: config?.feishu?.gateScope === "session",
+  });
 
   // Hydrate lastStatus before exposing it.
   ctx.effect(() => {
     void flow.hydrate();
     return () => {};
   }, "mmw-tools: hydrate auth");
+
+  // Workspace guard. Installed BEFORE the policy gate on purpose: a call made
+  // from a session that is not in the bound repository must be refused for that
+  // reason, not with an auth round trip that reports "飞书授权不可用".
+  //
+  // `mmw_tools_status` is exempt (diagnostics), and `repo_clone` may bootstrap
+  // the checkout while it has no `.git`. Everything else is fail-closed.
+  //
+  // Roots come from `workingDir`, i.e. from the same derivation everything else
+  // uses — there is deliberately no second copy of the checkout path here.
+  const guardConfig = config?.workspaceGuard;
+  const extraRoots = Array.isArray(guardConfig?.allowPaths)
+    ? guardConfig.allowPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
+    : [];
+  const workspaceRoots = [workingDir, ...extraRoots];
+  // Fail closed by default: a host that cannot report the session directory
+  // must not silently become a way to use the repository tools everywhere.
+  const unavailablePolicy: UnavailablePolicy =
+    guardConfig?.onUnavailable === "allow" ? "allow" : "deny";
+  ctx.effect(
+    () =>
+      installWorkspaceGuard(ctx, {
+        roots: workspaceRoots,
+        enabled: guardConfig?.enabled !== false,
+        onUnavailable: unavailablePolicy,
+        logger,
+      }),
+    "mmw-tools: workspace guard"
+  );
+
+  // Feishu policy + pr_merge confirmation. This is installed at apply level
+  // (not inside the webServer callback) so a profile without a web UI still
+  // cannot bypass the gate.
+  ctx.effect(() => installToolGate(ctx, { gate, logger }), "mmw-tools: tool gate");
 
   // AGENTS.md drift detection — fires once on apply.
   let agentsMdDrift: ReturnType<typeof checkAgentsMd> | null = null;
@@ -975,11 +1050,10 @@ export function apply(
           register: (route: unknown) => () => void;
         };
         disposers.push(...registerSkills(ctx, logger));
-      installMergeGate(ctx, logger);
-
-      disposers = makeRoutes({
+        disposers = makeRoutes({
           store,
           flow,
+          feishu,
           brokerUrl,
           binding: {
             owner: binding.owner,
@@ -1014,7 +1088,10 @@ export function apply(
       text:
         `本机已安装 ${PLUGIN_DISPLAY_NAME} 插件（GitHub 仓库工程脚手架，plugin_id=${PLUGIN_ID}）。` +
         "Agent tools: mmw_tools_status（查看状态）、mmw_tools_run（读取上下文）。" +
-        "GitHub 登录是用户动作，在 Settings 面板完成；agent 不参与登录流程。" +
+        "GitHub 登录在 Settings → MMW Tools；飞书授权在 Settings → MMW Tools 授权；agent 不参与登录流程。" +
+        (feishuEnabled
+          ? "飞书门禁已启用：业务工具调用前必须完成飞书授权，mmw_tools_status 始终可用。"
+          : "飞书门禁未启用：当前只做 GitHub broker 鉴权。") +
         `Loopback HTTP routes: ${paths}。`,
       }),
       () =>
@@ -1046,6 +1123,35 @@ export function apply(
     handle.unref();
     return () => clearInterval(handle);
   }, "mmw-tools: refresh watchdog");
+
+  // 5b. Feishu token watchdog. The auth core rotates the plugin token on
+  //     refresh, so this is checked every six hours, and only inside the last
+  //     day of a seven-day token. A missing/expired token is a normal state
+  //     (the panel should show it), not a crash.
+  ctx.effect(() => {
+    if (!feishuEnabled) return () => {};
+    let lastWarningAt = 0;
+    const check = async () => {
+      try {
+        if (await feishu.refreshIfNeeded()) {
+          logger.info("mmw-tools: 飞书授权 token 已自动续期");
+        }
+      } catch (err) {
+        const now = Date.now();
+        if (now - lastWarningAt < 6 * 60 * 60 * 1000) return;
+        lastWarningAt = now;
+        logger.warn(
+          `mmw-tools: 飞书 token 续期失败：${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    };
+    void check();
+    const handle = setInterval(() => {
+      void check();
+    }, 6 * 60 * 60 * 1000);
+    handle.unref();
+    return () => clearInterval(handle);
+  }, "mmw-tools: feishu token refresh");
 
   // 6. Spawn the MCP server and re-publish its tools.
   ctx.effect(() => {

@@ -1,0 +1,26 @@
+{
+  "contractVersion": 2,
+  "roles": [
+    {
+      "id": "viewer",
+      "title": "只读",
+      "description": "保留角色；当前 race-ops 是原子工具，viewer 暂不消费它。"
+    },
+    {
+      "id": "editor",
+      "title": "编辑",
+      "description": "保留角色；当前 race-ops 是原子工具，editor 暂不消费它。"
+    },
+    {
+      "id": "operator",
+      "title": "运营",
+      "description": "可以消费 race-ops 的完整运营流程。"
+    },
+    {
+      "id": "admin",
+      "title": "管理员",
+      "description": "可以消费全部工具，并管理成员角色。",
+      "admin": true
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mmw-team.icu/contracts/roles.schema.json",
+  "title": "mmw-tools member roles",
+  "description": "成员角色定义。角色只决定能否消费工具；这里不包含权限映射。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "roles"],
+  "properties": {
+    "contractVersion": {
+      "const": 2,
+      "description": "契约版本；当前为 2。"
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/role"
+      }
+    }
+  },
+  "$defs": {
+    "roleId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "角色 ID，例如 operator / admin。"
+    },
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/roleId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "角色显示名。"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "角色说明，面向管理员。"
+        },
+        "admin": {
+          "type": "boolean",
+          "description": "true 表示该角色可以进入管理 UI；不隐含任何工具权限。"
+        }
+      }
+    }
+  }
+}

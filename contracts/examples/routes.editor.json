@@ -1,0 +1,21 @@
+{
+  "contractVersion": 2,
+  "catalogRevision": "sha256:91d56de8cef22f58f878a8ae474ddab5d39989cde4011290f7f44b12e4ca8cb2",
+  "policyRevision": 42,
+  "ttlSeconds": 60,
+  "allowed": [
+    "mmw-tools-status"
+  ],
+  "allowedOperations": [
+    "mmw-tools-status.status"
+  ],
+  "denied": [
+    {
+      "toolId": "race-ops",
+      "requiredRoles": [
+        "operator",
+        "admin"
+      ]
+    }
+  ]
+}

@@ -15,25 +15,33 @@ subprocess, which not every sandbox permits.
 
 ### `pnpm check`
 
-Typecheck, namespace consistency, six in-process suites, and a pack-contents
+Typecheck, namespace consistency, the in-process suites, and a pack-contents
 assertion. No subprocess, no network, no repository. Safe to run anywhere,
 and it is what a contributor should run before every commit.
 
 | Suite | Asserts |
 |---|---|
-| `tests/token-store.test.mjs` | credential persistence, masking, clearing |
+| `tests/skills.test.mjs` | the skill catalog and `race-ops-ops` instructions |
 | `tests/client-bundle.test.mjs` | the `__ModuleLoader__` shape of `lib/client.js` |
-| `tests/bundle-apply.test.mjs` | `apply()` registers 6 tools, 5 routes, 1 prompt section; disposers; idempotence |
-| `tests/routes-integration.test.mjs` | real HTTP against the five loopback routes (loopback fence, method, malformed body) |
+| `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
+| `tests/feishu-gate.test.mjs` | authorization tables, gate decisions, token rotation and refresh |
+| `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
+| `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
 | `tests/audit.test.mjs` | deep redaction, rotation, write-failure handling |
-| `scripts/check-namespace-consistency.mjs` | the plugin id agrees across 7 files and the built client bundle |
+| `tests/github-app.test.mjs` | installation-token flow and repository access |
+| `tests/session-store.test.mjs` | credential persistence, masking, clearing |
+| `tests/broker-client.test.mjs` | broker HTTP client behavior |
+| `tests/broker-auth.test.mjs` | broker auth handshake |
+| `broker/tests/core.test.mjs` | broker core state and policy |
+| `broker/tests/server.test.mjs` | the broker HTTP surface |
+| `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |
 
 ### `pnpm test:smoke`
 
 Starts `mcp-server/dist/index.js` as a real stdio child, performs the JSON-RPC
-handshake, and asserts `tools/list` advertises eight tools with object input
+handshake, and asserts `tools/list` advertises the MCP tools with object input
 schemas. It is the only suite that exercises `StdioServerTransport`.
 
 ### `pnpm test:integration`

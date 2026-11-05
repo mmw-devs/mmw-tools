@@ -88,7 +88,7 @@ function guard(req, res, method) {
 /** Build all /api/mmw-tools/* routes. */
 export function makeRoutes(deps) {
     const { store, flow } = deps;
-    return [
+    const routes = [
         {
             kind: "exact",
             path: API.status,
@@ -181,6 +181,87 @@ export function makeRoutes(deps) {
                 await flow.clearAll();
                 const view = await store.view();
                 writeJson(res, 200, { ok: true, message: "凭据已清空。", ...view });
+            },
+        },
+    ];
+    if (deps.feishu)
+        routes.push(...makeFeishuRoutes(deps.feishu));
+    return routes;
+}
+function makeFeishuRoutes(feishu) {
+    return [
+        {
+            kind: "exact",
+            path: API.feishuStatus,
+            handler: async (req, res) => {
+                if (!guard(req, res, "GET"))
+                    return;
+                writeJson(res, 200, await feishu.view());
+            },
+        },
+        {
+            kind: "exact",
+            path: API.feishuLoginStart,
+            handler: async (req, res) => {
+                if (!guard(req, res, "POST"))
+                    return;
+                try {
+                    const started = await feishu.begin();
+                    writeJson(res, 200, {
+                        ok: true,
+                        loginId: started.loginId,
+                        loginUrl: started.loginUrl,
+                        expiresAt: started.expiresAt,
+                    });
+                }
+                catch (err) {
+                    writeJson(res, 200, {
+                        ok: false,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            },
+        },
+        {
+            kind: "exact",
+            path: API.feishuLoginPoll,
+            handler: async (req, res) => {
+                if (!guard(req, res, "POST"))
+                    return;
+                try {
+                    const result = await feishu.poll();
+                    if (result.status === "authorized") {
+                        writeJson(res, 200, {
+                            ok: true,
+                            status: "authorized",
+                            member: result.member,
+                            roles: result.roles,
+                        });
+                        return;
+                    }
+                    writeJson(res, 200, {
+                        ok: false,
+                        status: result.status,
+                        reason: "reason" in result ? result.reason : undefined,
+                    });
+                }
+                catch (err) {
+                    writeJson(res, 200, {
+                        ok: false,
+                        status: "error",
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            },
+        },
+        {
+            kind: "exact",
+            path: API.feishuLogout,
+            handler: async (req, res) => {
+                if (!guard(req, res, "POST"))
+                    return;
+                await feishu.logout();
+                writeJson(res, 200, { ok: true, message: "飞书授权已清空。" });
             },
         },
     ];

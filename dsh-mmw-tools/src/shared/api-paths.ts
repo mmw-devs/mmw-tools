@@ -14,4 +14,8 @@ export const API = {
   oauthFinish: "/api/mmw-tools/oauth/finish",
   oauthRefresh: "/api/mmw-tools/oauth/refresh",
   revoke: "/api/mmw-tools/revoke",
+  feishuStatus: "/api/mmw-tools/feishu/status",
+  feishuLoginStart: "/api/mmw-tools/feishu/login/start",
+  feishuLoginPoll: "/api/mmw-tools/feishu/login/poll",
+  feishuLogout: "/api/mmw-tools/feishu/logout",
 } as const;

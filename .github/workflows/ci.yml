@@ -48,6 +48,16 @@ jobs:
             dsh-mmw-tools/pnpm-lock.yaml
             dsh-mmw-tools/mcp-server/pnpm-lock.yaml
 
+      # The feature contract is independent of the plugin build: validate it
+      # before installing anything so a broken catalog fails fast.
+      - name: Validate feature contracts
+        run: node scripts/check-contracts.mjs
+
+      # The auth core uses only Node built-ins (node:sqlite), so it can be
+      # tested before the plugin's pnpm install.
+      - name: Test auth core
+        run: node mmw-tools-auth/tests/run.mjs
+
       # The plugin and its MCP child are separate pnpm projects with
       # separate lockfiles; there is no workspace file at the root.
       - name: Install plugin dependencies

@@ -42,7 +42,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
 | GitHub | the operator's account must pass the broker's allowlist: a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. The second path is the reason the plugin exists — an outsider can operate the repo without joining the org |
-| Network | `https://race-ops-broker.mmw-team.icu` reachable |
+| Network | `https://race-ops-broker.mmw-team.icu` and `https://mmw-tools.mmw-team.icu` reachable |
 
 No OAuth App, client id or client secret is needed on the operator's machine:
 authentication goes through the broker (docs/AUTH-BROKER.md), and the login
@@ -69,6 +69,36 @@ output (`lib/`, `mcp-server/dist/`) is committed, so no build step is needed
 on the operator's machine.
 
 Then open **Settings → MMW Tools** and press **登录 GitHub**.
+Then open **Settings → MMW Tools 授权** and press **使用飞书登录**; the gate
+denies every business tool until that login completes (`mmw_tools_status` is
+the exception).
+
+### Which profile to install into
+
+A DSH **profile** is the unit of plugin scope — there is no per-workspace
+plugin scope. A plugin installed into a profile is loaded in **every**
+workspace that profile hosts, and it is the plugin's tools that appear in
+those sessions. One plugin, one repository, one binding: give this plugin a
+profile of its own.
+
+```sh
+# a dedicated profile for this repository
+dsh --profile race-ops --from-default-profile web --dump-config
+dsh plugin --profile race-ops add dsh-mmw-tools
+dsh web --profile race-ops
+```
+
+Keep the general-purpose profile (the one your other workspaces use) free of
+this plugin. See [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) for the full
+setup.
+
+Installing it into a shared profile is supported: the Feishu gate only governs
+this plugin's own tools, so the host's `read`, `pwsh`, `glob` and the rest keep
+working everywhere, and the **workspace guard** refuses the mmw-tools calls
+made outside the bound checkout. What a shared profile still gives you is the
+tools showing up in unrelated sessions' schema lists. A dedicated profile is
+the only way to get a session with no trace of the plugin at all. See **Scope
+of the Feishu gate** and **Scope of the tools: the workspace guard** below.
 
 ### From the command line
 
@@ -117,9 +147,10 @@ repo's own pre-flight runs through its dev dependencies.
 Everything lives in [`cordis.patch.yml`](cordis.patch.yml). The shipped file is bound to `mmw-devs/ffxiv-race-ops`; change four things for your own repository.
 
 ```yaml
-githubOAuthClientId: "Ov23li…"      # your OAuth App's Client ID (Device Flow on)
-defaultScopes: [repo, workflow, offline_access]
 workingDir: ~/.dsh/workspaces/you/your-repo   # where the clone lives
+feishu:
+  enabled: true
+  authServiceUrl: https://mmw-tools.mmw-team.icu
 repoBinding:
   owner: you
   name: your-repo
@@ -138,8 +169,9 @@ repoBinding:
 
 | Field | Meaning |
 |---|---|
-| `githubOAuthClientId` | Public identifier of your OAuth App. Not a secret. |
-| `defaultScopes` | `repo` is required; `offline_access` is needed for auto-refresh. |
+| `feishu.enabled` | Enforce the Feishu role gate at call time. Default off; the shipped file turns it on. |
+| `feishu.authServiceUrl` | Auth core origin. Env `MMW_TOOLS_AUTH_URL` wins. |
+| `feishu.gateScope` | `mmw-tools` (default) gates only this plugin's tools; `session` makes the gate an exclusive allowlist for the whole session. See **Scope of the Feishu gate**. |
 | `workingDir` | Where `repo_clone` puts the checkout and where `mmw_tools_run` reads `AGENTS.md`. Falls back to `GHOST_WORKING_DIR`. |
 | `allowlistPaths` | The only paths `repo_edit` may write. Glob, forward-slash, `**` and `*` supported. |
 | `denylistPaths` | Always refused, even if also allowlisted. |
@@ -158,16 +190,120 @@ Three things keep it visible:
 
 ## Settings panel
 
-**Settings → MMW Tools**:
+**Settings → MMW Tools** (GitHub):
 
 | Control | Effect |
 |---|---|
-| **Connect GitHub** | Starts Device Flow, shows `user_code` + `verification_uri` in the panel |
-| **I already authorized** | Polls for the authorization result (up to ~2 min) |
-| **Refresh** | Forces an access-token refresh |
-| **Revoke** | Wipes `~/.dsh/dsh-mmw-tools.json` |
+| **登录 GitHub** | Starts the broker login and opens the verification page |
+| **重新获取仓库权限** | Re-checks the broker's repository access |
+| **退出登录** | Revokes the broker session and clears the local session |
 
-Status line shows the login, granted scopes, and the remaining lifetime of the access token. The panel is plain React with inline styles; `lib/client.js` registers itself through the DSH web `__ModuleLoader__` factory contract.
+**Settings → MMW Tools 授权** (Feishu):
+
+| Control | Effect |
+|---|---|
+| **使用飞书登录** | Opens the auth core, then polls until the browser completes |
+| **退出飞书** | Revokes the plugin token and clears `~/.dsh/dsh-mmw-tools-feishu.json` |
+
+The panels are plain React with inline styles; `lib/client.js` registers both
+sections through the DSH web `__ModuleLoader__` factory contract.
+
+## Feishu authorization
+
+The tool catalog is tool-centric: each tool declares `roles` and
+`requiredPermissions`; there is no role → permission table. `race-ops` is one
+atomic tool, so a role that can consume it can call its operations; `pr_merge`
+keeps the host confirmation as the final protection. `mmw-tools-status` is
+`always: true`.
+
+At call time the plugin:
+
+1. maps `mcp__mmw-tools__*` / `mmw_tools_*` to the parent tool;
+2. fetches `GET /v1/agent/routes` (60 s cache, plugin token from
+   `~/.dsh/dsh-mmw-tools-feishu.json`);
+3. allows the call if `allowedOperations` contains the operation id, or
+   `allowed` contains the parent tool;
+4. otherwise returns `mmw_route_denied`;
+5. for `pr_merge`, only after the policy check, asks the operator.
+
+The plugin token is rotated automatically once it is inside its last day: a
+six-hour watchdog calls `POST /v1/session/refresh`, the auth core revokes the
+old token, and the local record is replaced with the rotated token. A
+rotation never deletes a replacement token written by a concurrent request.
+
+With `feishu.enabled: true`, a missing/expired token denies business tools.
+`mmw_tools_status` remains callable so the agent can report why.
+
+### Scope of the Feishu gate
+
+The gate is installed as a global `tools/pre-execute` listener, so it observes
+every tool call in the session. By default it **only governs this plugin's
+own tools** (`mcp__mmw-tools__*` and `mmw_tools_*`); every other tool — the
+host's `read`, `pwsh`, `glob`, `web_search`, another plugin's tools — passes
+through untouched.
+
+`feishu.gateScope` widens or narrows that:
+
+| Value | Effect |
+|---|---|
+| `mmw-tools` (default) | Only this plugin's tools are gated. The rest of the session is untouched. |
+| `session` | The gate becomes an exclusive allowlist for the **whole session**: any tool outside the MMW Tools contract is denied. |
+
+`session` is a footgun. Because a DSH profile is shared by every workspace
+it hosts, setting it in a shared profile strips the file and shell tools out
+of all of them — a workspace with no `read` and no `pwsh` cannot work. Use it
+only in a profile dedicated to this repository.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `feishu.enabled` | off | Enforce the Feishu role gate at call time. The shipped file turns it on. |
+| `feishu.authServiceUrl` | — | The auth core that owns roles and the route table. |
+| `feishu.gateScope` | `mmw-tools` | `mmw-tools` or `session` — see above. |
+
+### Scope of the tools: the workspace guard
+
+A plugin is loaded per **profile**; a workspace is a **session** inside it. One
+profile hosts every workspace, so being installed is not the same as being
+relevant. The workspace guard closes that gap: a call is served only when the
+*calling session's* working directory is inside the bound repository's
+checkout.
+
+It reads that directory from the host's `workingDirectory` service —
+synchronously, with no filesystem I/O — through the `agent` carried by every
+`tools/pre-execute` execution. Because it is evaluated **per call**, a
+`cd` in or out of the repository takes effect immediately; a profile or a
+launch flag could never express that, which is why this is a runtime guard and
+not a second profile.
+
+In a session opened anywhere else, the business tools answer:
+
+```
+mmw-tools 只在绑定仓库的工作区可用（当前会话目录：…；允许：…）
+```
+
+instead of an auth error or a repository error, and the host's own tools —
+`read`, `pwsh`, `glob`, … — are untouched, as always.
+
+There are two deliberate exceptions:
+
+- `mmw_tools_status` is always callable. It is the diagnostic surface the agent
+  uses to explain why the repository tools are refused.
+- `mcp__mmw-tools__repo_clone` may run from outside the checkout **only while
+  the primary root has no `.git`**. This is the bootstrap path: the first
+  session creates the working copy. Once the checkout exists, the normal rule
+  applies, so an unrelated workspace cannot clone over a live repository.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workspaceGuard.enabled` | on | Set `false` only in a profile dedicated to this repository. |
+| `workspaceGuard.allowPaths` | `[]` | Extra roots, **added** to the checkout derived from `workingDir` / `~/.dsh/workspaces/<owner>/<name>`. The path is never duplicated in the config file. |
+| `workspaceGuard.onUnavailable` | `deny` | When the host exposes no working directory. `deny` refuses the business tools; `allow` is an explicit fail-open for a host you have verified. |
+
+The guard is a relevance filter, not a security boundary: the Feishu gate and
+the repository sandbox still decide what a call may do. It also does not hide
+the tools from a session's schema list, and the MCP child process still starts
+with the plugin — only a dedicated profile gives you a session with no trace of
+the plugin at all.
 
 ## Agent tools
 
@@ -197,7 +333,7 @@ Status line shows the login, granted scopes, and the remaining lifetime of the a
 
 **Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
 
-**Tokens.** The session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. Both are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker to drop the session.
+**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
 
 **Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
 
@@ -215,23 +351,32 @@ Three layers, split by what they need in order to run rather than by what they
 cover. Full rationale in [`docs/TESTING.md`](docs/TESTING.md).
 
 ```sh
-pnpm check                 # typecheck + namespace + 177 assertions + pack contents
-cd mcp-server && pnpm test # 44 guard + 11 schema assertions
+pnpm check                 # typecheck + namespace + in-process suites + pack contents
+cd mcp-server && pnpm test # guard, schema and PR-preview assertions
 pnpm test:smoke            # MCP server handshake over real stdio
-pnpm test:integration      # the eight tool bodies against a real git repo
+pnpm test:integration      # the MCP tool bodies against a real git repo
 ```
 
-| Suite | Asserts | Needs |
+| Suite | Covers | Needs |
 |---|---|---|
-| `tests/token-store.test.mjs` | 25 · persistence, masking, clear | — |
-| `tests/client-bundle.test.mjs` | 16 · `__ModuleLoader__` shape of `lib/client.js` | — |
-| `tests/bundle-apply.test.mjs` | 36 · `apply()` registers 6 tools, 5 routes, 1 section; idempotence | — |
-| `tests/routes-integration.test.mjs` | 26 · real HTTP against the five loopback routes | — |
-| `tests/mmw-tools-run.test.mjs` | 37 · input validation, branch slug, excerpts, redaction, truncation | — |
-| `tests/audit.test.mjs` | 29 · deep redaction, rotation, failure handling | — |
-| `mcp-server/tests/guard.test.mjs` | 44 · every cross-cutting guard | — |
-| `mcp-server/tests/tools-list-schema.test.mjs` | 11 · all eight tools registered | — |
-| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises 8 tools | `spawn` |
+| `tests/skills.test.mjs` | skill catalog and the `race-ops-ops` instructions | — |
+| `tests/client-bundle.test.mjs` | `__ModuleLoader__` shape of `lib/client.js` | — |
+| `tests/bundle-apply.test.mjs` | `apply()` registration, routes, prompts, disposers, idempotence | — |
+| `tests/feishu-gate.test.mjs` | authorization table, gate decisions, token refresh | — |
+| `tests/workspace-guard.test.mjs` | checkout fence, status exemption, `repo_clone` bootstrap | — |
+| `tests/routes-integration.test.mjs` | real HTTP against the loopback routes | — |
+| `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation | — |
+| `tests/audit.test.mjs` | deep redaction, rotation, failure handling | — |
+| `tests/github-app.test.mjs` | installation-token flow and repository access | — |
+| `tests/session-store.test.mjs` | credential persistence, masking, clearing | — |
+| `tests/broker-client.test.mjs` | broker HTTP client behavior | — |
+| `tests/broker-auth.test.mjs` | broker auth handshake | — |
+| `broker/tests/core.test.mjs` | broker core state and policy | — |
+| `broker/tests/server.test.mjs` | broker HTTP surface | — |
+| `mcp-server/tests/guard.test.mjs` | every cross-cutting guard | — |
+| `mcp-server/tests/tools-list-schema.test.mjs` | all MCP tools registered with usable schemas | — |
+| `mcp-server/tests/pr-preview.test.mjs` | PR preview URL and check extraction | — |
+| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises its tools | `spawn` |
 | `tests/integration-git.test.mjs` | tool bodies against git, incl. `repo_edit` rollback | `git`, `spawn` |
 
 The last two need `child_process.spawn` with piped stdio. Where a sandbox denies
