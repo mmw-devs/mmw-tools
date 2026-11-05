@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mmw-team.icu/contracts/routes.schema.json",
+  "title": "mmw-tools agent route table",
+  "description": "GET /v1/agent/routes 的响应。allowed 是允许消费的 toolId；allowedOperations 是允许调用的 operation。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "catalogRevision",
+    "policyRevision",
+    "ttlSeconds",
+    "allowed",
+    "allowedOperations",
+    "denied"
+  ],
+  "properties": {
+    "contractVersion": {
+      "const": 2,
+      "description": "契约版本；当前为 2。"
+    },
+    "catalogRevision": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "tools.json 的 canonical SHA-256；用于检测目录漂移。"
+    },
+    "policyRevision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "授权版本；成员角色变化时递增。"
+    },
+    "ttlSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3600,
+      "description": "授权表缓存时长；v0 默认 60 秒。"
+    },
+    "allowed": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "当前成员允许消费的 toolId 集合。",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      }
+    },
+    "allowedOperations": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "当前成员允许调用的 operation 全 ID（toolId.operationId）；gate 优先检查它。",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*\\.[a-z0-9_]+$"
+      }
+    },
+    "denied": {
+      "type": "array",
+      "description": "被拒绝的 tool 及缺失角色；只用于展示，不参与放行。",
+      "items": {
+        "$ref": "#/$defs/denied"
+      }
+    }
+  },
+  "$defs": {
+    "denied": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolId", "requiredRoles"],
+      "properties": {
+        "toolId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "被拒绝的 toolId。"
+        },
+        "requiredRoles": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "description": "调用该工具需要的角色；当前成员一个都不具备。",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        }
+      }
+    }
+  }
+}

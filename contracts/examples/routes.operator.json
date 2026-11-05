@@ -1,0 +1,25 @@
+{
+  "contractVersion": 2,
+  "catalogRevision": "sha256:91d56de8cef22f58f878a8ae474ddab5d39989cde4011290f7f44b12e4ca8cb2",
+  "policyRevision": 42,
+  "ttlSeconds": 60,
+  "allowed": [
+    "mmw-tools-status",
+    "race-ops"
+  ],
+  "allowedOperations": [
+    "mmw-tools-status.status",
+    "race-ops.mmw_tools_run",
+    "race-ops.pr_create",
+    "race-ops.pr_list",
+    "race-ops.pr_merge",
+    "race-ops.pr_preview",
+    "race-ops.repo_clone",
+    "race-ops.repo_edit",
+    "race-ops.repo_pull",
+    "race-ops.repo_read",
+    "race-ops.repo_search",
+    "race-ops.repo_status"
+  ],
+  "denied": []
+}
