@@ -7,7 +7,7 @@
 //
 //   1. apply() registers 5 high-level agent tools (mmw_tools_status
 //      + 4 oauth tools) on ctx.tools.
-//   2. apply() registers 5 loopback routes on ctx.webServer.
+//   2. apply() registers 9 loopback routes on ctx.webServer.
 //   3. apply() registers a system-prompt section.
 //   4. apply() spawns the MCP child process and re-publishes its
 //      tools as mcp__mmw-tools__* agent tools.
@@ -205,7 +205,11 @@ console.log("\n--- Test 2: loopback routes ---");
   truthy(paths.includes("/api/mmw-tools/oauth/finish"), "POST oauth/finish");
   truthy(paths.includes("/api/mmw-tools/oauth/refresh"), "POST oauth/refresh");
   truthy(paths.includes("/api/mmw-tools/revoke"), "POST revoke");
-  eq(paths.length, 5, "exactly 5 routes registered");
+  truthy(paths.includes("/api/mmw-tools/feishu/status"), "GET feishu/status");
+  truthy(paths.includes("/api/mmw-tools/feishu/login/start"), "POST feishu/login/start");
+  truthy(paths.includes("/api/mmw-tools/feishu/login/poll"), "POST feishu/login/poll");
+  truthy(paths.includes("/api/mmw-tools/feishu/logout"), "POST feishu/logout");
+  eq(paths.length, 9, "exactly 9 routes registered");
   for (const r of ctx.captured.routes) {
     if (r.kind !== "exact") bad(`route ${r.path} kind`, `expected exact, got ${r.kind}`);
   }

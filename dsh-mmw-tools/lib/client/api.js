@@ -75,3 +75,30 @@ export class GithubApi {
 }
 /** Singleton shared by the panel component. */
 export const githubApi = new GithubApi();
+export class FeishuApi {
+    getStatus() {
+        return request(API.feishuStatus);
+    }
+    loginStart() {
+        return request(API.feishuLoginStart, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+        });
+    }
+    loginPoll() {
+        return request(API.feishuLoginPoll, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+        });
+    }
+    logout() {
+        return request(API.feishuLogout, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+        });
+    }
+}
+export const feishuApi = new FeishuApi();

@@ -19,6 +19,7 @@
  * paste the callback URL into a "finish" form.
  */
 import type { BrokerAuth, FlowResult, OpResult } from "./auth/broker-auth.js";
+import type { FeishuAuth } from "./auth/feishu-auth.js";
 import { API } from "./shared/api-paths.js";
 
 // Defined in src/shared/api-paths.ts and re-exported here: the host bundle,
@@ -134,6 +135,8 @@ function guard(
 export interface RouteDeps {
   store: BrokerAuth;
   flow: BrokerAuth;
+  /** Optional so the original route tests can drive makeRoutes without it. */
+  feishu?: FeishuAuth;
   brokerUrl: string;
   binding: {
     owner: string;
@@ -150,7 +153,11 @@ export function makeRoutes(deps: RouteDeps): Array<{
   handler: (req: IncomingMessageLike & AsyncIterable<Buffer>, res: ServerResponseLike) => Promise<void>;
 }> {
   const { store, flow } = deps;
-  return [
+  const routes: Array<{
+    kind: "exact";
+    path: string;
+    handler: (req: IncomingMessageLike & AsyncIterable<Buffer>, res: ServerResponseLike) => Promise<void>;
+  }> = [
     {
       kind: "exact",
       path: API.status,
@@ -240,6 +247,86 @@ export function makeRoutes(deps: RouteDeps): Array<{
         await flow.clearAll();
         const view = await store.view();
         writeJson(res, 200, { ok: true, message: "凭据已清空。", ...view });
+      },
+    },
+  ];
+
+  if (deps.feishu) routes.push(...makeFeishuRoutes(deps.feishu));
+  return routes;
+}
+
+function makeFeishuRoutes(feishu: FeishuAuth): Array<{
+  kind: "exact";
+  path: string;
+  handler: (req: IncomingMessageLike & AsyncIterable<Buffer>, res: ServerResponseLike) => Promise<void>;
+}> {
+  return [
+    {
+      kind: "exact",
+      path: API.feishuStatus,
+      handler: async (req, res) => {
+        if (!guard(req, res, "GET")) return;
+        writeJson(res, 200, await feishu.view());
+      },
+    },
+    {
+      kind: "exact",
+      path: API.feishuLoginStart,
+      handler: async (req, res) => {
+        if (!guard(req, res, "POST")) return;
+        try {
+          const started = await feishu.begin();
+          writeJson(res, 200, {
+            ok: true,
+            loginId: started.loginId,
+            loginUrl: started.loginUrl,
+            expiresAt: started.expiresAt,
+          });
+        } catch (err) {
+          writeJson(res, 200, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    },
+    {
+      kind: "exact",
+      path: API.feishuLoginPoll,
+      handler: async (req, res) => {
+        if (!guard(req, res, "POST")) return;
+        try {
+          const result = await feishu.poll();
+          if (result.status === "authorized") {
+            writeJson(res, 200, {
+              ok: true,
+              status: "authorized",
+              member: result.member,
+              roles: result.roles,
+            });
+            return;
+          }
+          writeJson(res, 200, {
+            ok: false,
+            status: result.status,
+            reason: "reason" in result ? result.reason : undefined,
+          });
+        } catch (err) {
+          writeJson(res, 200, {
+            ok: false,
+            status: "error",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    },
+    {
+      kind: "exact",
+      path: API.feishuLogout,
+      handler: async (req, res) => {
+        if (!guard(req, res, "POST")) return;
+        await feishu.logout();
+        writeJson(res, 200, { ok: true, message: "飞书授权已清空。" });
       },
     },
   ];

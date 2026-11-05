@@ -1,5 +1,110 @@
 # Changelog
 
+## Unreleased — the plugin stopped owning the session's tool set
+
+### Fixed
+
+- **The Feishu gate denied every tool outside the MMW Tools contract.** It is
+  installed as a global `tools/pre-execute` listener, so it saw every tool
+  call in the session — including the host's own `read`, `pwsh`, `glob`,
+  `web_search` — and denied any name absent from `TOOL_MAP` with
+  `工具 <name> 不在 MMW Tools 契约中，已拒绝`. Because a DSH profile is
+  shared by every workspace it hosts, installing this plugin into one
+  profile left all of those workspaces unable to read or write anything at
+  all: the whole standard tool set was replaced by the plugin's own
+  allowlist.
+
+  The gate now governs only the tools it owns — `mcp__mmw-tools__*` and
+  `mmw_tools_*`. Every other tool reaches the host's `next()` untouched, and
+  an unknown tool *of this plugin* is still denied, because the contract
+  stays authoritative inside its own namespace.
+
+  The gate's scope is now explicit rather than implicit:
+  `feishu.gateScope: "mmw-tools"` (default) or `"session"`. The latter
+  restores the old exclusive-allowlist behaviour and is documented as a
+  footgun for shared profiles.
+
+- **Being installed was treated as being relevant.** A plugin is loaded per
+  profile and a profile hosts every workspace, so a session opened in an
+  unrelated directory still listed all eleven tools and could drive the bound
+  repository from there — with error messages indistinguishable from real
+  failures. Calls are now served only where the bound checkout is: each one
+  compares the *session's* working directory (read synchronously from the
+  host's `workingDirectory` service via `exec.agent.session`, no filesystem
+  I/O) against the checkout, and otherwise refuses with
+  `mmw-tools 只在绑定仓库的工作区可用（当前会话目录：…；允许：…）`. The check
+  runs per call, so a mid-session `cd` in or out of the repository takes
+  effect immediately.
+
+### Added
+
+- `src/gate/tool-map.ts` — `TOOL_NAMESPACE`, `TOOL_OWN_PREFIX` and
+  `isMmwTool()`, so the plugin can tell its own tools from the host's.
+- `tests/feishu-gate.test.mjs` — 31 further assertions: every standard tool
+  passes the gate, another plugin's tools pass, an unknown mmw-tools tool is
+  still denied, and a standard tool never reaches the policy check.
+- `src/gate/workspace-guard.ts` — `isInsidePath()`, `shouldAllowWorkspace()`
+  and `installWorkspaceGuard()`: a second `tools/pre-execute` listener,
+  installed *before* the policy gate so a call from the wrong workspace is
+  refused for the workspace reason rather than an auth round trip. The
+  listener never inspects the host's tools — it returns them to `next()`
+  untouched, which is the same rule the gate learned in this release.
+- `workspaceGuard` config — `enabled` (default on), `allowPaths` (extra roots,
+  **added** to the checkout path derived from `workingDir` /
+  `~/.dsh/workspaces/<owner>/<name>`, never a replacement) and
+  `onUnavailable` (`allow` by default; `deny` for an installation that must
+  never run outside its own profile).
+- `tests/workspace-guard.test.mjs` — 33 assertions: path containment
+  including name-prefix and numeric-suffix siblings, the pure decision, the
+  listener passing standard tools straight through, in- and out-of-checkout
+  calls, `cd` in and back out, the plugin-context service fallback, a missing
+  service (warned once, calls still served), a missing agent, `enabled: false`,
+  and a host with no `tools/pre-execute`.
+
+### Documentation
+
+- The README states that a DSH **profile** is the unit of plugin scope (there
+  is no per-workspace plugin scope), how to give the plugin a dedicated
+  profile, and what `feishu.gateScope` does.
+- The README gained **Scope of the tools: the workspace guard**, and its
+  "Which profile to install into" section now separates what a dedicated
+  profile buys (a session with no trace of the plugin) from what the guard
+  guarantees (no effect outside the checkout).
+
+## 0.10.0 — Feishu tool authorization gate
+
+The plugin now enforces the Feishu role model at call time. The tool catalog is
+tool-centric: a tool declares `roles` and `requiredPermissions`; there is no
+role → permission table. `race-ops` is one atomic tool, and `pr_merge` keeps the
+host confirmation as its final protection.
+
+### Added
+
+- `src/auth/feishu-auth.ts` — login start/poll, token file
+  (`~/.dsh/dsh-mmw-tools-feishu.json`, 0600), status, route-table fetch/cache,
+  and logout.
+- `src/gate/tool-map.ts` + `src/gate/gate.ts` — `publicName → toolId` map and a
+  single `tools/pre-execute` listener that runs the Feishu policy check before
+  the existing `pr_merge` `ask`.
+- `Settings → MMW Tools 授权` — a separate section for Feishu login so the
+  GitHub and Feishu credentials are never confused.
+- Loopback routes: `feishu/status`, `feishu/login/start`, `feishu/login/poll`,
+  `feishu/logout`.
+- `tests/feishu-gate.test.mjs` — 34 assertions covering the client, gate,
+  contract map, denial precedence, and the merge prompt.
+
+### Configuration
+
+```yaml
+feishu:
+  enabled: true
+  authServiceUrl: https://mmw-tools.mmw-team.icu
+```
+
+With the gate enabled, `mmw_tools_status` stays available; every other tool
+requires a Feishu plugin token and a role that can consume its parent tool.
+`pr_merge` is allowed by policy for `operator`/`admin`, then asks the operator.
+
 ## 0.9.3 — close the single-source-of-truth gaps
 
 An audit of the tree found that the security/process facts were already

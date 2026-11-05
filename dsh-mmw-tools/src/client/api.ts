@@ -115,3 +115,62 @@ export class GithubApi {
 
 /** Singleton shared by the panel component. */
 export const githubApi = new GithubApi();
+
+export interface FeishuStatusView {
+  signedIn: boolean;
+  authServiceUrl: string;
+  member?: { id: string; name: string; roles: string[]; isAdmin: boolean };
+  roles: string[];
+  expiresAt: number;
+  secondsRemaining: number;
+  tokenMasked: string;
+}
+
+export interface FeishuStartResult {
+  ok: boolean;
+  loginId?: string;
+  loginUrl?: string;
+  expiresAt?: number;
+  error?: string;
+}
+
+export interface FeishuPollResult {
+  ok: boolean;
+  status: "pending" | "authorized" | "denied" | "expired";
+  member?: { id: string; name: string; roles: string[]; isAdmin: boolean };
+  roles?: string[];
+  reason?: string;
+  error?: string;
+}
+
+export class FeishuApi {
+  getStatus(): Promise<FeishuStatusView> {
+    return request(API.feishuStatus) as Promise<FeishuStatusView>;
+  }
+
+  loginStart(): Promise<FeishuStartResult> {
+    return request(API.feishuLoginStart, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }) as Promise<FeishuStartResult>;
+  }
+
+  loginPoll(): Promise<FeishuPollResult> {
+    return request(API.feishuLoginPoll, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }) as Promise<FeishuPollResult>;
+  }
+
+  logout(): Promise<SimpleResult> {
+    return request(API.feishuLogout, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }) as Promise<SimpleResult>;
+  }
+}
+
+export const feishuApi = new FeishuApi();

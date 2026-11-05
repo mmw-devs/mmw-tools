@@ -55,6 +55,45 @@
         # user token. See docs/AUTH-BROKER.md.
         brokerUrl: https://race-ops-broker.mmw-team.icu
 
+        # Feishu tool authorization. The auth core owns roles and the route
+        # table; this gate only enforces them at call time. Disable it only
+        # for an air-gapped install; tools are otherwise denied until login.
+        feishu:
+          enabled: true
+          authServiceUrl: https://mmw-tools.mmw-team.icu
+          # How wide the gate reaches.
+          #   "mmw-tools" (default) — only this plugin's own tools are
+          #     gated; the host's standard tools (read / pwsh / glob / …)
+          #     pass through untouched.
+          #   "session" — the gate becomes an exclusive allowlist for the
+          #     WHOLE session and every non-MMW tool is denied. A DSH profile
+          #     is shared by every workspace it hosts, so this strips the
+          #     file and shell tools out of all of them. Only set it in a
+          #     profile dedicated to this repository.
+          gateScope: mmw-tools
+
+        # Which sessions may use these tools.
+        #
+        # The plugin is loaded per PROFILE, but it belongs to ONE repository,
+        # and a profile hosts every workspace opened in it. Without this guard
+        # a session started in an unrelated directory still lists all eleven
+        # tools and can drive the bound repository from there.
+        #
+        # The guard reads the SESSION's working directory on every call (a
+        # mid-session `cd` is respected) and refuses calls made outside the
+        # checkout. Roots are derived from `workingDir` below, or from the
+        # built-in default ~/.dsh/workspaces/<owner>/<name> — this file does
+        # NOT carry a second copy of that path.
+        #
+        #   onUnavailable: allow — the host gives no working directory (old
+        #     profile / an execution with no agent), so do not block; the Feishu
+        #     gate and the repository sandbox still apply.
+        #   onUnavailable: deny  — refuse instead. Use it when the plugin must
+        #     never run outside its own profile.
+        workspaceGuard:
+          enabled: true
+          onUnavailable: allow
+
         repoBinding:
           owner: mmw-devs
           name: ffxiv-race-ops
