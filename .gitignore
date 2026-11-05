@@ -23,3 +23,8 @@ Thumbs.db
 # (subprojects have their own .gitignore; this is for top-level accidents only)
 # Secret material directory
 secrets/
+
+# Local scratch copied from DSH installs; never part of this project
+/app-boot-README.md
+/plugin-manager-README.md
+/ci-log.mjs
