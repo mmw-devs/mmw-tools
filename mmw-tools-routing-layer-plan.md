@@ -1,12 +1,12 @@
 # mmw-tools 功能路由规划（v4：tool-centric）
 
-> 状态：方案 v4，tool-centric 契约已落地；本文早期章节保留为设计历史
+> 状态：方案 v4，tool-centric 契约与插件 gate 已落地；本文早期章节保留为设计历史
 > 日期：2026-10-26（2026-11-04 tool-centric 更新）
 > 定位：**飞书网页应用鉴权是核心业务逻辑；DSH 插件是载体；功能路由是目标。**
 > 关键模型：**角色只决定能否消费工具；`requiredPermissions` 是工具自身需要的能力，不是用户授权；没有 role → permission 映射。**
 > 路由消费者：DSH agent
 > 路由表所有者：飞书鉴权核心
-> 进展：契约 v2（[`contracts/tools.json`](contracts/tools.json)、[`contracts/roles.json`](contracts/roles.json)）与 auth core 已部署；公网 `/health` 返回 `contractVersion: 2`。插件 v0.10.0 已实现 Feishu gate / Settings 授权面板 / `pr_merge` 确认顺序；待真实飞书登录与端到端验证。
+> 进展：契约 v2（[`contracts/tools.json`](contracts/tools.json)、[`contracts/roles.json`](contracts/roles.json)）与 auth core 已部署；公网 `/health` 返回 `contractVersion: 2`。插件已实现 Feishu gate / Settings 授权面板 / token 续期 / `pr_merge` 确认顺序，飞书登录已验证；剩余端到端验证需要重启桌面宿主加载新模块。
 >
 > ⚠️ 本文第 3/4 节中 `race-ops.read` / `race-ops.edit` / `race-ops.pr` 的描述属于早期权限模型；当前以 [`contracts/README.md`](contracts/README.md) 和 `tools.json` 为准。
 
