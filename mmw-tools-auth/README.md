@@ -170,6 +170,7 @@ node scripts/check-contracts.mjs
 | `POST` | `/v1/agent/events` | 执行侧审计事件；只收 tool ID/结果/时间，不收参数 |
 | `GET` | `/` | 管理 UI（浏览器 session） |
 | `GET` | `/api/me` | 管理 UI 当前身份 + CSRF |
+| `GET` | `/api/admin/roles` | 角色列表，来自 `roles.json`（`admin` 角色） |
 | `GET` | `/api/admin/members` | 成员列表（`admin` 角色） |
 | `PATCH` | `/api/admin/members/:id` | 角色/停用（`admin` 角色 + CSRF） |
 | `GET` | `/api/admin/audit` | 最近操作（`admin` 角色） |
