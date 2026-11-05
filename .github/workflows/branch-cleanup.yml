@@ -1,0 +1,46 @@
+name: Branch cleanup
+
+# Deletes only branches whose merged PR is older than the retention window and
+# whose every dependency signal is clean. Manual runs default to a dry run.
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Delete eligible branches (otherwise dry run)"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: branch-cleanup
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Prune merged branches
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          args=(--min-age-days 7)
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.apply }}" = "true" ]; then
+            args+=(--apply)
+          fi
+          node scripts/prune-merged-branches.mjs "${args[@]}"

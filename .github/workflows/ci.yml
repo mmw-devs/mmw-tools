@@ -53,6 +53,9 @@ jobs:
       - name: Validate feature contracts
         run: node scripts/check-contracts.mjs
 
+      - name: Test branch cleanup policy
+        run: node --test scripts/prune-merged-branches.test.mjs
+
       # The auth core uses only Node built-ins (node:sqlite), so it can be
       # tested before the plugin's pnpm install.
       - name: Test auth core
