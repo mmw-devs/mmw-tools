@@ -35,6 +35,7 @@ declares which roles may consume it and which technical permissions it needs.
 - `mmw-tools-status`: `always: true`; one operation `mmw_tools_status`.
 - `viewer` and `editor` are reserved roles with no tools yet. `race-ops` is
   atomic in v2, so they cannot consume it without also getting edit/merge.
+  Confirmed by product on 2026-11-05: keep them without race-ops access for now.
 - `pr_merge` is an operation of `race-ops`. Under model A, any role that can
   consume `race-ops` can reach it; the final protection is host confirmation +
   GitHub branch protection, not a separate Feishu permission.
