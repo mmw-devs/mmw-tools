@@ -381,6 +381,11 @@ export class Auth {
     return this.store.allMembers().map((member) => this.memberView(member));
   }
 
+  listRoles(actor) {
+    this.requireAdmin(actor);
+    return this.policy.roleList();
+  }
+
   updateMember(actor, id, input) {
     this.requireAdmin(actor);
     if (!input || typeof input !== "object") {

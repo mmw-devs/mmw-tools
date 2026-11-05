@@ -108,10 +108,14 @@ async function boot() {
     catch (error) { notice(error.message); }
   };
   $("account").append(name, logout);
-  if (me.isAdmin) { await members(); await audit(); }
+  if (me.isAdmin) {
+    const roles = await api("/api/admin/roles");
+    await members(roles);
+    await audit();
+  }
 }
 
-async function members() {
+async function members(roles) {
   const rows = await api("/api/admin/members");
   const box = $("member-list");
   box.replaceChildren();
@@ -123,13 +127,13 @@ async function members() {
     row.append(name);
 
     const inputs = {};
-    for (const role of ["viewer", "editor", "operator", "admin"]) {
+    for (const role of roles) {
       const label = document.createElement("label");
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.checked = member.roles.includes(role);
-      inputs[role] = checkbox;
-      label.append(checkbox, document.createTextNode(role));
+      checkbox.checked = member.roles.includes(role.id);
+      inputs[role.id] = checkbox;
+      label.append(checkbox, document.createTextNode(role.title || role.id));
       row.append(label);
     }
 
@@ -151,7 +155,7 @@ async function members() {
           body: JSON.stringify({ version: member.version, roles, enabled: enabled.checked }),
         });
         notice("已保存：" + member.name);
-        await members();
+        await members(roles);
         await audit();
       } catch (error) {
         notice(error.message);

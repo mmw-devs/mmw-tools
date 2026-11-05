@@ -267,6 +267,12 @@ export function createAuthServer({ auth, config }) {
         return sendJson(res, 200, { ok: true });
       }
 
+      if (pathname === "/api/admin/roles" && req.method === "GET") {
+        const current = auth.session(cookies(req).mmw_session);
+        if (!current) throw new AppError(401, "mmw_auth_required", "请先登录");
+        return sendJson(res, 200, auth.listRoles(current.member));
+      }
+
       if (pathname === "/api/admin/members" && req.method === "GET") {
         const current = auth.session(cookies(req).mmw_session);
         if (!current) throw new AppError(401, "mmw_auth_required", "请先登录");

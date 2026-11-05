@@ -21,6 +21,11 @@ async function listMembers(jar, origin) {
   return { status: response.status, body: await readJson(response) };
 }
 
+async function listRoles(jar, origin) {
+  const response = await request(jar, `${origin}/api/admin/roles`);
+  return { status: response.status, body: await readJson(response) };
+}
+
 export async function runAuthTests(test) {
   await test("policy route tables match the golden contract files", async () => {
     const fixture = createFixture();
@@ -189,6 +194,29 @@ export async function runAuthTests(test) {
       });
       const revoked = await readJson(revokedResponse);
       assert.deepEqual(revoked.allowed, ["mmw-tools-status"]);
+    } finally {
+      await server.close();
+      fixture.cleanup();
+    }
+  });
+
+  await test("admin role list comes from the contract, not the UI", async () => {
+    const fixture = createFixture({ bootstrapToken: "boot-secret" });
+    const server = await startServer(fixture);
+    try {
+      fixture.mock.state.user = { tenant_key: "tenant_test", open_id: "ou_admin", name: "Admin" };
+      const admin = await loginBrowser(fixture, server, new CookieJar(), { bootstrap: "boot-secret" });
+
+      const listed = await listRoles(admin.jar, server.origin);
+      assert.equal(listed.status, 200);
+      assert.deepEqual(
+        listed.body.map((role) => role.id),
+        ["viewer", "editor", "operator", "admin"]
+      );
+      assert.equal(listed.body.find((role) => role.id === "admin").admin, true);
+
+      const anonymous = await listRoles(new CookieJar(), server.origin);
+      assert.equal(anonymous.status, 401);
     } finally {
       await server.close();
       fixture.cleanup();
