@@ -19,9 +19,28 @@
  * Ordering note: this listener is installed BEFORE the Feishu policy gate. A
  * call from the wrong workspace is refused for the workspace reason, without
  * an auth round trip and without the misleading "飞书授权不可用" message.
+ *
+ * Two exceptions are deliberate: `mmw_tools_status` is a diagnostic that must
+ * work anywhere, and `repo_clone` may create the checkout while its root has
+ * no `.git`. Both are narrow; all other business tools obey the workspace rule.
  */
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { isMmwTool } from "./tool-map.js";
+/**
+ * Diagnostic tool that must work from any session, including one outside the
+ * checkout. It reports auth/binding state; refusing it there would hide the
+ * very reason the other tools are unavailable.
+ */
+const STATUS_TOOL = "mmw_tools_status";
+/**
+ * The only tool allowed to run before the checkout exists. `repo_clone` is the
+ * bootstrap operation: the first session has to be able to create the checkout
+ * it will later work in. The exception is narrow — outside the root and only
+ * while the root has no `.git` — so a live checkout is never cloned over from
+ * an unrelated workspace.
+ */
+const BOOTSTRAP_TOOL = "mcp__mmw-tools__repo_clone";
 /**
  * True when `child` is `parent` itself or lives underneath it.
  *
@@ -42,8 +61,25 @@ export function isInsidePath(child, parent) {
         return true;
     return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
+/**
+ * True only for the bootstrap call: `repo_clone`, from outside the bound
+ * checkout, while that checkout's primary root has no `.git`. Once a live
+ * checkout exists, the normal workspace rule applies again.
+ */
+export function isBootstrapCall(name, cwd, roots) {
+    if (name !== BOOTSTRAP_TOOL)
+        return false;
+    if (cwd === undefined || cwd.length === 0)
+        return false;
+    if (roots.length === 0)
+        return false;
+    const root = roots[0];
+    if (isInsidePath(cwd, root))
+        return false;
+    return !existsSync(path.join(root, ".git"));
+}
 /** Pure decision, exported so the policy can be tested without a host. */
-export function shouldAllowWorkspace(cwd, roots, onUnavailable = "allow") {
+export function shouldAllowWorkspace(cwd, roots, onUnavailable = "deny") {
     if (cwd === undefined || cwd.length === 0) {
         return onUnavailable === "deny"
             ? {
@@ -140,7 +176,7 @@ function makeWorkingDirectoryReader(ctx, logger) {
 export function installWorkspaceGuard(ctx, opts) {
     if (opts.enabled === false)
         return () => { };
-    const onUnavailable = opts.onUnavailable ?? "allow";
+    const onUnavailable = opts.onUnavailable ?? "deny";
     const on = ctx.on;
     if (typeof on !== "function") {
         opts.logger.warn("mmw-tools: tools/pre-execute unavailable; the workspace guard is NOT installed");
@@ -152,7 +188,15 @@ export function installWorkspaceGuard(ctx, opts) {
             const name = exec?.name;
             if (typeof name !== "string" || !isMmwTool(name))
                 return next();
-            const verdict = shouldAllowWorkspace(cwdOf(exec), opts.roots, onUnavailable);
+            // Status is a diagnostic surface, not a repository operation. It must
+            // remain callable from a wrong workspace so the agent can explain why
+            // the repository tools are refused.
+            if (name === STATUS_TOOL)
+                return next();
+            const cwd = cwdOf(exec);
+            if (isBootstrapCall(name, cwd, opts.roots))
+                return next();
+            const verdict = shouldAllowWorkspace(cwd, opts.roots, onUnavailable);
             if (!verdict.ok)
                 return { kind: "deny", reason: verdict.reason };
             return next();

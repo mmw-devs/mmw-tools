@@ -270,7 +270,7 @@ synchronously, with no filesystem I/O — through the `agent` carried by every
 launch flag could never express that, which is why this is a runtime guard and
 not a second profile.
 
-In a session opened anywhere else, the eleven tools answer:
+In a session opened anywhere else, the business tools answer:
 
 ```
 mmw-tools 只在绑定仓库的工作区可用（当前会话目录：…；允许：…）
@@ -279,11 +279,20 @@ mmw-tools 只在绑定仓库的工作区可用（当前会话目录：…；允�
 instead of an auth error or a repository error, and the host's own tools —
 `read`, `pwsh`, `glob`, … — are untouched, as always.
 
+There are two deliberate exceptions:
+
+- `mmw_tools_status` is always callable. It is the diagnostic surface the agent
+  uses to explain why the repository tools are refused.
+- `mcp__mmw-tools__repo_clone` may run from outside the checkout **only while
+  the primary root has no `.git`**. This is the bootstrap path: the first
+  session creates the working copy. Once the checkout exists, the normal rule
+  applies, so an unrelated workspace cannot clone over a live repository.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `workspaceGuard.enabled` | on | Set `false` only in a profile dedicated to this repository. |
 | `workspaceGuard.allowPaths` | `[]` | Extra roots, **added** to the checkout derived from `workingDir` / `~/.dsh/workspaces/<owner>/<name>`. The path is never duplicated in the config file. |
-| `workspaceGuard.onUnavailable` | `allow` | When the host exposes no working directory. `deny` refuses the tools instead — for an installation that must never run outside its own profile. |
+| `workspaceGuard.onUnavailable` | `deny` | When the host exposes no working directory. `deny` refuses the business tools; `allow` is an explicit fail-open for a host you have verified. |
 
 The guard is a relevance filter, not a security boundary: the Feishu gate and
 the repository sandbox still decide what a call may do. It also does not hide

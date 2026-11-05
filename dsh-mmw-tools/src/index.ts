@@ -751,10 +751,11 @@ interface BundleConfig {
      * What to do when the host exposes no working directory (an older profile,
      * or a call with no agent behind it).
      *
-     * - `"allow"` (default): the guard cannot judge, so it does not block. The
-     *   Feishu gate and the repository sandbox still apply.
-     * - `"deny"`: refuse the plugin's tools entirely. Correct for an
-     *   installation that must never run outside its own profile.
+     * - `"deny"` (default): the guard cannot judge, so it refuses the
+     *   plugin's business tools. `mmw_tools_status` stays callable.
+     * - `"allow"`: explicit fail-open for a host that cannot report the
+     *   directory. Only use it after verifying that host; the Feishu gate and
+     *   the repository sandbox still apply.
      */
     onUnavailable?: "allow" | "deny";
   };
@@ -928,6 +929,9 @@ export function apply(
   // from a session that is not in the bound repository must be refused for that
   // reason, not with an auth round trip that reports "飞书授权不可用".
   //
+  // `mmw_tools_status` is exempt (diagnostics), and `repo_clone` may bootstrap
+  // the checkout while it has no `.git`. Everything else is fail-closed.
+  //
   // Roots come from `workingDir`, i.e. from the same derivation everything else
   // uses — there is deliberately no second copy of the checkout path here.
   const guardConfig = config?.workspaceGuard;
@@ -935,8 +939,10 @@ export function apply(
     ? guardConfig.allowPaths.filter((p): p is string => typeof p === "string" && p.length > 0)
     : [];
   const workspaceRoots = [workingDir, ...extraRoots];
+  // Fail closed by default: a host that cannot report the session directory
+  // must not silently become a way to use the repository tools everywhere.
   const unavailablePolicy: UnavailablePolicy =
-    guardConfig?.onUnavailable === "deny" ? "deny" : "allow";
+    guardConfig?.onUnavailable === "allow" ? "allow" : "deny";
   ctx.effect(
     () =>
       installWorkspaceGuard(ctx, {

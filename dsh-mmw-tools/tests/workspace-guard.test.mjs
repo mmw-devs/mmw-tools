@@ -2,11 +2,13 @@
 // Tests for the workspace guard: the plugin's tools may only run in a session
 // whose working directory is inside the bound repository's checkout.
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import {
   installWorkspaceGuard,
+  isBootstrapCall,
   isInsidePath,
   shouldAllowWorkspace,
 } from "../lib/gate/workspace-guard.js";
@@ -33,6 +35,15 @@ function truthy(value, label) {
 const ROOT = path.join(os.tmpdir(), "mmw-workspace-guard", "ffxiv-race-ops");
 const OUTSIDE = path.join(os.tmpdir(), "novel", "塔伦-设定网");
 
+// Two isolated bootstrap roots: one empty (the first clone), one already a
+// checkout (a live repository that must not be cloned over).
+const BOOTSTRAP_ROOT = path.join(os.tmpdir(), `mmw-bootstrap-${process.pid}`, "ffxiv-race-ops");
+const BOOTSTRAP_READY = path.join(os.tmpdir(), `mmw-bootstrap-ready-${process.pid}`, "ffxiv-race-ops");
+fs.rmSync(path.dirname(BOOTSTRAP_ROOT), { recursive: true, force: true });
+fs.rmSync(path.dirname(BOOTSTRAP_READY), { recursive: true, force: true });
+fs.mkdirSync(BOOTSTRAP_ROOT, { recursive: true });
+fs.mkdirSync(path.join(BOOTSTRAP_READY, ".git"), { recursive: true });
+
 // ---------------------------------------------------------------- path rules
 console.log("isInsidePath");
 eq(isInsidePath(ROOT, ROOT), true, "the checkout itself is inside");
@@ -57,11 +68,44 @@ eq(shouldAllowWorkspace(ROOT, [ROOT]).ok, true, "session inside the root is allo
   const verdict = shouldAllowWorkspace(path.join(ROOT, "public"), [ROOT, path.join(os.tmpdir(), "other")]);
   eq(verdict.ok, true, "any of several roots is enough");
 }
-eq(shouldAllowWorkspace(undefined, [ROOT]).ok, true, "unknown directory is allowed by default");
+eq(shouldAllowWorkspace(undefined, [ROOT]).ok, false, "unknown directory is refused by default");
+eq(
+  shouldAllowWorkspace(undefined, [ROOT], "allow").ok,
+  true,
+  "unknown directory is allowed only when onUnavailable is allow"
+);
 eq(
   shouldAllowWorkspace(undefined, [ROOT], "deny").ok,
   false,
-  "unknown directory is refused when onUnavailable is deny"
+  "unknown directory is still refused when onUnavailable is deny"
+);
+
+// ------------------------------------------------------- bootstrap exception
+console.log("isBootstrapCall");
+eq(
+  isBootstrapCall("mcp__mmw-tools__repo_clone", OUTSIDE, [BOOTSTRAP_ROOT]),
+  true,
+  "repo_clone may bootstrap a root with no .git"
+);
+eq(
+  isBootstrapCall("mcp__mmw-tools__repo_clone", OUTSIDE, [BOOTSTRAP_READY]),
+  false,
+  "repo_clone cannot clone over a live checkout"
+);
+eq(
+  isBootstrapCall("mcp__mmw-tools__repo_read", OUTSIDE, [BOOTSTRAP_ROOT]),
+  false,
+  "only repo_clone gets the bootstrap exception"
+);
+eq(
+  isBootstrapCall("mcp__mmw-tools__repo_clone", undefined, [BOOTSTRAP_ROOT]),
+  false,
+  "bootstrap needs a known session directory"
+);
+eq(
+  isBootstrapCall("mcp__mmw-tools__repo_clone", path.join(BOOTSTRAP_ROOT, "sub"), [BOOTSTRAP_ROOT]),
+  false,
+  "bootstrap only applies outside the root"
 );
 
 // ------------------------------------------------------------------ the hook
@@ -146,14 +190,37 @@ console.log("installWorkspaceGuard");
 }
 {
   const { result } = await run({ roots: [ROOT] }, { name: "mcp__mmw-tools__repo_read" });
-  eq(result, "next", "an execution with no agent is allowed by default");
+  eq(result?.kind, "deny", "an execution with no agent is refused by default");
 }
 {
   const { result } = await run(
-    { roots: [ROOT], extra: { onUnavailable: "deny" } },
+    { roots: [ROOT], extra: { onUnavailable: "allow" } },
     { name: "mcp__mmw-tools__repo_read" }
   );
-  eq(result?.kind, "deny", "an execution with no agent is refused under onUnavailable=deny");
+  eq(result, "next", "an execution with no agent passes under explicit onUnavailable=allow");
+}
+{
+  const { result, called } = await run({ roots: [ROOT] }, { name: "mmw_tools_status" });
+  eq(result, "next", "status is callable without a known directory");
+  eq(called, true, "status reaches the host");
+}
+{
+  const session = { cwd: OUTSIDE };
+  const agent = { session, ctx: { get: (name) => (name === "workingDirectory" ? workingDirectoryService() : undefined) } };
+  const { result } = await run({ roots: [BOOTSTRAP_ROOT] }, { name: "mcp__mmw-tools__repo_clone", agent });
+  eq(result, "next", "repo_clone bootstraps the checkout from outside");
+}
+{
+  const session = { cwd: OUTSIDE };
+  const agent = { session, ctx: { get: (name) => (name === "workingDirectory" ? workingDirectoryService() : undefined) } };
+  const { result } = await run({ roots: [BOOTSTRAP_READY] }, { name: "mcp__mmw-tools__repo_clone", agent });
+  eq(result?.kind, "deny", "repo_clone is refused once the checkout exists");
+}
+{
+  const session = { cwd: OUTSIDE };
+  const agent = { session, ctx: { get: (name) => (name === "workingDirectory" ? workingDirectoryService() : undefined) } };
+  const { result } = await run({ roots: [BOOTSTRAP_ROOT] }, { name: "mcp__mmw-tools__repo_read", agent });
+  eq(result?.kind, "deny", "a read outside an uninitialized checkout is still refused");
 }
 {
   const warnings = [];
@@ -164,8 +231,8 @@ console.log("installWorkspaceGuard");
   const agent = { session, ctx: {} };
   const first = await ctx.listeners[0]({ name: "mcp__mmw-tools__repo_read", agent }, async () => "next");
   const second = await ctx.listeners[0]({ name: "mcp__mmw-tools__repo_read", agent }, async () => "next");
-  eq(first, "next", "a host without the service does not break calls");
-  eq(second, "next", "and keeps not breaking them");
+  eq(first?.kind, "deny", "a host without the service refuses by default");
+  eq(second?.kind, "deny", "and keeps refusing");
   eq(warnings.length, 1, "the missing service is reported exactly once");
 }
 {
@@ -190,6 +257,9 @@ console.log("installWorkspaceGuard");
   installWorkspaceGuard(ctx, { roots: [ROOT], logger: { warn: () => {} } });
   eq(ctx.listeners.length, 2, "two guards can be installed side by side");
 }
+
+fs.rmSync(path.dirname(BOOTSTRAP_ROOT), { recursive: true, force: true });
+fs.rmSync(path.dirname(BOOTSTRAP_READY), { recursive: true, force: true });
 
 assert.ok(pass > 0);
 console.log(`\n${pass} pass, ${fail} fail`);

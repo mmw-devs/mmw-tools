@@ -85,14 +85,18 @@
         # built-in default ~/.dsh/workspaces/<owner>/<name> — this file does
         # NOT carry a second copy of that path.
         #
-        #   onUnavailable: allow — the host gives no working directory (old
-        #     profile / an execution with no agent), so do not block; the Feishu
-        #     gate and the repository sandbox still apply.
-        #   onUnavailable: deny  — refuse instead. Use it when the plugin must
-        #     never run outside its own profile.
+        #   onUnavailable: deny  — default: the host gives no working directory
+        #     (old profile / an execution with no agent), so refuse the
+        #     business tools. `mmw_tools_status` stays callable.
+        #   onUnavailable: allow — explicit fail-open; only for a host whose
+        #     service support has been verified.
+        #
+        # `repo_clone` is the one business exception: outside the checkout it
+        # may run while the root has no `.git`, so the first session can create
+        # the checkout. A live checkout is never cloned over.
         workspaceGuard:
           enabled: true
-          onUnavailable: allow
+          onUnavailable: deny
 
         repoBinding:
           owner: mmw-devs

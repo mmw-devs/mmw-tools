@@ -735,6 +735,9 @@ export function apply(ctx, config) {
     // from a session that is not in the bound repository must be refused for that
     // reason, not with an auth round trip that reports "飞书授权不可用".
     //
+    // `mmw_tools_status` is exempt (diagnostics), and `repo_clone` may bootstrap
+    // the checkout while it has no `.git`. Everything else is fail-closed.
+    //
     // Roots come from `workingDir`, i.e. from the same derivation everything else
     // uses — there is deliberately no second copy of the checkout path here.
     const guardConfig = config?.workspaceGuard;
@@ -742,7 +745,9 @@ export function apply(ctx, config) {
         ? guardConfig.allowPaths.filter((p) => typeof p === "string" && p.length > 0)
         : [];
     const workspaceRoots = [workingDir, ...extraRoots];
-    const unavailablePolicy = guardConfig?.onUnavailable === "deny" ? "deny" : "allow";
+    // Fail closed by default: a host that cannot report the session directory
+    // must not silently become a way to use the repository tools everywhere.
+    const unavailablePolicy = guardConfig?.onUnavailable === "allow" ? "allow" : "deny";
     ctx.effect(() => installWorkspaceGuard(ctx, {
         roots: workspaceRoots,
         enabled: guardConfig?.enabled !== false,
