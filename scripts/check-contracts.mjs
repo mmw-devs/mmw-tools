@@ -238,7 +238,11 @@ function validate(toolsDoc, rolesDoc) {
       fail(`${rel(file)}: missing; run node scripts/check-contracts.mjs --update`);
       continue;
     }
-    if (readFileSync(file, "utf8") !== serialized) {
+    // Git may check these files out with CRLF on Windows (core.autocrlf),
+    // while the generator always writes LF. Compare line-ending-neutral
+    // text so a clean checkout does not look stale on the Windows runner.
+    const current = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+    if (current !== serialized) {
       fail(`${rel(file)}: stale; run node scripts/check-contracts.mjs --update`);
     }
   }

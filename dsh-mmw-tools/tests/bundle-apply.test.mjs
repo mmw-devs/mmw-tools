@@ -382,12 +382,16 @@ console.log("\n--- Test 8: MCP entry path ---");
   const entry = mcpServerEntryPath(pathToFileURL(BUNDLE_DIST).href);
   truthy(entry.includes("mcp-server"), "entry points into mcp-server");
   truthy(entry.endsWith("index.js"), "entry names index.js");
-  truthy(
-    !entry.startsWith("/"),
-    `entry has no leading slash (got ${JSON.stringify(entry.slice(0, 24))})`
-  );
   if (process.platform === "win32") {
+    // Windows spawn() needs a drive-letter path, not the "/C:/..." form
+    // produced by URL.pathname.
+    truthy(
+      !entry.startsWith("/"),
+      `entry has no leading slash (got ${JSON.stringify(entry.slice(0, 24))})`
+    );
     truthy(/^[A-Za-z]:[\\/]/.test(entry), "entry is a drive-letter path on Windows");
+  } else {
+    truthy(entry.startsWith("/"), "entry is an absolute POSIX path");
   }
 }
 
