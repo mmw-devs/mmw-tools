@@ -34,6 +34,7 @@ export class FeishuAuth {
     now;
     pending = null;
     routesCache = null;
+    refreshing = null;
     constructor(opts) {
         this.authServiceUrl = opts.authServiceUrl.replace(/\/+$/, "");
         this.file = opts.file ?? feishuTokenPath();
@@ -80,6 +81,19 @@ export class FeishuAuth {
             if (err.code !== "ENOENT")
                 throw err;
         }
+    }
+    /**
+     * Remove the local token only when it is still the one that failed.
+     *
+     * A refresh rotates the token on the server; another process (or the
+     * watchdog) may have written the replacement while this request was in
+     * flight. Deleting it would turn a transient 401 into a forced re-login.
+     */
+    async clearIfTokenCurrent(record) {
+        const latest = await this.readRecord();
+        if (latest && latest.pluginToken !== record.pluginToken)
+            return;
+        await this.clear();
     }
     async request(pathname, init = {}) {
         let response;
@@ -211,6 +225,69 @@ export class FeishuAuth {
         }
         await this.clear();
     }
+    /**
+     * Rotate the plugin token. The auth core revokes the old token in the same
+     * transaction, so this is only useful while the current one is still valid.
+     * A failed rotation keeps the local record unless the server says the
+     * session itself is gone.
+     */
+    async refresh() {
+        const record = await this.readRecord();
+        if (!record || record.expiresAt <= this.now()) {
+            throw new FeishuAuthError("auth-required", "请先使用飞书登录");
+        }
+        let body;
+        try {
+            body = await this.request("/v1/session/refresh", {
+                method: "POST",
+                headers: { authorization: `Bearer ${record.pluginToken}` },
+            });
+        }
+        catch (err) {
+            if (err instanceof FeishuAuthError &&
+                (err.code === "mmw_auth_required" || err.code === "mmw_session_expired")) {
+                await this.clearIfTokenCurrent(record);
+            }
+            throw err;
+        }
+        if (!body ||
+            typeof body !== "object" ||
+            typeof body.pluginToken !== "string" ||
+            body.pluginToken.length === 0 ||
+            typeof body.expiresAt !== "number" ||
+            body.expiresAt <= this.now()) {
+            throw new FeishuAuthError("invalid-response", "授权服务返回的续期结果不完整");
+        }
+        await this.saveRecord({
+            ...record,
+            pluginToken: body.pluginToken,
+            expiresAt: body.expiresAt,
+            savedAt: this.now(),
+        });
+        this.routesCache = null;
+        return this.view();
+    }
+    /**
+     * Refresh opportunistically when the token is inside `minRemainingMs`.
+     * Concurrent callers share one request, so a watchdog and a caller cannot
+     * rotate the same token twice.
+     */
+    async refreshIfNeeded(minRemainingMs = 24 * 60 * 60 * 1000) {
+        const record = await this.readRecord();
+        if (!record || record.expiresAt <= this.now())
+            return false;
+        if (record.expiresAt - this.now() > minRemainingMs)
+            return false;
+        if (this.refreshing)
+            return this.refreshing;
+        const task = this.refresh()
+            .then(() => true)
+            .finally(() => {
+            this.refreshing = null;
+        });
+        this.refreshing = task;
+        return task;
+    }
     async me() {
         const record = await this.readRecord();
         if (!record || record.expiresAt <= this.now()) {
@@ -259,7 +336,7 @@ export class FeishuAuth {
         }
         catch (err) {
             if (err instanceof FeishuAuthError && (err.code === "mmw_auth_required" || err.code === "mmw_session_expired")) {
-                await this.clear();
+                await this.clearIfTokenCurrent(record);
             }
             throw err;
         }

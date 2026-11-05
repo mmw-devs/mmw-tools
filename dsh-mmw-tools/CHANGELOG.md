@@ -60,6 +60,12 @@
 - `repo_clone` may bootstrap the checkout from outside the root **only while
   the root has no `.git`**. Once a live checkout exists, the normal workspace
   rule applies again, so an unrelated workspace cannot clone over it.
+- **Feishu token auto-refresh.** A watchdog checks every six hours and, when
+  the plugin token is inside its last day, calls
+  `POST /v1/session/refresh` to rotate it. The old token is revoked by the
+  auth core, so the local record is replaced and the route cache is
+  dropped. A rotation that lands while an older `routes()` request is in
+  flight is detected by token identity and does not delete the replacement.
 - `tests/workspace-guard.test.mjs` — 44 assertions: path containment,
   the pure decision (including the fail-closed default), the bootstrap
   exception and its `.git` boundary, the status exemption, the listener

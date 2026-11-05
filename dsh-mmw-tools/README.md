@@ -226,6 +226,11 @@ At call time the plugin:
 4. otherwise returns `mmw_route_denied`;
 5. for `pr_merge`, only after the policy check, asks the operator.
 
+The plugin token is rotated automatically once it is inside its last day: a
+six-hour watchdog calls `POST /v1/session/refresh`, the auth core revokes the
+old token, and the local record is replaced with the rotated token. A
+rotation never deletes a replacement token written by a concurrent request.
+
 With `feishu.enabled: true`, a missing/expired token denies business tools.
 `mmw_tools_status` remains callable so the agent can report why.
 

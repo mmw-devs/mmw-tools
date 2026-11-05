@@ -880,6 +880,35 @@ export function apply(ctx, config) {
         handle.unref();
         return () => clearInterval(handle);
     }, "mmw-tools: refresh watchdog");
+    // 5b. Feishu token watchdog. The auth core rotates the plugin token on
+    //     refresh, so this is checked every six hours, and only inside the last
+    //     day of a seven-day token. A missing/expired token is a normal state
+    //     (the panel should show it), not a crash.
+    ctx.effect(() => {
+        if (!feishuEnabled)
+            return () => { };
+        let lastWarningAt = 0;
+        const check = async () => {
+            try {
+                if (await feishu.refreshIfNeeded()) {
+                    logger.info("mmw-tools: 飞书授权 token 已自动续期");
+                }
+            }
+            catch (err) {
+                const now = Date.now();
+                if (now - lastWarningAt < 6 * 60 * 60 * 1000)
+                    return;
+                lastWarningAt = now;
+                logger.warn(`mmw-tools: 飞书 token 续期失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+        };
+        void check();
+        const handle = setInterval(() => {
+            void check();
+        }, 6 * 60 * 60 * 1000);
+        handle.unref();
+        return () => clearInterval(handle);
+    }, "mmw-tools: feishu token refresh");
     // 6. Spawn the MCP server and re-publish its tools.
     ctx.effect(() => {
         if (!existsSync(pathToConnect)) {

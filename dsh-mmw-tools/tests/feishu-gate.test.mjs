@@ -80,6 +80,12 @@ const fetchImpl = async (url, init = {}) => {
       denied: [],
     });
   }
+  if (target.endsWith("/v1/session/refresh")) {
+    return json({
+      pluginToken: "plugin-token-2",
+      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    });
+  }
   if (target.endsWith("/v1/session/logout")) return json({ ok: true });
   throw new Error(`unexpected fetch ${target}`);
 };
@@ -112,6 +118,14 @@ try {
   await auth.routes();
   eq(calls.length, callsBeforeCache, "routes cache avoids a second fetch");
 
+  const refreshed = await auth.refreshIfNeeded();
+  eq(refreshed, true, "token inside the refresh window is refreshed");
+  truthy(readFileSync(tokenFile, "utf8").includes("plugin-token-2"), "refresh rotates the token file");
+  eq((await auth.view()).signedIn, true, "refreshed token stays signed in");
+  const callsBeforeNoop = calls.length;
+  eq(await auth.refreshIfNeeded(), false, "fresh token does not refresh again");
+  eq(calls.length, callsBeforeNoop, "no request when refresh is unnecessary");
+
   const gate = new PolicyGate({ auth, enabled: true });
   eq((await gate.check("mmw_tools_status")).ok, true, "always-on status is allowed");
   eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "race-ops operation allowed for operator");
@@ -120,6 +134,7 @@ try {
 
   await auth.logout();
   eq((await auth.view()).signedIn, false, "logout clears the token");
+  eq(await auth.refreshIfNeeded(), false, "signed-out refresh is a no-op");
 
   // Contract drift: every publicName in tools.json must have exactly one map entry.
   const toolsDoc = JSON.parse(readFileSync(path.join(ROOT, "contracts", "tools.json"), "utf8"));
