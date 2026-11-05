@@ -86,7 +86,9 @@ instead.
 
 ## What v2 does not include yet
 
-- The plugin's Feishu gate (static registration already exists; the gate is the
-  next increment).
-- Real Feishu plugin login verification.
-- Operation-level role splits for `viewer` / `editor`.
+- End-to-end verification from a reloaded desktop profile (the host still runs
+  the previous module until it is restarted).
+- Operation-level role splits for `viewer` / `editor`; the contract supports
+  them, but the role composition is waiting on a business decision.
+- A contract-drift check between the deployed `catalogRevision` and the plugin's
+  local tool map.
