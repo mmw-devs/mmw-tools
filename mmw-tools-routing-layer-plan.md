@@ -6,7 +6,7 @@
 > 关键模型：**角色只决定能否消费工具；`requiredPermissions` 是工具自身需要的能力，不是用户授权；没有 role → permission 映射。**
 > 路由消费者：DSH agent
 > 路由表所有者：飞书鉴权核心
-> 进展：契约 v2（[`contracts/tools.json`](contracts/tools.json)、[`contracts/roles.json`](contracts/roles.json)）与 auth core 已部署；公网 `/health` 返回 `contractVersion: 2`。插件已实现 Feishu gate / Settings 授权面板 / token 续期 / `pr_merge` 确认顺序，飞书登录已验证；剩余端到端验证需要重启桌面宿主加载新模块。
+> 进展：契约 v2（[`contracts/tools.json`](contracts/tools.json)、[`contracts/roles.json`](contracts/roles.json)）与 auth core 已部署；公网 `/health` 返回 `contractVersion: 2`。插件已实现 Feishu gate / Settings 授权面板 / token 续期 / `pr_merge` 确认顺序。桌面宿主重启后已验证：`mmw_tools_status` 在绑定工作区外可用；`repo_status` 在区外被 workspace guard 拒绝、在绑定工作区内正常；`mmw_tools_run` 能读取 AGENTS.md/README.md。GitHub broker 会话当前为 `reauth_needed`，写操作仍需用户在面板重新登录。
 >
 > ⚠️ 本文第 3/4 节中 `race-ops.read` / `race-ops.edit` / `race-ops.pr` 的描述属于早期权限模型；当前以 [`contracts/README.md`](contracts/README.md) 和 `tools.json` 为准。
 

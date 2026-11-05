@@ -1,6 +1,6 @@
 # mmw-tools 路由层状态机（v2：静态注册 + 调用时授权）
 
-> 状态：已实现，取代 v1「动态挂载」版本
+> 状态：已实现并在桌面宿主重启后完成读路径端到端验证，取代 v1「动态挂载」版本
 > 日期：2026-10-26（2026-11-04 tool-centric 更新）
 > 配套文档：[`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md)
 > 范围：DSH 插件侧的授权执行状态机；飞书鉴权核心只作为输入事件出现。
