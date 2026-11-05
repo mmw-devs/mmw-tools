@@ -81,6 +81,7 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `dsh-mmw-tools-design.md` | Architecture and business-logic design (v2, aligned to the `ffxiv-race-ops` `AGENTS.md`). |
 | `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). |
 | `scripts/check-contracts.mjs` | Validates the catalog and regenerates the golden route tables. |
+| `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
 | `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |
 | `dsh-plugin-api-cheatsheet.md` | DSH 0.1.5 plugin API reference, distilled from `zhengjy01/dsh-feishu-mcp` and checked against DSH source. |
@@ -107,14 +108,32 @@ The golden route tables live in `contracts/examples/`. See
 [`contracts/README.md`](contracts/README.md) for the v2 model and the
 [`ERRORS.md`](contracts/ERRORS.md) for stable error codes.
 
+## Branch cleanup
+
+`scripts/prune-merged-branches.mjs` deletes a remote branch only when all of these
+are true: its PR is merged, it has no commits outside the base branch, no open PR
+uses it as head or base, it is unprotected, no workflow/config references it, and
+the merge is older than the retention window (7 days by default). The script is a
+dry run unless `--apply` is passed, and unknown/unreadable signals keep the branch.
+
+```sh
+GITHUB_TOKEN="$(gh auth token)" node scripts/prune-merged-branches.mjs
+GITHUB_TOKEN="$(gh auth token)" node scripts/prune-merged-branches.mjs --apply
+node --test scripts/prune-merged-branches.test.mjs
+```
+
+`.github/workflows/branch-cleanup.yml` runs weekly with `--apply`; manual runs
+default to a dry run. Add long-lived exceptions with `--keep <pattern>`.
+
 ## Verify
 
 ```sh
 node scripts/check-contracts.mjs
-node mmw-tools-auth/tests/run.mjs   # 13 auth-core assertions
+node mmw-tools-auth/tests/run.mjs   # 14 auth-core assertions
+node --test scripts/prune-merged-branches.test.mjs
 cd dsh-mmw-tools
-pnpm check                    # typecheck + namespace + 177 assertions
-cd mcp-server && pnpm test    # 44 guard + 11 schema assertions
+pnpm check                    # typecheck, namespace, and the full test suite
+cd mcp-server && pnpm test    # MCP guard and schema suites
 ```
 
 ## License
