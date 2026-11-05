@@ -351,23 +351,32 @@ Three layers, split by what they need in order to run rather than by what they
 cover. Full rationale in [`docs/TESTING.md`](docs/TESTING.md).
 
 ```sh
-pnpm check                 # typecheck + namespace + 177 assertions + pack contents
-cd mcp-server && pnpm test # 44 guard + 11 schema assertions
+pnpm check                 # typecheck + namespace + in-process suites + pack contents
+cd mcp-server && pnpm test # guard, schema and PR-preview assertions
 pnpm test:smoke            # MCP server handshake over real stdio
-pnpm test:integration      # the eight tool bodies against a real git repo
+pnpm test:integration      # the MCP tool bodies against a real git repo
 ```
 
-| Suite | Asserts | Needs |
+| Suite | Covers | Needs |
 |---|---|---|
-| `tests/token-store.test.mjs` | 25 · persistence, masking, clear | — |
-| `tests/client-bundle.test.mjs` | 16 · `__ModuleLoader__` shape of `lib/client.js` | — |
-| `tests/bundle-apply.test.mjs` | 36 · `apply()` registers 6 tools, 5 routes, 1 section; idempotence | — |
-| `tests/routes-integration.test.mjs` | 26 · real HTTP against the five loopback routes | — |
-| `tests/mmw-tools-run.test.mjs` | 37 · input validation, branch slug, excerpts, redaction, truncation | — |
-| `tests/audit.test.mjs` | 29 · deep redaction, rotation, failure handling | — |
-| `mcp-server/tests/guard.test.mjs` | 44 · every cross-cutting guard | — |
-| `mcp-server/tests/tools-list-schema.test.mjs` | 11 · all eight tools registered | — |
-| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises 8 tools | `spawn` |
+| `tests/skills.test.mjs` | skill catalog and the `race-ops-ops` instructions | — |
+| `tests/client-bundle.test.mjs` | `__ModuleLoader__` shape of `lib/client.js` | — |
+| `tests/bundle-apply.test.mjs` | `apply()` registration, routes, prompts, disposers, idempotence | — |
+| `tests/feishu-gate.test.mjs` | authorization table, gate decisions, token refresh | — |
+| `tests/workspace-guard.test.mjs` | checkout fence, status exemption, `repo_clone` bootstrap | — |
+| `tests/routes-integration.test.mjs` | real HTTP against the loopback routes | — |
+| `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation | — |
+| `tests/audit.test.mjs` | deep redaction, rotation, failure handling | — |
+| `tests/github-app.test.mjs` | installation-token flow and repository access | — |
+| `tests/session-store.test.mjs` | credential persistence, masking, clearing | — |
+| `tests/broker-client.test.mjs` | broker HTTP client behavior | — |
+| `tests/broker-auth.test.mjs` | broker auth handshake | — |
+| `broker/tests/core.test.mjs` | broker core state and policy | — |
+| `broker/tests/server.test.mjs` | broker HTTP surface | — |
+| `mcp-server/tests/guard.test.mjs` | every cross-cutting guard | — |
+| `mcp-server/tests/tools-list-schema.test.mjs` | all MCP tools registered with usable schemas | — |
+| `mcp-server/tests/pr-preview.test.mjs` | PR preview URL and check extraction | — |
+| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises its tools | `spawn` |
 | `tests/integration-git.test.mjs` | tool bodies against git, incl. `repo_edit` rollback | `git`, `spawn` |
 
 The last two need `child_process.spawn` with piped stdio. Where a sandbox denies
