@@ -211,18 +211,20 @@ sections through the DSH web `__ModuleLoader__` factory contract.
 ## Feishu authorization
 
 The tool catalog is tool-centric: each tool declares `roles` and
-`requiredPermissions`; there is no role → permission table. `race-ops` is one
-atomic tool, so a role that can consume it can call its operations; `pr_merge`
-keeps the host confirmation as the final protection. `mmw-tools-status` is
-`always: true`.
+`requiredPermissions`; there is no role → permission table. Operations may
+override the tool's roles, and `race-ops` uses that to expose a ladder: `viewer`
+reads, `editor` writes and opens PRs, `operator` / `admin` can also merge.
+`pr_merge` keeps the host confirmation as the final protection.
+`mmw-tools-status` is `always: true`.
 
 At call time the plugin:
 
-1. maps `mcp__mmw-tools__*` / `mmw_tools_*` to the parent tool;
-2. fetches `GET /v1/agent/routes` (60 s cache, plugin token from
-   `~/.dsh/dsh-mmw-tools-feishu.json`);
-3. allows the call if `allowedOperations` contains the operation id, or
-   `allowed` contains the parent tool;
+1. maps `mcp__mmw-tools__*` / `mmw_tools_*` to the parent tool and operation;
+2. fetches `GET /v1/agent/routes` with the plugin token from
+   `~/.dsh/dsh-mmw-tools-feishu.json` (60 s cache; write operations cap the table
+   at 15 s so a revoked writer loses access quickly);
+3. allows the call only if `allowedOperations` contains the operation id; the
+   tool-level `allowed` list is a v1 compatibility fallback;
 4. otherwise returns `mmw_route_denied`;
 5. for `pr_merge`, only after the policy check, asks the operator.
 

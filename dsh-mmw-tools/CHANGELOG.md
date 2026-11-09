@@ -38,6 +38,21 @@
 
 ### Added
 
+- **Operation-level role ladder.** `contracts/tools.json` now sets `roles` on
+  every `race-ops` operation: `viewer` gets the read-only set, `editor` adds
+  worktree/pull/edit/PR creation, and `operator` / `admin` keep `pr_merge` and
+  `mmw_tools_run`. The gate already checked `allowedOperations`; this release
+  makes that table finer-grained without a tool-level grant widening it.
+- **A stale `policyRevision` cannot re-grant access.** `FeishuAuth.routes()`
+  ignores a table whose revision is lower than the cached one and restarts the
+  freshness window instead of adopting it. The check is in-process only; a
+  restart begins from the server's table.
+- **One run id per governed call.** The gate creates `run_<uuid>`, carries it
+  through the policy check and `next()`, writes it to the `gate_decision` audit
+  event, and passes it to the MCP child as `_meta.mmwRunId`; tool errors and
+  stderr lines are suffixed with ` [runId]`.
+- `tests/feishu-gate.test.mjs` — fail-closed, 15s write freshness, revocation,
+  and revision-rollback assertions; the file now has 98 assertions.
 - `src/gate/tool-map.ts` — `TOOL_NAMESPACE`, `TOOL_OWN_PREFIX` and
   `isMmwTool()`, so the plugin can tell its own tools from the host's.
 - `tests/feishu-gate.test.mjs` — 31 further assertions: every standard tool

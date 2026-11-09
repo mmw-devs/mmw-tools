@@ -2,9 +2,10 @@
 
 > Status: **target design**（v2，2026-11-10 标注）
 > 本文描述期望的不变量与状态迁移，**不是当前实现的完整描述**。当前实现只覆盖其中
-> 一部分：静态注册、调用前 gate、路由表内存缓存与过期重拉、refresh 单飞。
-> 尚未实现：`STALE` 宽限期、退避、policyRevision 单调丢弃、按需启动 Transport、
-> 顶层状态投影、端到端 requestId。核对现状请看
+> 一部分：静态注册、调用前 gate、路由表内存缓存与过期重拉、refresh 单飞、
+> policyRevision 单调丢弃（仅进程内，不跨重启）。
+> 尚未实现：`STALE` 宽限期、退避、按需启动 Transport、顶层状态投影、
+> 端到端 requestId（broker/auth core 尚未接收）。核对现状请看
 > [`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md) 第 6 节与代码。
 > 日期：2026-10-26（2026-11-04 tool-centric 更新；2026-11-10 标注为 target design）
 > 配套文档：[`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md)

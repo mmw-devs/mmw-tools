@@ -4,17 +4,17 @@
     {
       "id": "viewer",
       "title": "只读",
-      "description": "保留角色；当前 race-ops 是原子工具，viewer 暂不消费它。"
+      "description": "只读：查看状态、读取/搜索工作副本、列出与预览 PR。"
     },
     {
       "id": "editor",
       "title": "编辑",
-      "description": "保留角色；当前 race-ops 是原子工具，editor 暂不消费它。"
+      "description": "编辑：在只读基础上拉取/编辑工作副本并创建 PR；不能合并。"
     },
     {
       "id": "operator",
       "title": "运营",
-      "description": "可以消费 race-ops 的完整运营流程。"
+      "description": "运营：可消费 race-ops 全部操作，包括合并 PR。"
     },
     {
       "id": "admin",

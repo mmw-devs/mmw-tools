@@ -16,7 +16,7 @@ node scripts/check-contracts.mjs --update
 ## Snapshot
 
 - Contract version: 2
-- Catalog revision: `sha256:91d56de8cef22f58f878a8ae474ddab5d39989cde4011290f7f44b12e4ca8cb2`
+- Catalog revision: `sha256:ab3956985032576e567e571ed124d6468d559cb1d6e78418a1f32e7787f1a60e`
 - Tools: 2
 - Operations: 12
 - Roles: 4
@@ -25,9 +25,9 @@ node scripts/check-contracts.mjs --update
 
 | Role | Title | Admin | Description |
 |---|---|---|---|
-| `viewer` | 只读 |  | 保留角色；当前 race-ops 是原子工具，viewer 暂不消费它。 |
-| `editor` | 编辑 |  | 保留角色；当前 race-ops 是原子工具，editor 暂不消费它。 |
-| `operator` | 运营 |  | 可以消费 race-ops 的完整运营流程。 |
+| `viewer` | 只读 |  | 只读：查看状态、读取/搜索工作副本、列出与预览 PR。 |
+| `editor` | 编辑 |  | 编辑：在只读基础上拉取/编辑工作副本并创建 PR；不能合并。 |
+| `operator` | 运营 |  | 运营：可消费 race-ops 全部操作，包括合并 PR。 |
 | `admin` | 管理员 | yes | 可以消费全部工具，并管理成员角色。 |
 
 ## Tools
@@ -45,15 +45,15 @@ function the running auth core uses.
 
 | Tool | Operation | Public name | Risk | `viewer` | `editor` | `operator` | `admin` |
 |---|---|---|---|---|---|---|---|
-| `race-ops` | `repo_status` | `mcp__mmw-tools__repo_status` | read |  |  | ✓ | ✓ |
-| `race-ops` | `repo_clone` | `mcp__mmw-tools__repo_clone` | read |  |  | ✓ | ✓ |
-| `race-ops` | `repo_pull` | `mcp__mmw-tools__repo_pull` | read |  |  | ✓ | ✓ |
-| `race-ops` | `repo_read` | `mcp__mmw-tools__repo_read` | read |  |  | ✓ | ✓ |
-| `race-ops` | `repo_search` | `mcp__mmw-tools__repo_search` | read |  |  | ✓ | ✓ |
-| `race-ops` | `repo_edit` | `mcp__mmw-tools__repo_edit` | write |  |  | ✓ | ✓ |
-| `race-ops` | `pr_create` | `mcp__mmw-tools__pr_create` | write |  |  | ✓ | ✓ |
-| `race-ops` | `pr_list` | `mcp__mmw-tools__pr_list` | read |  |  | ✓ | ✓ |
-| `race-ops` | `pr_preview` | `mcp__mmw-tools__pr_preview` | read |  |  | ✓ | ✓ |
+| `race-ops` | `repo_status` | `mcp__mmw-tools__repo_status` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `repo_clone` | `mcp__mmw-tools__repo_clone` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `repo_pull` | `mcp__mmw-tools__repo_pull` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `repo_read` | `mcp__mmw-tools__repo_read` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `repo_search` | `mcp__mmw-tools__repo_search` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `repo_edit` | `mcp__mmw-tools__repo_edit` | write |  | ✓ | ✓ | ✓ |
+| `race-ops` | `pr_create` | `mcp__mmw-tools__pr_create` | write |  | ✓ | ✓ | ✓ |
+| `race-ops` | `pr_list` | `mcp__mmw-tools__pr_list` | read | ✓ | ✓ | ✓ | ✓ |
+| `race-ops` | `pr_preview` | `mcp__mmw-tools__pr_preview` | read | ✓ | ✓ | ✓ | ✓ |
 | `race-ops` | `pr_merge` | `mcp__mmw-tools__pr_merge` | write |  |  | ✓ | ✓ |
 | `race-ops` | `mmw_tools_run` | `mmw_tools_run` | read |  |  | ✓ | ✓ |
 | `mmw-tools-status` | `status` | `mmw_tools_status` | read | ✓ | ✓ | ✓ | ✓ |

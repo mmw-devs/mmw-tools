@@ -31,27 +31,35 @@ The authoritative tool list, role list, and role-to-operation matrix are generat
 in [`REFERENCE.md`](REFERENCE.md). This section only records the decisions behind
 the current shape:
 
-- `race-ops` is one atomic tool consumed by `operator` and `admin`. Its
-  `requiredPermissions` are the tool's technical needs, not user grants.
+- `race-ops` is one tool. Its `tool.roles` is the conservative default
+  (`operator`, `admin`) used by any operation that does not declare roles.
 - `mmw-tools-status` is available to every authenticated member.
-- `viewer` and `editor` are reserved roles with no tools yet. Because `race-ops`
-  is atomic in v2, granting them access would also grant edit/merge. Product
-  confirmed on 2026-11-05 to keep them without race-ops access for now.
-- `pr_merge` is an operation of `race-ops`. Under the current tool-level model,
-  any role that can consume `race-ops` can reach it; the final protection is host
-  confirmation + GitHub branch protection, not a separate Feishu permission.
+- The operation-level ladder is data, not code: `viewer` gets the read-only
+  operations, `editor` adds worktree/pull/edit/PR creation, and `operator` /
+  `admin` get everything, including `pr_merge` and `mmw_tools_run`. The exact
+  matrix is generated in [`REFERENCE.md`](REFERENCE.md).
+- `pr_merge` still has host confirmation and GitHub branch protection behind it.
+  The Feishu role is the first of several gates, not the last one.
+
+This is a guard against mistakes and accidental scope creep, not a boundary
+against a malicious local user. The security boundary is the broker-issued
+credential, the GitHub App permissions, branch protection, and CI validation.
 
 ## Operation-level roles
 
 `tools.json` operations accept an optional `roles` array. When present, it
 overrides the tool's roles for that operation. The gate and auth core both
-resolve `operation.roles ?? tool.roles`, so introducing a narrower operation is
-a data change, not a gate rewrite. The route table includes both `allowed` tool
-IDs and `allowedOperations` full IDs for that reason.
+resolve `operation.roles ?? tool.roles`, so changing the ladder is a data change,
+not a gate rewrite. The route table includes both `allowed` tool IDs and
+`allowedOperations` full IDs for that reason.
 
-The field is supported but **currently unpopulated**. Whether to split
-`viewer`/`editor` onto read-only operations is an open product decision; see
-[`docs/DOCUMENTATION.md`](../docs/DOCUMENTATION.md) and the routing design.
+Every `race-ops` operation declares roles explicitly. The tool-level default
+stays narrow (`operator`, `admin`) so a newly added operation is restricted
+until someone deliberately widens it.
+
+To change the ladder: edit `tools.json`, run
+`node scripts/check-contracts.mjs --update`, review the generated route tables
+and `REFERENCE.md`, then run the auth and plugin tests.
 
 ## Route table semantics
 
@@ -82,7 +90,5 @@ instead.
 
 - End-to-end verification from a reloaded desktop profile (the host still runs
   the previous module until it is restarted).
-- Operation-level role splits for `viewer` / `editor`; the contract supports
-  them, but the role composition is waiting on a business decision.
 - A contract-drift check between the deployed `catalogRevision` and the plugin's
   local tool map.

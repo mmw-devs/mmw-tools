@@ -132,13 +132,13 @@ PR 不算安全修复。
 
 按影响排序：
 
-1. **operation 级角色未填**：契约、policy、gate、契约校验都已支持，但数据仍是
-   工具级。形成 viewer/editor/operator/admin 阶梯需要产品确认 viewer/editor 是否
-   真的消费 race-ops；2026-11-05 的决定是暂不消费。
-2. **路由表刷新过于简单**：只有内存缓存 + 过期重拉；没有 grace、退避、revision
-   单调、single-flight。读失败也会立即拒绝。
-3. **没有端到端 requestId/runId**：gate、broker、tool、audit 各自记录，无法把一次
-   调用串起来。2GB 机器上优先 SQLite/JSONL，不引入 Jaeger/Elasticsearch。
+1. **角色阶梯尚未做真实账号冒烟**：契约、policy、gate、契约校验都已支持并在
+   `tools.json` 落地 viewer/editor/operator/admin 阶梯；还缺一次用真实飞书账号
+   走完“viewer 只读、editor 不能 merge、operator 可 merge”的手工验证。
+2. **路由表刷新仍然简单**：有内存缓存、过期重拉、写操作 15s 上限、进程内
+   policyRevision 单调；没有 STALE 宽限期、退避、single-flight。读失败也立即拒绝。
+3. **runId 只贯穿插件侧**：gate、MCP、audit 已串起来；broker 与 auth core 尚未接收，
+   所以跨服务仍无法 join。2GB 机器上优先 SQLite/JSONL，不引入 Jaeger/Elasticsearch。
 4. **MCP server 在插件启动时就拉起**：与目标状态机的“未授权不启动 Transport”
    不一致；当前靠 gate 在调用时拒绝。
 5. **无 rate limiting**：单仓库、单用户场景暂时可接受，多用户前必须补。
