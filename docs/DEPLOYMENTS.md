@@ -21,6 +21,8 @@ procedure, read [`mmw-tools-auth/deploy/README.md`](../mmw-tools-auth/deploy/REA
 - Verified: public `/health` over HTTPS, unauthenticated `/v1/agent/routes` and
   `/api/me` both 401, restore of the snapshot into a scratch directory, and the
   previous code snapshot booting on a spare port with the old revision.
+- Permissions after deploy: `/opt/mmw-tools-auth` 755, `data/` 700, `.env` 600;
+  the previous tree had been world-writable.
 - Rollback: stop the service, restore the code tar, restore the SQLite snapshot
   with `restore.mjs`, start and check the journal. The tar and snapshots above
   are the concrete inputs.
