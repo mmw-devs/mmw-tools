@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "path": "README.md",
+      "status": "living",
+      "defines": "Repository entry point: deliverables, layout, and verification commands.",
+      "sources": [
+        ".github/workflows/ci.yml",
+        "scripts/check-contracts.mjs",
+        "scripts/check-docs.mjs",
+        "scripts/doc-impact.mjs",
+        "mmw-tools-auth/deploy/backup.mjs",
+        "mmw-tools-auth/deploy/restore.mjs",
+        "mmw-tools-auth/deploy/healthcheck.sh",
+        "mmw-tools-auth/deploy/install-ops.sh",
+        "mmw-tools-auth/deploy/server-install.sh",
+        "mmw-tools-auth/deploy/nginx-mmw-tools.conf",
+        "mmw-tools-auth/deploy/systemd/**"
+      ]
+    },
+    {
+      "path": "AGENTS.md",
+      "status": "living",
+      "defines": "Agent operating rules and the generated document-impact map.",
+      "sources": [
+        "docs/doc-map.json",
+        "scripts/doc-impact.mjs",
+        "scripts/check-docs.mjs",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "path": "contracts/REFERENCE.md",
+      "status": "generated",
+      "defines": "Generated snapshot of the role catalog, tool catalog, and role-to-operation matrix.",
+      "generatedBy": "node scripts/check-contracts.mjs --update",
+      "sources": [
+        "contracts/tools.json",
+        "contracts/roles.json",
+        "mmw-tools-auth/src/policy.mjs"
+      ]
+    },
+    {
+      "path": "contracts/README.md",
+      "status": "living",
+      "defines": "The v2 contract model: tool roles, operation overrides, permissions, and generated artifacts.",
+      "sources": [
+        "contracts/tools.json",
+        "contracts/roles.json",
+        "contracts/tools.schema.json",
+        "mmw-tools-auth/src/policy.mjs",
+        "scripts/check-contracts.mjs"
+      ]
+    },
+    {
+      "path": "docs/DOCUMENTATION.md",
+      "status": "living",
+      "defines": "Documentation authority, status labels, generation rules, and impact checks.",
+      "sources": [
+        "docs/doc-map.json",
+        "scripts/check-docs.mjs",
+        "scripts/doc-impact.mjs",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "path": "docs/OBSERVABILITY.md",
+      "status": "living",
+      "defines": "Run-id propagation, audit events, and the trace-storage decision.",
+      "sources": [
+        "dsh-mmw-tools/src/util/run-context.ts",
+        "dsh-mmw-tools/src/util/audit.ts",
+        "dsh-mmw-tools/src/gate/gate.ts",
+        "dsh-mmw-tools/src/index.ts",
+        "dsh-mmw-tools/mcp-server/src/index.ts"
+      ]
+    },
+    {
+      "path": "docs/DEPLOYMENTS.md",
+      "status": "historical",
+      "defines": "Append-only record of verified deployments.",
+      "sources": []
+    },
+    {
+      "path": "mmw-tools-routing-layer-plan.md",
+      "status": "living",
+      "defines": "Why the authorization layer is shaped this way: decisions, boundaries, and known gaps.",
+      "sources": [
+        "mmw-tools-auth/src/policy.mjs",
+        "dsh-mmw-tools/src/gate/gate.ts",
+        "dsh-mmw-tools/src/auth/feishu-auth.ts",
+        "dsh-mmw-tools/src/index.ts"
+      ]
+    },
+    {
+      "path": "mmw-tools-routing-state-machine.md",
+      "status": "target design",
+      "defines": "Target state machines for auth, policy, and transport; not shipped behaviour.",
+      "sources": [
+        "dsh-mmw-tools/src/gate/gate.ts",
+        "dsh-mmw-tools/src/auth/feishu-auth.ts",
+        "dsh-mmw-tools/src/index.ts",
+        "dsh-mmw-tools/src/util/run-context.ts"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/docs/NEXT-STEPS.md",
+      "status": "historical",
+      "defines": "Frozen v0.6.0 list of deliberately absent capabilities.",
+      "sources": []
+    },
+    {
+      "path": "mmw-tools-auth/README.md",
+      "status": "living",
+      "defines": "Auth-core setup, endpoints, security properties, and limitations.",
+      "sources": [
+        "mmw-tools-auth/src/server.mjs",
+        "mmw-tools-auth/src/main.mjs",
+        "mmw-tools-auth/src/auth.mjs",
+        "mmw-tools-auth/src/feishu.mjs",
+        "mmw-tools-auth/src/store.mjs"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/README.md",
+      "status": "living",
+      "defines": "Plugin install, configuration, tool behavior, security model, and tests.",
+      "sources": [
+        "dsh-mmw-tools/src/**",
+        "dsh-mmw-tools/package.json",
+        "dsh-mmw-tools/cordis.patch.yml"
+      ]
+    },
+    {
+      "path": "mmw-tools-auth/deploy/README.md",
+      "status": "living",
+      "defines": "Production deployment, resource budget, backup/restore, and rollback.",
+      "sources": [
+        "mmw-tools-auth/deploy/backup.mjs",
+        "mmw-tools-auth/deploy/restore.mjs",
+        "mmw-tools-auth/deploy/healthcheck.sh",
+        "mmw-tools-auth/deploy/install-ops.sh",
+        "mmw-tools-auth/deploy/server-install.sh",
+        "mmw-tools-auth/deploy/nginx-mmw-tools.conf",
+        "mmw-tools-auth/deploy/systemd/**"
+      ]
+    }
+  ]
+}

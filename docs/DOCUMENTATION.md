@@ -18,6 +18,8 @@ When two documents disagree, the higher entry wins:
 | Plugin tool map and gate | [`dsh-mmw-tools/src/gate/`](../dsh-mmw-tools/src/gate/) |
 | Plugin version and scripts | [`dsh-mmw-tools/package.json`](../dsh-mmw-tools/package.json) |
 | Deployment layout and host operations | [`mmw-tools-auth/deploy/`](../mmw-tools-auth/deploy/) |
+| Documentation ownership and impact triggers | [`docs/doc-map.json`](doc-map.json) |
+| Documentation checks | [`scripts/check-docs.mjs`](../scripts/check-docs.mjs), [`scripts/doc-impact.mjs`](../scripts/doc-impact.mjs) |
 | CI gates | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 
 If a narrative document needs one of these facts, it should link to the source
@@ -48,6 +50,9 @@ The absence of a label on a long-lived document is a documentation bug.
 CI runs the check, so a contract change that forgets the generated files turns
 the build red.
 
+`node scripts/doc-impact.mjs --write-agents` generates the document table in
+`AGENTS.md` from `docs/doc-map.json`. Do not edit that table by hand.
+
 Do not add a second generator for the same fact. Extend the existing one.
 
 ## What not to write by hand
@@ -74,11 +79,34 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
    [`README.md`](../README.md#verify).
 5. Do not hand-edit generated files.
 
+## Document impact
+
+`docs/doc-map.json` is the machine-readable answer to “what does this document
+define, and which source changes make it stale?” Each entry has a `defines`
+sentence and a list of source globs. The check is deliberately narrow: it
+proves that the document was touched, not that the update is good. Review still
+has to judge the prose.
+
+```sh
+node scripts/doc-impact.mjs --base origin/main --worktree  # before committing
+node scripts/doc-impact.mjs --list                          # inspect the map
+node scripts/doc-impact.mjs --write-agents                  # after editing the map
+```
+
+CI runs the check against the pull request base commit. If a changed source
+matches a document's globs and the document itself is not in the diff, the job
+fails with the document and the triggering file. A `historical` snapshot may
+list no sources; that opts it out of the automatic trigger, not out of review.
+
+When a document no longer owns a fact, change the map. Do not weaken the
+document until the check passes.
+
 ## Map
 
 | Document | Status | Purpose |
 |---|---|---|
 | [`README.md`](../README.md) | living | Entry point, verification commands, repository layout. |
+| [`AGENTS.md`](../AGENTS.md) | living | Agent procedure and the generated document-impact map. |
 | [`contracts/REFERENCE.md`](../contracts/REFERENCE.md) | generated | Current roles, tools, and role-to-operation matrix. |
 | [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) | living | Run ids, audit events, and the trace-storage decision. |
 | [`mmw-tools-routing-layer-plan.md`](../mmw-tools-routing-layer-plan.md) | living design | Why the authorization layer is shaped this way; boundaries and gaps. |
@@ -87,6 +115,7 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
 | [`mmw-tools-auth/README.md`](../mmw-tools-auth/README.md) | living | Auth-core setup and operator-facing behaviour. |
 | [`mmw-tools-auth/deploy/README.md`](../mmw-tools-auth/deploy/README.md) | living | Deployment procedure and host facts. |
 | [`docs/DEPLOYMENTS.md`](DEPLOYMENTS.md) | historical | Append-only record of what each deploy changed and verified. |
+| [`docs/doc-map.json`](doc-map.json) | manifest | Document-to-source map used by the impact check. |
 
 ## When in doubt
 

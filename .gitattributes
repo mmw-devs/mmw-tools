@@ -9,3 +9,5 @@
 *.conf text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+AGENTS.md text eol=lf
+docs/doc-map.json text eol=lf

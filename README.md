@@ -74,6 +74,8 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 
 | Path | What |
 |---|---|
+| `AGENTS.md` | Agent procedure: run the document-impact check and update documents in the same change. |
+| `docs/doc-map.json` | Document-to-source map used by the impact check. |
 | `dsh-mmw-tools/` | The plugin: DSH bundle, stdio MCP server, Settings panel, tests. |
 | `mmw-tools-auth/` | Feishu H5 authorization core: OAuth, members, roles, plugin tokens, route table. See [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). |
 | `mmw-tools-auth/deploy/` | systemd/nginx/TLS install, verified SQLite snapshots, health timer, rollback. See [`deploy/README.md`](mmw-tools-auth/deploy/README.md). |
@@ -84,6 +86,7 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). Current role/operation matrix: [`contracts/REFERENCE.md`](contracts/REFERENCE.md) (generated). |
 | `scripts/check-contracts.mjs` | Validates the catalog, regenerates the golden route tables and `contracts/REFERENCE.md`. |
 | `scripts/check-docs.mjs` | Rejects stale identifiers in living docs and missing status labels on long-lived docs. See [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md). |
+| `scripts/doc-impact.mjs` | Maps changed source files to the documents that define them; fails when the document was not updated. |
 | `docs/OBSERVABILITY.md` | Run ids, audit events, and why trace storage is a bounded JSONL file rather than a collector. |
 | `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
@@ -116,6 +119,24 @@ is `contracts/REFERENCE.md`, both generated. Do not hand-edit either. See
 [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) for which document is
 authoritative.
 
+## Documentation
+
+[`AGENTS.md`](AGENTS.md) is the operating procedure; [`docs/doc-map.json`](docs/doc-map.json)
+says what each document defines and which source changes require touching it.
+Before committing:
+
+```sh
+node scripts/doc-impact.mjs --base origin/main --worktree
+```
+
+CI runs the same check against the pull request base, so a source change whose
+document is untouched fails the build. Regenerate the table in `AGENTS.md` after
+editing the map:
+
+```sh
+node scripts/doc-impact.mjs --write-agents
+```
+
 ## Branch cleanup
 
 `scripts/prune-merged-branches.mjs` deletes a remote branch only when all of these
@@ -137,6 +158,9 @@ default to a dry run. Add long-lived exceptions with `--keep <pattern>`.
 
 ```sh
 node scripts/check-contracts.mjs
+node scripts/check-docs.mjs
+node scripts/doc-impact.mjs --base origin/main
+node --test scripts/doc-impact.test.mjs
 node mmw-tools-auth/tests/run.mjs
 node --test scripts/prune-merged-branches.test.mjs
 cd dsh-mmw-tools

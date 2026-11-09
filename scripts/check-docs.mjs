@@ -11,6 +11,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const LIVING_DOCS = [
   "README.md",
+  "AGENTS.md",
   "contracts/README.md",
   "docs/DOCUMENTATION.md",
   "docs/OBSERVABILITY.md",
