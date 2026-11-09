@@ -22,43 +22,44 @@ declares which roles may consume it and which technical permissions it needs.
 | `routes.schema.json` | JSON Schema for `GET /v1/agent/routes`. |
 | `FIELDS.zh-CN.md` | Chinese field reference. |
 | `examples/routes.<role>.json` | Golden route tables generated from tools + roles. |
+| `REFERENCE.md` | Generated human-readable roles, tools, and role-to-operation matrix. Do not hand-edit. |
 | `ERRORS.md` | Stable error codes. |
 
 ## Current scope
 
-- `race-ops`: one atomic tool. Roles: `operator`, `admin`.
-  - 11 operations: `repo_status`, `repo_clone`, `repo_pull`, `repo_read`,
-    `repo_search`, `repo_edit`, `pr_create`, `pr_list`, `pr_preview`,
-    `pr_merge`, `mmw_tools_run`.
-  - `requiredPermissions`: `github:contents:write`, `github:pull_requests:write`.
-    These are the tool's technical needs, not user grants.
-- `mmw-tools-status`: `always: true`; one operation `mmw_tools_status`.
-- `viewer` and `editor` are reserved roles with no tools yet. `race-ops` is
-  atomic in v2, so they cannot consume it without also getting edit/merge.
-  Confirmed by product on 2026-11-05: keep them without race-ops access for now.
-- `pr_merge` is an operation of `race-ops`. Under model A, any role that can
-  consume `race-ops` can reach it; the final protection is host confirmation +
-  GitHub branch protection, not a separate Feishu permission.
+The authoritative tool list, role list, and role-to-operation matrix are generated
+in [`REFERENCE.md`](REFERENCE.md). This section only records the decisions behind
+the current shape:
 
-## Future: operation-level roles
+- `race-ops` is one tool. Its `tool.roles` is the conservative default
+  (`operator`, `admin`) used by any operation that does not declare roles.
+- `mmw-tools-status` is available to every authenticated member.
+- The operation-level ladder is data, not code: `viewer` gets the read-only
+  operations, `editor` adds worktree/pull/edit/PR creation, and `operator` /
+  `admin` get everything, including `pr_merge` and `mmw_tools_run`. The exact
+  matrix is generated in [`REFERENCE.md`](REFERENCE.md).
+- `pr_merge` still has host confirmation and GitHub branch protection behind it.
+  The Feishu role is the first of several gates, not the last one.
 
-`tools.json` operations accept an optional `roles` array:
+This is a guard against mistakes and accidental scope creep, not a boundary
+against a malicious local user. The security boundary is the broker-issued
+credential, the GitHub App permissions, branch protection, and CI validation.
 
-```json
-"operations": [
-  {
-    "id": "pr_merge",
-    "publicName": "mcp__mmw-tools__pr_merge",
-    "risk": "write",
-    "roles": ["admin"]
-  }
-]
-```
+## Operation-level roles
 
-When present, it overrides the tool's roles for that operation. The gate already
-resolves `operation.roles ?? tool.roles`, so moving from model A to model B is a
-data change, not a gate rewrite. The route table includes both `allowed` tool IDs
-and `allowedOperations` full IDs for that reason.
+`tools.json` operations accept an optional `roles` array. When present, it
+overrides the tool's roles for that operation. The gate and auth core both
+resolve `operation.roles ?? tool.roles`, so changing the ladder is a data change,
+not a gate rewrite. The route table includes both `allowed` tool IDs and
+`allowedOperations` full IDs for that reason.
+
+Every `race-ops` operation declares roles explicitly. The tool-level default
+stays narrow (`operator`, `admin`) so a newly added operation is restricted
+until someone deliberately widens it.
+
+To change the ladder: edit `tools.json`, run
+`node scripts/check-contracts.mjs --update`, review the generated route tables
+and `REFERENCE.md`, then run the auth and plugin tests.
 
 ## Route table semantics
 
@@ -89,7 +90,5 @@ instead.
 
 - End-to-end verification from a reloaded desktop profile (the host still runs
   the previous module until it is restarted).
-- Operation-level role splits for `viewer` / `editor`; the contract supports
-  them, but the role composition is waiting on a business decision.
 - A contract-drift check between the deployed `catalogRevision` and the plugin's
   local tool map.

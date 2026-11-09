@@ -40,6 +40,7 @@ export type AuditEventKind =
   | "mmw_tools_run_created"
   | "effect_registered"
   | "route_registered"
+  | "gate_decision"
   | "refused";
 
 export interface AuditEvent {

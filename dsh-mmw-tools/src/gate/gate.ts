@@ -1,8 +1,17 @@
 import type { FeishuAuth } from "../auth/feishu-auth.js";
 import { FeishuAuthError } from "../auth/feishu-auth.js";
+import { newRunId, runWithRunId } from "../util/run-context.js";
 import { TOOL_MAP, isMmwTool, type OperationRef } from "./tool-map.js";
 
 export type GateDecision = { ok: true } | { ok: false; reason: string };
+
+export interface GateEvent {
+  kind: "gate_decision";
+  runId: string;
+  tool: string;
+  decision: "allow" | "deny" | "ask";
+  reason?: string;
+}
 
 /**
  * Call-time enforcement. Model A authorizes the parent tool; the operation
@@ -94,7 +103,12 @@ export class PolicyGate {
  */
 export function installToolGate(
   ctx: unknown,
-  opts: { gate: PolicyGate; logger: { warn: (m: string) => void } }
+  opts: {
+    gate: PolicyGate;
+    logger: { warn: (m: string) => void };
+    /** Called once per MMW Tools call, after the policy decision. */
+    onEvent?: (event: GateEvent) => void;
+  }
 ): () => void {
   const on = (ctx as { on?: (event: string, fn: unknown) => unknown }).on;
   if (typeof on !== "function") {
@@ -111,15 +125,36 @@ export function installToolGate(
       ): Promise<unknown> => {
         const name = typeof exec?.name === "string" ? exec.name : "";
         if (name.length > 0 && (opts.gate.sessionWide || isMmwTool(name))) {
-          const decision = await opts.gate.check(name);
-          if (!decision.ok) return { kind: "deny", reason: decision.reason };
-          if (name.endsWith("pr_merge")) {
-            return {
-              kind: "ask",
-              reason:
-                "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
-            };
-          }
+          // One run id per call. The rest of the call — including `next()` and
+          // the MCP bridge inside it — sees the same id via AsyncLocalStorage.
+          const runId = newRunId();
+          return runWithRunId(
+            runId,
+            async () => {
+              const decision = await opts.gate.check(name);
+              if (!decision.ok) {
+                opts.onEvent?.({
+                  kind: "gate_decision",
+                  runId,
+                  tool: name,
+                  decision: "deny",
+                  reason: decision.reason,
+                });
+                return { kind: "deny", reason: decision.reason };
+              }
+              if (name.endsWith("pr_merge")) {
+                opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "ask" });
+                return {
+                  kind: "ask",
+                  reason:
+                    "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
+                };
+              }
+              opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "allow" });
+              return next();
+            },
+            name
+          );
         }
         return next();
       }

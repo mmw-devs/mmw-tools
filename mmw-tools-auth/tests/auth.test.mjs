@@ -120,7 +120,7 @@ export async function runAuthTests(test) {
     }
   });
 
-  await test("admin can grant operator and revoke; viewer/editor do not consume race-ops", async () => {
+  await test("role ladder: viewer reads, editor writes, operator merges", async () => {
     const fixture = createFixture({ bootstrapToken: "boot-secret" });
     const server = await startServer(fixture);
     try {
@@ -146,8 +146,12 @@ export async function runAuthTests(test) {
         headers: { authorization: `Bearer ${alice.poll.pluginToken}` },
       });
       const viewerRoutes = await readJson(viewerRoutesResponse);
-      assert.deepEqual(viewerRoutes.allowed, ["mmw-tools-status"]);
-      assert.equal(viewerRoutes.denied[0].toolId, "race-ops");
+      assert.deepEqual(viewerRoutes.allowed, ["mmw-tools-status", "race-ops"]);
+      assert.ok(viewerRoutes.allowedOperations.includes("race-ops.repo_read"));
+      assert.ok(viewerRoutes.allowedOperations.includes("race-ops.repo_search"));
+      assert.ok(!viewerRoutes.allowedOperations.includes("race-ops.repo_edit"));
+      assert.ok(!viewerRoutes.allowedOperations.includes("race-ops.pr_merge"));
+      assert.deepEqual(viewerRoutes.denied, []);
 
       const afterViewer = await listMembers(admin.jar, server.origin);
       const viewerRow = afterViewer.body.find((member) => member.name === "Alice");
@@ -162,7 +166,11 @@ export async function runAuthTests(test) {
         headers: { authorization: `Bearer ${alice.poll.pluginToken}` },
       });
       const editorRoutes = await readJson(editorRoutesResponse);
-      assert.deepEqual(editorRoutes.allowed, ["mmw-tools-status"]);
+      assert.deepEqual(editorRoutes.allowed, ["mmw-tools-status", "race-ops"]);
+      assert.ok(editorRoutes.allowedOperations.includes("race-ops.repo_edit"));
+      assert.ok(editorRoutes.allowedOperations.includes("race-ops.pr_create"));
+      assert.ok(!editorRoutes.allowedOperations.includes("race-ops.pr_merge"));
+      assert.deepEqual(editorRoutes.denied, []);
 
       const afterEditor = await listMembers(admin.jar, server.origin);
       const editorRow = afterEditor.body.find((member) => member.name === "Alice");

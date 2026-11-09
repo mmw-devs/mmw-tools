@@ -415,6 +415,14 @@ export class FeishuAuth {
         allowedOperations: body.allowedOperations.map(String),
         denied: Array.isArray(body.denied) ? body.denied : [],
       };
+      // policyRevision only moves forward on the auth core. A lower value is a
+      // stale or replayed response; adopting it could re-grant a revoked
+      // operation. Keep the newer table and restart its freshness window.
+      const previous = this.routesCache;
+      if (previous && data.policyRevision < previous.data.policyRevision) {
+        this.routesCache = { data: previous.data, at: this.now() };
+        return previous.data;
+      }
       this.routesCache = { data, at: this.now() };
       return data;
     } catch (err) {

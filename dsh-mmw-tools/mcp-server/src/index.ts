@@ -337,6 +337,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  // The host passes the gate's run id in `_meta`; keep it only if it looks
+  // like one of ours so a malformed id cannot inject into logs or output.
+  const meta = (request.params as { _meta?: { mmwRunId?: unknown } })._meta;
+  const runId =
+    typeof meta?.mmwRunId === "string" && /^run_[A-Za-z0-9-]{1,80}$/.test(meta.mmwRunId)
+      ? meta.mmwRunId
+      : undefined;
+  const runSuffix = runId ? ` [${runId}]` : "";
   const tool = TOOLS.find((t) => t.name === name);
   if (!tool) {
     throw new Error(`Unknown tool: ${name}`);
@@ -352,7 +360,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (err instanceof GithubRefusedError) {
       // Refusal: send back the code + message via MCP isError=true so
       // the host bundle's extractText surfaces the reason to the agent.
-      const message = `[${err.code}] ${err.message}`;
+      const message = `[${err.code}] ${err.message}${runSuffix}`;
       return {
         isError: true,
         content: [{ type: "text", text: redactTokens(message) }],
@@ -360,13 +368,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     // Unexpected error: log to stderr (visible to the operator, not
     // to the LLM), then return a generic message.
-    console.error(`tool ${name} crashed:`, err);
+    console.error(`tool ${name}${runSuffix} crashed:`, err);
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `internal error in ${name}: ${(err as Error).message ?? String(err)}`,
+          text: `internal error in ${name}${runSuffix}: ${(err as Error).message ?? String(err)}`,
         },
       ],
     };

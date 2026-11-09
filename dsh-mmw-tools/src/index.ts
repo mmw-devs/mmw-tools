@@ -49,6 +49,7 @@ import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { installWorkspaceGuard, type UnavailablePolicy } from "./gate/workspace-guard.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
+import { currentRunId, newRunId } from "./util/run-context.js";
 
 /** Where MCP server lives — exposed for tests / docs. */
 export const pathToConnect = mcpServerEntryPath(import.meta.url);
@@ -957,7 +958,24 @@ export function apply(
   // Feishu policy + pr_merge confirmation. This is installed at apply level
   // (not inside the webServer callback) so a profile without a web UI still
   // cannot bypass the gate.
-  ctx.effect(() => installToolGate(ctx, { gate, logger }), "mmw-tools: tool gate");
+  ctx.effect(
+    () =>
+      installToolGate(ctx, {
+        gate,
+        logger,
+        onEvent: (event) => {
+          // Fire-and-forget: an unwritable audit file must not block a call.
+          void audit.record({
+            kind: event.kind,
+            runId: event.runId,
+            tool: event.tool,
+            decision: event.decision,
+            ...(event.reason === undefined ? {} : { reason: event.reason }),
+          });
+        },
+      }),
+    "mmw-tools: tool gate"
+  );
 
   // AGENTS.md drift detection — fires once on apply.
   let agentsMdDrift: ReturnType<typeof checkAgentsMd> | null = null;
@@ -1209,10 +1227,19 @@ export function apply(
               },
               async execute(args, exec) {
                 const forwardArgs = (args ?? {}) as Record<string, unknown>;
+                // The gate seeds this context before policy evaluation. A call
+                // that did not pass through the gate (for example, feishu
+                // disabled in a local profile) still gets an id so MCP errors
+                // can be correlated with the host log.
+                const runId = currentRunId() ?? newRunId();
                 const result = (await client.request(
                   {
                     method: "tools/call",
-                    params: { name: tool.name, arguments: forwardArgs },
+                    params: {
+                      name: tool.name,
+                      arguments: forwardArgs,
+                      _meta: { mmwRunId: runId },
+                    },
                   },
                   // The SDK requires a result schema and dereferences it
                   // (`schema._zod`) while validating the reply. Passing

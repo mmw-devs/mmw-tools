@@ -1,0 +1,12 @@
+[Unit]
+Description=Two-minute mmw-tools auth core health probe
+Documentation=file:///opt/mmw-tools-auth/deploy/README.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=mmw-tools-auth-healthcheck.service
+
+[Install]
+WantedBy=timers.target

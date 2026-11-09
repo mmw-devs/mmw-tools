@@ -59,6 +59,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/mmw-tools-auth
 EnvironmentFile=/opt/mmw-tools-auth/.env
+Environment=NODE_OPTIONS=--max-old-space-size=160
 ExecStart=/usr/local/bin/node src/main.mjs
 Restart=on-failure
 RestartSec=3
@@ -78,7 +79,9 @@ RestrictSUIDSGID=true
 LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 ReadWritePaths=/opt/mmw-tools-auth/data
+MemoryHigh=192M
 MemoryMax=256M
+TasksMax=128
 
 [Install]
 WantedBy=multi-user.target

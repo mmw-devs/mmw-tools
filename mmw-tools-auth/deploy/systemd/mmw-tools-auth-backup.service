@@ -1,0 +1,18 @@
+[Unit]
+Description=Snapshot the mmw-tools auth database
+Documentation=file:///opt/mmw-tools-auth/deploy/README.md
+After=mmw-tools-auth.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+ExecStart=/usr/local/bin/node /usr/local/lib/mmw-tools-auth/backup.mjs --data-dir /opt/mmw-tools-auth/data --out-dir /var/backups/mmw-tools-auth --keep 7
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/mmw-tools-auth/data
+ReadWritePaths=/var/backups/mmw-tools-auth

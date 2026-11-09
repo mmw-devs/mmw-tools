@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Tests for the Feishu client, the call-time policy gate, and the operation map.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { FeishuAuth } from "../lib/auth/feishu-auth.js";
+import { FeishuAuth, FeishuAuthError } from "../lib/auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "../lib/gate/gate.js";
 import { TOOL_MAP, isMmwTool } from "../lib/gate/tool-map.js";
+import { currentRunId } from "../lib/util/run-context.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -204,7 +205,169 @@ try {
   eq((await gate.check("mcp__mmw-tools__pr_merge")).ok, true, "v1 tool-level fallback still works");
 }
 
-// installToolGate: policy denial wins before the pr_merge confirmation.
+// A write must ask the client for a table no older than 15s; a read may use the
+// normal ttl. This is the policy half of "a revoked writer loses access fast".
+{
+  const seen = [];
+  const table = {
+    contractVersion: 2,
+    catalogRevision: "sha256:" + "a".repeat(64),
+    policyRevision: 1,
+    ttlSeconds: 60,
+    allowed: ["race-ops"],
+    allowedOperations: ["race-ops.repo_read", "race-ops.repo_edit", "race-ops.pr_merge"],
+    denied: [],
+  };
+  const fake = {
+    routes: async (_force, maxAgeMs) => {
+      seen.push(maxAgeMs);
+      return table;
+    },
+  };
+  const gate = new PolicyGate({ auth: fake, enabled: true });
+  eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "read allowed");
+  eq((await gate.check("mcp__mmw-tools__repo_edit")).ok, true, "write allowed");
+  eq(seen[0], undefined, "read uses the normal 60s ttl");
+  eq(seen[1], 15_000, "write caps table age at 15s");
+}
+
+// Fail closed: no usable table means no governed call, read or write.
+{
+  const fake = {
+    routes: async () => {
+      throw new FeishuAuthError("network", "auth core unreachable");
+    },
+  };
+  const gate = new PolicyGate({ auth: fake, enabled: true });
+  for (const name of ["mcp__mmw-tools__repo_read", "mcp__mmw-tools__repo_edit", "mcp__mmw-tools__pr_merge"]) {
+    const decision = await gate.check(name);
+    eq(decision.ok, false, `no route table denies ${name}`);
+    truthy(decision.reason.includes("飞书授权不可用"), `denial explains the outage for ${name}`);
+  }
+}
+
+// Revocation and cache freshness, end to end through FeishuAuth:
+// - a read may use a table up to 60s old;
+// - a write must refetch after 15s and then sees the revoked operation;
+// - a fetch failure after that denies instead of falling back to the old table.
+{
+  const authDir = mkdtempSync(path.join(tmpdir(), "mmw-routes-test-"));
+  const authFile = path.join(authDir, "feishu.json");
+  let now = 1_000_000;
+  let mode = "allowed";
+  let routeFetches = 0;
+  const allowed = {
+    contractVersion: 2,
+    catalogRevision: "sha256:" + "a".repeat(64),
+    policyRevision: 7,
+    ttlSeconds: 60,
+    allowed: ["mmw-tools-status", "race-ops"],
+    allowedOperations: ["mmw-tools-status.status", "race-ops.repo_read", "race-ops.repo_edit"],
+    denied: [],
+  };
+  const revoked = {
+    ...allowed,
+    policyRevision: 8,
+    allowed: ["mmw-tools-status"],
+    allowedOperations: ["mmw-tools-status.status"],
+    denied: [{ toolId: "race-ops", requiredRoles: ["operator", "admin"] }],
+  };
+
+  writeFileSync(
+    authFile,
+    JSON.stringify({
+      authServiceUrl: "https://auth.example",
+      pluginToken: "plugin-token-1",
+      expiresAt: 100_000_000,
+      member: { id: "m1", name: "Alice", roles: ["operator"], isAdmin: false },
+      roles: ["operator"],
+      savedAt: now,
+    })
+  );
+
+  const auth = new FeishuAuth({
+    authServiceUrl: "https://auth.example",
+    file: authFile,
+    now: () => now,
+    fetchImpl: async (url) => {
+      if (!String(url).endsWith("/v1/agent/routes")) throw new Error(`unexpected fetch ${url}`);
+      routeFetches += 1;
+      if (mode === "error") throw new Error("auth core down");
+      return json(mode === "allowed" ? allowed : revoked);
+    },
+  });
+  const gate = new PolicyGate({ auth, enabled: true });
+
+  eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "operator can read before revocation");
+  const fetchesAfterRead = routeFetches;
+  now += 30_000;
+  eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "read may use a table younger than 60s");
+  eq(routeFetches, fetchesAfterRead, "read does not refetch inside the ttl");
+
+  now += 31_000; // 61s old, past the 15s write limit
+  mode = "revoked";
+  const afterRevoke = await gate.check("mcp__mmw-tools__repo_edit");
+  eq(afterRevoke.ok, false, "write sees the revoked operation after 15s");
+  truthy(afterRevoke.reason.includes("operator"), "revocation denial names the required role");
+  eq(routeFetches, fetchesAfterRead + 1, "write refetched the table");
+
+  now += 61_000;
+  mode = "error";
+  const duringOutage = await gate.check("mcp__mmw-tools__pr_merge");
+  eq(duringOutage.ok, false, "a failed refetch denies instead of reusing the revoked table");
+  truthy(duringOutage.reason.includes("飞书授权不可用"), "outage denial is explicit");
+
+  rmSync(authDir, { recursive: true, force: true });
+}
+
+// A lower policyRevision is stale; it must not overwrite a newer cached table.
+// The auth core increments this value, so a lower one means a rollback/replay,
+// not a new policy.
+{
+  const authDir = mkdtempSync(path.join(tmpdir(), "mmw-revision-test-"));
+  const authFile = path.join(authDir, "feishu.json");
+  let now = 1_000_000;
+  let routeFetches = 0;
+  writeFileSync(
+    authFile,
+    JSON.stringify({
+      authServiceUrl: "https://auth.example",
+      pluginToken: "plugin-token-1",
+      expiresAt: 100_000_000,
+      member: { id: "m1", name: "Alice", roles: ["operator"], isAdmin: false },
+      roles: ["operator"],
+      savedAt: now,
+    })
+  );
+  const base = {
+    contractVersion: 2,
+    catalogRevision: "sha256:" + "a".repeat(64),
+    ttlSeconds: 60,
+    allowed: ["mmw-tools-status", "race-ops"],
+    denied: [],
+  };
+  const auth = new FeishuAuth({
+    authServiceUrl: "https://auth.example",
+    file: authFile,
+    now: () => now,
+    fetchImpl: async () => {
+      routeFetches += 1;
+      if (routeFetches === 1) {
+        return json({ ...base, policyRevision: 7, allowedOperations: ["race-ops.repo_edit"] });
+      }
+      return json({ ...base, policyRevision: 6, allowedOperations: [] });
+    },
+  });
+  const gate = new PolicyGate({ auth, enabled: true });
+  eq((await gate.check("mcp__mmw-tools__repo_edit")).ok, true, "revision 7 allows the write");
+  now += 61_000;
+  eq((await gate.check("mcp__mmw-tools__repo_edit")).ok, true, "revision 6 does not revoke a cached revision 7");
+  eq(routeFetches, 2, "the stale table was seen but not adopted");
+
+  rmSync(authDir, { recursive: true, force: true });
+}
+
+
 {
   let listener;
   const ctx = {
@@ -317,6 +480,53 @@ try {
   eq(isMmwTool("mmw_tools_status"), true, "mmw-tools own tool is ours");
   eq(isMmwTool("read"), false, "read is not ours");
   eq(isMmwTool("mcp__mmw-tools-extra__x"), false, "lookalike namespace is not ours");
+}
+
+// One run id per MMW call: the policy check, the gate event, and `next()`
+// all see the same id, and two calls never share one.
+{
+  let listener;
+  const ctx = {
+    on(event, fn) {
+      if (event === "tools/pre-execute") listener = fn;
+      return () => {};
+    },
+  };
+  const events = [];
+  const idsInsideCheck = [];
+  const gate = {
+    check: async () => {
+      idsInsideCheck.push(currentRunId());
+      return { ok: true };
+    },
+  };
+  installToolGate(ctx, {
+    gate,
+    logger: { warn: () => {} },
+    onEvent: (event) => events.push(event),
+  });
+
+  const idsInsideNext = [];
+  await listener({ name: "mcp__mmw-tools__repo_read" }, async () => {
+    idsInsideNext.push(currentRunId());
+    return "next";
+  });
+  await listener({ name: "mcp__mmw-tools__repo_read" }, async () => {
+    idsInsideNext.push(currentRunId());
+    return "next";
+  });
+
+  eq(/^run_/.test(idsInsideCheck[0] ?? ""), true, "gate check runs with a run id");
+  eq(idsInsideCheck[0], idsInsideNext[0], "run id survives from policy check to next()");
+  eq(idsInsideCheck[0], events[0]?.runId, "audit event carries the same run id");
+  eq(events[0]?.decision, "allow", "allowed call emits an allow event");
+  eq(idsInsideCheck[0] !== idsInsideCheck[1], true, "each call gets a fresh run id");
+
+  // The context must not leak into a standard tool that bypasses the gate.
+  await listener({ name: "read" }, async () => {
+    eq(currentRunId(), undefined, "standard tool runs outside any MMW run context");
+    return "next";
+  });
 }
 
 rmSync(dir, { recursive: true, force: true });

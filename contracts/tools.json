@@ -18,67 +18,127 @@
           "id": "repo_status",
           "publicName": "mcp__mmw-tools__repo_status",
           "description": "查看工作副本的分支、脏状态、HEAD 和未提交文件。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "repo_clone",
           "publicName": "mcp__mmw-tools__repo_clone",
           "description": "把绑定的仓库克隆到 working_dir（浅克隆 base branch）。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "repo_pull",
           "publicName": "mcp__mmw-tools__repo_pull",
           "description": "在指定分支上从 origin 拉取最新变更（--rebase）。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "repo_read",
           "publicName": "mcp__mmw-tools__repo_read",
           "description": "读取工作副本中的单个文件（默认 100 KiB，硬上限 500 KiB）。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "repo_search",
           "publicName": "mcp__mmw-tools__repo_search",
           "description": "在工作副本里用 git grep 搜索。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "repo_edit",
           "publicName": "mcp__mmw-tools__repo_edit",
           "description": "在 content/* 分支上批量编辑、跑 preflight、本地 commit（不 push）。",
-          "risk": "write"
+          "risk": "write",
+          "roles": [
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "pr_create",
           "publicName": "mcp__mmw-tools__pr_create",
           "description": "推送 content/* 分支并创建一个 PR。",
-          "risk": "write"
+          "risk": "write",
+          "roles": [
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "pr_list",
           "publicName": "mcp__mmw-tools__pr_list",
           "description": "列出仓库里现有的 PR。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "pr_preview",
           "publicName": "mcp__mmw-tools__pr_preview",
           "description": "读取 PR 的预览地址和检查状态，只读。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "pr_merge",
           "publicName": "mcp__mmw-tools__pr_merge",
           "description": "合并 PR；必须由用户明确要求，宿主会在执行前确认。",
-          "risk": "write"
+          "risk": "write",
+          "roles": [
+            "operator",
+            "admin"
+          ]
         },
         {
           "id": "mmw_tools_run",
           "publicName": "mmw_tools_run",
           "description": "为 agent 准备仓库上下文和 AGENTS.md 约束。",
-          "risk": "read"
+          "risk": "read",
+          "roles": [
+            "operator",
+            "admin"
+          ]
         }
       ]
     },
