@@ -1,4 +1,5 @@
 import { FeishuAuthError } from "../auth/feishu-auth.js";
+import { newRunId, runWithRunId } from "../util/run-context.js";
 import { TOOL_MAP, isMmwTool } from "./tool-map.js";
 /**
  * Call-time enforcement. Model A authorizes the parent tool; the operation
@@ -93,15 +94,31 @@ export function installToolGate(ctx, opts) {
         const disposer = on.call(ctx, "tools/pre-execute", async (exec, next) => {
             const name = typeof exec?.name === "string" ? exec.name : "";
             if (name.length > 0 && (opts.gate.sessionWide || isMmwTool(name))) {
-                const decision = await opts.gate.check(name);
-                if (!decision.ok)
-                    return { kind: "deny", reason: decision.reason };
-                if (name.endsWith("pr_merge")) {
-                    return {
-                        kind: "ask",
-                        reason: "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
-                    };
-                }
+                // One run id per call. The rest of the call — including `next()` and
+                // the MCP bridge inside it — sees the same id via AsyncLocalStorage.
+                const runId = newRunId();
+                return runWithRunId(runId, async () => {
+                    const decision = await opts.gate.check(name);
+                    if (!decision.ok) {
+                        opts.onEvent?.({
+                            kind: "gate_decision",
+                            runId,
+                            tool: name,
+                            decision: "deny",
+                            reason: decision.reason,
+                        });
+                        return { kind: "deny", reason: decision.reason };
+                    }
+                    if (name.endsWith("pr_merge")) {
+                        opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "ask" });
+                        return {
+                            kind: "ask",
+                            reason: "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
+                        };
+                    }
+                    opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "allow" });
+                    return next();
+                }, name);
             }
             return next();
         });

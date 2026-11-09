@@ -80,6 +80,7 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
 |---|---|---|
 | [`README.md`](../README.md) | living | Entry point, verification commands, repository layout. |
 | [`contracts/REFERENCE.md`](../contracts/REFERENCE.md) | generated | Current roles, tools, and role-to-operation matrix. |
+| [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) | living | Run ids, audit events, and the trace-storage decision. |
 | [`mmw-tools-routing-layer-plan.md`](../mmw-tools-routing-layer-plan.md) | living design | Why the authorization layer is shaped this way; boundaries and gaps. |
 | [`mmw-tools-routing-state-machine.md`](../mmw-tools-routing-state-machine.md) | target design | Intended state machines; not a description of shipped behaviour. |
 | [`dsh-mmw-tools/docs/NEXT-STEPS.md`](../dsh-mmw-tools/docs/NEXT-STEPS.md) | historical | v0.6.0 snapshot. Do not use for current capabilities. |

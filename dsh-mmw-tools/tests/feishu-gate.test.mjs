@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { FeishuAuth } from "../lib/auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "../lib/gate/gate.js";
 import { TOOL_MAP, isMmwTool } from "../lib/gate/tool-map.js";
+import { currentRunId } from "../lib/util/run-context.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -317,6 +318,53 @@ try {
   eq(isMmwTool("mmw_tools_status"), true, "mmw-tools own tool is ours");
   eq(isMmwTool("read"), false, "read is not ours");
   eq(isMmwTool("mcp__mmw-tools-extra__x"), false, "lookalike namespace is not ours");
+}
+
+// One run id per MMW call: the policy check, the gate event, and `next()`
+// all see the same id, and two calls never share one.
+{
+  let listener;
+  const ctx = {
+    on(event, fn) {
+      if (event === "tools/pre-execute") listener = fn;
+      return () => {};
+    },
+  };
+  const events = [];
+  const idsInsideCheck = [];
+  const gate = {
+    check: async () => {
+      idsInsideCheck.push(currentRunId());
+      return { ok: true };
+    },
+  };
+  installToolGate(ctx, {
+    gate,
+    logger: { warn: () => {} },
+    onEvent: (event) => events.push(event),
+  });
+
+  const idsInsideNext = [];
+  await listener({ name: "mcp__mmw-tools__repo_read" }, async () => {
+    idsInsideNext.push(currentRunId());
+    return "next";
+  });
+  await listener({ name: "mcp__mmw-tools__repo_read" }, async () => {
+    idsInsideNext.push(currentRunId());
+    return "next";
+  });
+
+  eq(/^run_/.test(idsInsideCheck[0] ?? ""), true, "gate check runs with a run id");
+  eq(idsInsideCheck[0], idsInsideNext[0], "run id survives from policy check to next()");
+  eq(idsInsideCheck[0], events[0]?.runId, "audit event carries the same run id");
+  eq(events[0]?.decision, "allow", "allowed call emits an allow event");
+  eq(idsInsideCheck[0] !== idsInsideCheck[1], true, "each call gets a fresh run id");
+
+  // The context must not leak into a standard tool that bypasses the gate.
+  await listener({ name: "read" }, async () => {
+    eq(currentRunId(), undefined, "standard tool runs outside any MMW run context");
+    return "next";
+  });
 }
 
 rmSync(dir, { recursive: true, force: true });
