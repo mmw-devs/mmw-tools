@@ -51,7 +51,7 @@ operating procedure for an agent.
 
 | Document | Status | Defines | Update when these change |
 |---|---|---|---|
-| [`README.md`](README.md) | living | Repository entry point: deliverables, layout, and verification commands. | `.github/workflows/ci.yml`<br>`scripts/check-contracts.mjs`<br>`scripts/check-docs.mjs`<br>`scripts/doc-impact.mjs`<br>`mmw-tools-auth/deploy/backup.mjs`<br>`mmw-tools-auth/deploy/restore.mjs`<br>`mmw-tools-auth/deploy/healthcheck.sh`<br>`mmw-tools-auth/deploy/install-ops.sh`<br>`mmw-tools-auth/deploy/server-install.sh`<br>`mmw-tools-auth/deploy/nginx-mmw-tools.conf`<br>`mmw-tools-auth/deploy/systemd/**` |
+| [`README.md`](README.md) | living | Repository entry point: deliverables, layout, and verification commands. | `.github/workflows/ci.yml`<br>`scripts/check-contracts.mjs`<br>`scripts/check-docs.mjs`<br>`scripts/doc-impact.mjs`<br>`docs/doc-map.json`<br>`mmw-tools-auth/deploy/**` |
 | [`AGENTS.md`](AGENTS.md) | living | Agent operating rules and the generated document-impact map. | `docs/doc-map.json`<br>`scripts/doc-impact.mjs`<br>`scripts/check-docs.mjs`<br>`.github/workflows/ci.yml` |
 | [`contracts/ERRORS.md`](contracts/ERRORS.md) | living | Stable error codes and the response envelope. | — (manual; no automatic trigger) |
 | [`contracts/FIELDS.zh-CN.md`](contracts/FIELDS.zh-CN.md) | living | Field-by-field explanation of the v2 tool-centric contract. | `contracts/tools.json`<br>`contracts/roles.json`<br>`contracts/tools.schema.json`<br>`contracts/routes.schema.json` |
@@ -60,12 +60,12 @@ operating procedure for an agent.
 | [`dsh-mmw-tools-design.md`](dsh-mmw-tools-design.md) | historical | Architecture and business-logic design (v2, aligned to the race-ops AGENTS.md). | — (snapshot; no automatic trigger) |
 | [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md) | historical | Append-only record of verified deployments. | — (snapshot; no automatic trigger) |
 | [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) | living | Documentation authority, status labels, generation rules, and impact checks. | `docs/doc-map.json`<br>`scripts/check-docs.mjs`<br>`scripts/doc-impact.mjs`<br>`.github/workflows/ci.yml` |
-| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | living | Run-id propagation, audit events, and the trace-storage decision. | `dsh-mmw-tools/src/util/run-context.ts`<br>`dsh-mmw-tools/src/util/audit.ts`<br>`dsh-mmw-tools/src/gate/gate.ts`<br>`dsh-mmw-tools/src/index.ts`<br>`dsh-mmw-tools/mcp-server/src/index.ts` |
+| [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | living | Run-id propagation, audit events, and the trace-storage decision. | `dsh-mmw-tools/src/util/**`<br>`dsh-mmw-tools/src/gate/**`<br>`dsh-mmw-tools/src/index.ts`<br>`dsh-mmw-tools/mcp-server/src/**` |
 | [`dsh-plugin-api-cheatsheet.md`](dsh-plugin-api-cheatsheet.md) | historical | Distilled DSH 0.1.5 plugin API reference. | — (snapshot; no automatic trigger) |
 | [`github-oauth-app-checklist.md`](github-oauth-app-checklist.md) | historical | GitHub OAuth App registration checklist. | — (snapshot; no automatic trigger) |
 | [`lark-vs-dsh.md`](lark-vs-dsh.md) | historical | Research notes comparing DSH Feishu plugins with lark-cli. | — (snapshot; no automatic trigger) |
-| [`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md) | living | Why the authorization layer is shaped this way: decisions, boundaries, and known gaps. | `mmw-tools-auth/src/policy.mjs`<br>`dsh-mmw-tools/src/gate/gate.ts`<br>`dsh-mmw-tools/src/auth/feishu-auth.ts`<br>`dsh-mmw-tools/src/index.ts` |
-| [`mmw-tools-routing-state-machine.md`](mmw-tools-routing-state-machine.md) | target design | Target state machines for auth, policy, and transport; not shipped behaviour. | `dsh-mmw-tools/src/gate/gate.ts`<br>`dsh-mmw-tools/src/auth/feishu-auth.ts`<br>`dsh-mmw-tools/src/index.ts`<br>`dsh-mmw-tools/src/util/run-context.ts` |
+| [`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md) | living | Why the authorization layer is shaped this way: decisions, boundaries, and known gaps. | `mmw-tools-auth/src/**`<br>`dsh-mmw-tools/src/gate/**`<br>`dsh-mmw-tools/src/auth/**`<br>`dsh-mmw-tools/src/index.ts` |
+| [`mmw-tools-routing-state-machine.md`](mmw-tools-routing-state-machine.md) | target design | Target state machines for auth, policy, and transport; not shipped behaviour. | `dsh-mmw-tools/src/gate/**`<br>`dsh-mmw-tools/src/auth/**`<br>`dsh-mmw-tools/src/index.ts`<br>`dsh-mmw-tools/src/util/run-context.ts` |
 | [`dsh-mmw-tools/CHANGELOG.md`](dsh-mmw-tools/CHANGELOG.md) | historical | Per-increment history of the plugin. | — (snapshot; no automatic trigger) |
 | [`dsh-mmw-tools/README.md`](dsh-mmw-tools/README.md) | living | Plugin install, configuration, tool behavior, security model, and tests. | `dsh-mmw-tools/src/**`<br>`dsh-mmw-tools/package.json`<br>`dsh-mmw-tools/cordis.patch.yml` |
 | [`dsh-mmw-tools/docs/AUTH-BROKER.md`](dsh-mmw-tools/docs/AUTH-BROKER.md) | historical | Design record for the GitHub App + token broker topology. | — (snapshot; no automatic trigger) |
@@ -82,8 +82,8 @@ operating procedure for an agent.
 | [`dsh-mmw-tools/docs/T5-RUNBOOK.md`](dsh-mmw-tools/docs/T5-RUNBOOK.md) | living | Step-by-step real round-trip runbook and stop conditions. | — (manual; no automatic trigger) |
 | [`dsh-mmw-tools/docs/TESTING.md`](dsh-mmw-tools/docs/TESTING.md) | living | Test layers, what each needs, and how to add a case. | `dsh-mmw-tools/package.json`<br>`dsh-mmw-tools/tests/**`<br>`dsh-mmw-tools/mcp-server/tests/**` |
 | [`dsh-mmw-tools/skills/race-ops-ops/SKILL.md`](dsh-mmw-tools/skills/race-ops-ops/SKILL.md) | living | The race-ops-ops skill instructions. | — (manual; no automatic trigger) |
-| [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md) | living | Auth-core setup, endpoints, security properties, and limitations. | `mmw-tools-auth/src/server.mjs`<br>`mmw-tools-auth/src/main.mjs`<br>`mmw-tools-auth/src/auth.mjs`<br>`mmw-tools-auth/src/feishu.mjs`<br>`mmw-tools-auth/src/store.mjs` |
-| [`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md) | living | Production deployment, resource budget, backup/restore, and rollback. | `mmw-tools-auth/deploy/backup.mjs`<br>`mmw-tools-auth/deploy/restore.mjs`<br>`mmw-tools-auth/deploy/healthcheck.sh`<br>`mmw-tools-auth/deploy/install-ops.sh`<br>`mmw-tools-auth/deploy/server-install.sh`<br>`mmw-tools-auth/deploy/nginx-mmw-tools.conf`<br>`mmw-tools-auth/deploy/systemd/**` |
+| [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md) | living | Auth-core setup, endpoints, security properties, and limitations. | `mmw-tools-auth/src/**` |
+| [`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md) | living | Production deployment, resource budget, backup/restore, and rollback. | `mmw-tools-auth/deploy/*.mjs`<br>`mmw-tools-auth/deploy/*.sh`<br>`mmw-tools-auth/deploy/*.conf`<br>`mmw-tools-auth/deploy/systemd/**` |
 <!-- doc-map:end -->
 
 ## Changing the map
@@ -95,5 +95,6 @@ node scripts/doc-impact.mjs --write-agents
 ```
 
 Commit both files. `scripts/doc-impact.mjs` validates that every document
-exists, every status is known, and every source glob is repository-relative.
-The table above is generated; do not edit it by hand.
+exists, every status is known, every source glob is repository-relative and
+matches at least one tracked file, and every tracked markdown file is listed in
+the map. The table above is generated; do not edit it by hand.

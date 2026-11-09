@@ -122,6 +122,34 @@ export function validateManifest(documents, root = ROOT) {
   return errors;
 }
 
+export function validateManifestCoverage(documents, trackedFiles) {
+  const errors = [];
+  const tracked = [...new Set(trackedFiles.map(normalizePath))].sort();
+  const trackedSet = new Set(tracked);
+  const mapped = new Set(documents.map((document) => normalizePath(document.path)));
+
+  for (const file of tracked) {
+    if (file.endsWith(".md") && !mapped.has(file)) {
+      errors.push(`${file}: tracked markdown is not listed in docs/doc-map.json`);
+    }
+  }
+
+  for (const document of documents) {
+    const rel = normalizePath(document.path);
+    if (!trackedSet.has(rel)) {
+      errors.push(`${rel}: document is not tracked by git`);
+    }
+    for (const source of document.sources ?? []) {
+      const matcher = globToRegExp(source);
+      if (!tracked.some((file) => matcher.test(file))) {
+        errors.push(`${rel}: source "${source}" matches no tracked file`);
+      }
+    }
+  }
+
+  return errors;
+}
+
 function escapeCell(value) {
   return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
@@ -175,6 +203,14 @@ function git(args, cwd = ROOT) {
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
+}
+
+function trackedFilesOrNull() {
+  try {
+    return splitNull(git(["ls-files", "-z"]));
+  } catch {
+    return null;
+  }
 }
 
 function splitNull(value) {
@@ -259,6 +295,12 @@ function main() {
 
   const documents = loadManifest();
   const errors = validateManifest(documents, ROOT);
+  const trackedFiles = trackedFilesOrNull();
+  if (trackedFiles) {
+    errors.push(...validateManifestCoverage(documents, trackedFiles));
+  } else if (process.env.CI) {
+    errors.push("cannot list tracked files with git; the coverage check would be skipped in CI");
+  }
   if (errors.length > 0) {
     console.error("docs/doc-map.json is invalid:\n");
     for (const error of errors) console.error(`- ${error}`);

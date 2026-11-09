@@ -93,16 +93,26 @@ node scripts/doc-impact.mjs --list                          # inspect the map
 node scripts/doc-impact.mjs --write-agents                  # after editing the map
 ```
 
-CI runs the check against the pull request base commit. If a changed source
-matches a document's globs and the document itself is not in the diff, the job
-fails with the document and the triggering file. A `historical` snapshot or a
-living procedure may list no sources; that opts it out of the automatic trigger,
-not out of review.
+CI runs the check against the pull request base commit. Before diffing, it
+validates the map itself: every tracked markdown file must have an entry, every
+entry must be a tracked file, and every source glob must match at least one
+tracked file. That closes the “new document” and “new module under an explicit
+list” holes. The coverage pass needs `git ls-files`; it is skipped only in a
+local sandbox without git, and CI fails closed when git is unavailable.
+
+If a changed source matches a document's globs and the document itself is not
+in the diff, the job fails with the document and the triggering file. A
+`historical` snapshot or a living procedure may list no sources; that opts it
+out of the automatic trigger, not out of review.
 
 When a document no longer owns a fact, change the map. Do not weaken the
 document until the check passes.
 
 ## Map
+
+The generated table in [`AGENTS.md`](../AGENTS.md) is the complete index of
+every tracked markdown file. This shorter table is a reading guide to the
+documents that carry the most operational weight.
 
 | Document | Status | Purpose |
 |---|---|---|

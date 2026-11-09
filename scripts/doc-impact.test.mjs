@@ -12,6 +12,7 @@ import {
   renderDocMap,
   replaceDocMapBlock,
   validateManifest,
+  validateManifestCoverage,
   ROOT,
 } from "./doc-impact.mjs";
 
@@ -76,6 +77,44 @@ test("the checked-in manifest is valid and the AGENTS table is current", () => {
     expectedAgentsText(agents, documents).replace(/\r\n/g, "\n"),
   );
   assert.match(renderDocMap(documents), /`docs\/doc-map\.json`/);
+});
+
+test("every tracked markdown file must be listed in the manifest", () => {
+  const errors = validateManifestCoverage(fixture, [
+    "docs/contract.md",
+    "docs/snapshot.md",
+    "docs/unmapped.md",
+    "contracts/tools.json",
+    "src/a.ts",
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /docs\/unmapped\.md: tracked markdown is not listed/);
+});
+
+test("a document that is not tracked by git is rejected", () => {
+  const errors = validateManifestCoverage(fixture, [
+    "docs/snapshot.md",
+    "contracts/tools.json",
+    "src/a.ts",
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /docs\/contract\.md: document is not tracked by git/);
+});
+
+test("a source glob that matches no tracked file is rejected", () => {
+  const documents = [{
+    path: "docs/contract.md",
+    status: "living",
+    defines: "Contract shape.",
+    sources: ["contracts/*.json", "src/**", "docs/dead-*.md"],
+  }];
+  const errors = validateManifestCoverage(documents, [
+    "docs/contract.md",
+    "contracts/tools.json",
+    "src/a.ts",
+  ]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /source "docs\/dead-\*\.md" matches no tracked file/);
 });
 
 test("empty sources are labelled by document status", () => {

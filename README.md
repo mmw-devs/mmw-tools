@@ -130,8 +130,9 @@ node scripts/doc-impact.mjs --base origin/main --worktree
 ```
 
 CI runs the same check against the pull request base, so a source change whose
-document is untouched fails the build. Regenerate the table in `AGENTS.md` after
-editing the map:
+document is untouched fails the build. It also rejects a map that omits a
+tracked markdown file or contains a source glob that matches nothing. Regenerate
+the table in `AGENTS.md` after editing the map:
 
 ```sh
 node scripts/doc-impact.mjs --write-agents

@@ -10,13 +10,8 @@
         "scripts/check-contracts.mjs",
         "scripts/check-docs.mjs",
         "scripts/doc-impact.mjs",
-        "mmw-tools-auth/deploy/backup.mjs",
-        "mmw-tools-auth/deploy/restore.mjs",
-        "mmw-tools-auth/deploy/healthcheck.sh",
-        "mmw-tools-auth/deploy/install-ops.sh",
-        "mmw-tools-auth/deploy/server-install.sh",
-        "mmw-tools-auth/deploy/nginx-mmw-tools.conf",
-        "mmw-tools-auth/deploy/systemd/**"
+        "docs/doc-map.json",
+        "mmw-tools-auth/deploy/**"
       ]
     },
     {
@@ -98,11 +93,10 @@
       "status": "living",
       "defines": "Run-id propagation, audit events, and the trace-storage decision.",
       "sources": [
-        "dsh-mmw-tools/src/util/run-context.ts",
-        "dsh-mmw-tools/src/util/audit.ts",
-        "dsh-mmw-tools/src/gate/gate.ts",
+        "dsh-mmw-tools/src/util/**",
+        "dsh-mmw-tools/src/gate/**",
         "dsh-mmw-tools/src/index.ts",
-        "dsh-mmw-tools/mcp-server/src/index.ts"
+        "dsh-mmw-tools/mcp-server/src/**"
       ]
     },
     {
@@ -128,9 +122,9 @@
       "status": "living",
       "defines": "Why the authorization layer is shaped this way: decisions, boundaries, and known gaps.",
       "sources": [
-        "mmw-tools-auth/src/policy.mjs",
-        "dsh-mmw-tools/src/gate/gate.ts",
-        "dsh-mmw-tools/src/auth/feishu-auth.ts",
+        "mmw-tools-auth/src/**",
+        "dsh-mmw-tools/src/gate/**",
+        "dsh-mmw-tools/src/auth/**",
         "dsh-mmw-tools/src/index.ts"
       ]
     },
@@ -139,8 +133,8 @@
       "status": "target design",
       "defines": "Target state machines for auth, policy, and transport; not shipped behaviour.",
       "sources": [
-        "dsh-mmw-tools/src/gate/gate.ts",
-        "dsh-mmw-tools/src/auth/feishu-auth.ts",
+        "dsh-mmw-tools/src/gate/**",
+        "dsh-mmw-tools/src/auth/**",
         "dsh-mmw-tools/src/index.ts",
         "dsh-mmw-tools/src/util/run-context.ts"
       ]
@@ -262,11 +256,7 @@
       "status": "living",
       "defines": "Auth-core setup, endpoints, security properties, and limitations.",
       "sources": [
-        "mmw-tools-auth/src/server.mjs",
-        "mmw-tools-auth/src/main.mjs",
-        "mmw-tools-auth/src/auth.mjs",
-        "mmw-tools-auth/src/feishu.mjs",
-        "mmw-tools-auth/src/store.mjs"
+        "mmw-tools-auth/src/**"
       ]
     },
     {
@@ -274,12 +264,9 @@
       "status": "living",
       "defines": "Production deployment, resource budget, backup/restore, and rollback.",
       "sources": [
-        "mmw-tools-auth/deploy/backup.mjs",
-        "mmw-tools-auth/deploy/restore.mjs",
-        "mmw-tools-auth/deploy/healthcheck.sh",
-        "mmw-tools-auth/deploy/install-ops.sh",
-        "mmw-tools-auth/deploy/server-install.sh",
-        "mmw-tools-auth/deploy/nginx-mmw-tools.conf",
+        "mmw-tools-auth/deploy/*.mjs",
+        "mmw-tools-auth/deploy/*.sh",
+        "mmw-tools-auth/deploy/*.conf",
         "mmw-tools-auth/deploy/systemd/**"
       ]
     }
