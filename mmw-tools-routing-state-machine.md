@@ -1,7 +1,12 @@
 # mmw-tools 路由层状态机（v2：静态注册 + 调用时授权）
 
-> 状态：已实现并在桌面宿主重启后完成读路径端到端验证，取代 v1「动态挂载」版本
-> 日期：2026-10-26（2026-11-04 tool-centric 更新）
+> Status: **target design**（v2，2026-11-10 标注）
+> 本文描述期望的不变量与状态迁移，**不是当前实现的完整描述**。当前实现只覆盖其中
+> 一部分：静态注册、调用前 gate、路由表内存缓存与过期重拉、refresh 单飞。
+> 尚未实现：`STALE` 宽限期、退避、policyRevision 单调丢弃、按需启动 Transport、
+> 顶层状态投影、端到端 requestId。核对现状请看
+> [`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md) 第 6 节与代码。
+> 日期：2026-10-26（2026-11-04 tool-centric 更新；2026-11-10 标注为 target design）
 > 配套文档：[`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md)
 > 范围：DSH 插件侧的授权执行状态机；飞书鉴权核心只作为输入事件出现。
 > 当前授权单位是 tool（`allowed` tool IDs）；`allowedOperations` 是 operation 级明细。角色只决定能否消费工具；`requiredPermissions` 是工具自身能力。
@@ -473,7 +478,7 @@ Transport: READY --CRASH--> DEGRADED
   ],
   "tools": [
     { "id": "race-ops.repo_read", "state": "REGISTERED", "allowed": true, "reason": null },
-    { "id": "race-ops.repo_edit", "state": "REGISTERED", "allowed": false, "reason": "race-ops.edit" }
+    { "id": "race-ops.repo_edit", "state": "REGISTERED", "allowed": false, "reason": "role-missing: operator" }
   ]
 }
 ```

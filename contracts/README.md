@@ -22,43 +22,36 @@ declares which roles may consume it and which technical permissions it needs.
 | `routes.schema.json` | JSON Schema for `GET /v1/agent/routes`. |
 | `FIELDS.zh-CN.md` | Chinese field reference. |
 | `examples/routes.<role>.json` | Golden route tables generated from tools + roles. |
+| `REFERENCE.md` | Generated human-readable roles, tools, and role-to-operation matrix. Do not hand-edit. |
 | `ERRORS.md` | Stable error codes. |
 
 ## Current scope
 
-- `race-ops`: one atomic tool. Roles: `operator`, `admin`.
-  - 11 operations: `repo_status`, `repo_clone`, `repo_pull`, `repo_read`,
-    `repo_search`, `repo_edit`, `pr_create`, `pr_list`, `pr_preview`,
-    `pr_merge`, `mmw_tools_run`.
-  - `requiredPermissions`: `github:contents:write`, `github:pull_requests:write`.
-    These are the tool's technical needs, not user grants.
-- `mmw-tools-status`: `always: true`; one operation `mmw_tools_status`.
-- `viewer` and `editor` are reserved roles with no tools yet. `race-ops` is
-  atomic in v2, so they cannot consume it without also getting edit/merge.
-  Confirmed by product on 2026-11-05: keep them without race-ops access for now.
-- `pr_merge` is an operation of `race-ops`. Under model A, any role that can
-  consume `race-ops` can reach it; the final protection is host confirmation +
-  GitHub branch protection, not a separate Feishu permission.
+The authoritative tool list, role list, and role-to-operation matrix are generated
+in [`REFERENCE.md`](REFERENCE.md). This section only records the decisions behind
+the current shape:
 
-## Future: operation-level roles
+- `race-ops` is one atomic tool consumed by `operator` and `admin`. Its
+  `requiredPermissions` are the tool's technical needs, not user grants.
+- `mmw-tools-status` is available to every authenticated member.
+- `viewer` and `editor` are reserved roles with no tools yet. Because `race-ops`
+  is atomic in v2, granting them access would also grant edit/merge. Product
+  confirmed on 2026-11-05 to keep them without race-ops access for now.
+- `pr_merge` is an operation of `race-ops`. Under the current tool-level model,
+  any role that can consume `race-ops` can reach it; the final protection is host
+  confirmation + GitHub branch protection, not a separate Feishu permission.
 
-`tools.json` operations accept an optional `roles` array:
+## Operation-level roles
 
-```json
-"operations": [
-  {
-    "id": "pr_merge",
-    "publicName": "mcp__mmw-tools__pr_merge",
-    "risk": "write",
-    "roles": ["admin"]
-  }
-]
-```
+`tools.json` operations accept an optional `roles` array. When present, it
+overrides the tool's roles for that operation. The gate and auth core both
+resolve `operation.roles ?? tool.roles`, so introducing a narrower operation is
+a data change, not a gate rewrite. The route table includes both `allowed` tool
+IDs and `allowedOperations` full IDs for that reason.
 
-When present, it overrides the tool's roles for that operation. The gate already
-resolves `operation.roles ?? tool.roles`, so moving from model A to model B is a
-data change, not a gate rewrite. The route table includes both `allowed` tool IDs
-and `allowedOperations` full IDs for that reason.
+The field is supported but **currently unpopulated**. Whether to split
+`viewer`/`editor` onto read-only operations is an open product decision; see
+[`docs/DOCUMENTATION.md`](../docs/DOCUMENTATION.md) and the routing design.
 
 ## Route table semantics
 

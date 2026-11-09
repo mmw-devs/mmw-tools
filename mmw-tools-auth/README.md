@@ -156,24 +156,23 @@ node scripts/check-contracts.mjs
 
 ## 端点
 
+端点签名与状态码以 [`src/server.mjs`](src/server.mjs) 为准；下表只用于导航，不是契约。
+返回体字段以 `src/` 中的响应构造函数为准，文档不复制 JSON 示例。
+
 | Method | Path | 说明 |
 |---|---|---|
-| `GET` | `/health` | 健康检查；返回 `catalogRevision` |
-| `POST` | `/v1/login/start` | 创建插件登录事务；返回 `loginId` / `pollSecret` / `loginUrl` |
-| `GET` | `/auth/feishu/start` | 浏览器 OAuth 入口；无 `login` 时用于管理 UI 登录 |
-| `GET` | `/auth/feishu/callback` | OAuth 回调；校验 state + browser cookie + PKCE |
-| `GET` | `/v1/login/:id` | 插件轮询；授权后返回一次性 `pluginToken` |
-| `GET` | `/v1/me` | 插件身份、角色、`isAdmin`、`policyRevision` |
-| `POST` | `/v1/session/refresh` | 轮换插件 token；旧 token 立即失效 |
+| `GET` | `/health` | 健康检查；返回契约版本与 `catalogRevision` |
+| `POST` | `/v1/login/start` | 创建插件登录事务 |
+| `GET` | `/auth/feishu/start` | 浏览器 OAuth 入口 |
+| `GET` | `/auth/feishu/callback` | OAuth 回调 |
+| `GET` | `/v1/login/:id` | 插件轮询登录结果 |
+| `GET` | `/v1/me` | 插件身份、角色与策略版本 |
+| `POST` | `/v1/session/refresh` | 轮换插件 token |
 | `POST` | `/v1/session/logout` | 撤销当前插件 token |
-| `GET` | `/v1/agent/routes` | **授权表**：`allowed` / `denied` / `catalogRevision` / `policyRevision` / `ttlSeconds` |
-| `POST` | `/v1/agent/events` | 执行侧审计事件；只收 tool ID/结果/时间，不收参数 |
-| `GET` | `/` | 管理 UI（浏览器 session） |
-| `GET` | `/api/me` | 管理 UI 当前身份 + CSRF |
-| `GET` | `/api/admin/roles` | 角色列表，来自 `roles.json`（`admin` 角色） |
-| `GET` | `/api/admin/members` | 成员列表（`admin` 角色） |
-| `PATCH` | `/api/admin/members/:id` | 角色/停用（`admin` 角色 + CSRF） |
-| `GET` | `/api/admin/audit` | 最近操作（`admin` 角色） |
+| `GET` | `/v1/agent/routes` | 授权表（allowed / denied / 版本 / TTL） |
+| `POST` | `/v1/agent/events` | 执行侧审计事件 |
+| `GET` | `/` | 管理 UI |
+| `/api/admin/*` | 管理接口 | 角色、成员、审计；写请求需 CSRF |
 
 ## 状态与安全
 
@@ -190,11 +189,11 @@ node scripts/check-contracts.mjs
 node tests/run.mjs
 ```
 
-当前 13 个用例，覆盖：
+测试用例的数量和名称以 `tests/` 为准，不在文档里维护计数。覆盖范围包括：
 
 - 插件登录、身份、空角色、仅 status 的授权表；
 - bootstrap 管理员、最后管理员保护；
-- viewer/editor 授权变化、停用成员；
+- 角色变化、停用成员；
 - 回调重放、换浏览器、错误 pollSecret、租户不符；
 - token 刷新/撤销/过期；
 - 事件审计、CSRF、未登录访问；
@@ -207,6 +206,6 @@ node tests/run.mjs
 - 真实飞书 OAuth 联调和浏览器手测尚未完成。
 - SQLite 单进程；不支持多实例共享同一个库。
 - 管理 UI 目前只编辑角色，不编辑工具目录；目录以 `contracts/` 为准。
-- 没有 per-call 授权接口；插件按 `ttlSeconds` 缓存授权表（v2 为 60 秒）。
-- 没有部署脚本；systemd/nginx 仍按现有 broker 的部署方式手工配置。
+- 没有 per-call 授权接口；插件缓存授权表，缓存上限由 `ttlSeconds` 和操作风险决定。
+- systemd/nginx 目前是脚本 + 手工步骤（见 `deploy/`），还没有自动备份与回滚。
 - `node:sqlite` 会打印 ExperimentalWarning；这是 Node 24 的预期行为。

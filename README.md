@@ -18,9 +18,11 @@ contracts/               shared tool catalog / roles / golden route tables
 
 ## The plugin
 
-**`dsh-mmw-tools` v0.10.0** — broker-backed GitHub App auth, ten MCP tools plus two
-native tools (`mmw_tools_status`, `mmw_tools_run`), a Settings panel, and a
-hardened tool boundary. Full description, configuration, and security model:
+**`dsh-mmw-tools`** — broker-backed GitHub App auth, the MCP tools, two native
+tools (`mmw_tools_status`, `mmw_tools_run`), a Settings panel, and a hardened
+tool boundary. Version and scripts live in
+[`dsh-mmw-tools/package.json`](dsh-mmw-tools/package.json). Full description,
+configuration, and security model:
 [`dsh-mmw-tools/README.md`](dsh-mmw-tools/README.md).
 
 ```sh
@@ -79,8 +81,9 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `dsh-mmw-tools/CHANGELOG.md` | Per-increment history. |
 | `dsh-mmw-tools/docs/` | OAuth walkthrough, operations sync, per-increment design records, release checklist. |
 | `dsh-mmw-tools-design.md` | Architecture and business-logic design (v2, aligned to the `ffxiv-race-ops` `AGENTS.md`). |
-| `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). |
-| `scripts/check-contracts.mjs` | Validates the catalog and regenerates the golden route tables. |
+| `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). Current role/operation matrix: [`contracts/REFERENCE.md`](contracts/REFERENCE.md) (generated). |
+| `scripts/check-contracts.mjs` | Validates the catalog, regenerates the golden route tables and `contracts/REFERENCE.md`. |
+| `scripts/check-docs.mjs` | Rejects stale identifiers in living docs and missing status labels on long-lived docs. See [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md). |
 | `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
 | `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |
@@ -102,11 +105,15 @@ There is no role → permission table: roles decide who may consume a tool;
 ```sh
 node scripts/check-contracts.mjs
 node scripts/check-contracts.mjs --update   # after an intentional catalog change
+node scripts/check-docs.mjs
 ```
 
-The golden route tables live in `contracts/examples/`. See
-[`contracts/README.md`](contracts/README.md) for the v2 model and the
-[`ERRORS.md`](contracts/ERRORS.md) for stable error codes.
+The golden route tables live in `contracts/examples/`; the human-readable matrix
+is `contracts/REFERENCE.md`, both generated. Do not hand-edit either. See
+[`contracts/README.md`](contracts/README.md) for the v2 model, the
+[`ERRORS.md`](contracts/ERRORS.md) for stable error codes, and
+[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) for which document is
+authoritative.
 
 ## Branch cleanup
 

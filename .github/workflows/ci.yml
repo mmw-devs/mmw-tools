@@ -53,6 +53,9 @@ jobs:
       - name: Validate feature contracts
         run: node scripts/check-contracts.mjs
 
+      - name: Check documentation rules
+        run: node scripts/check-docs.mjs
+
       - name: Test branch cleanup policy
         run: node --test scripts/prune-merged-branches.test.mjs
 

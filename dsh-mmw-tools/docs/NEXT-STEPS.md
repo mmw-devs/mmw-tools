@@ -1,5 +1,12 @@
 # Next Steps
 
+> Status: **historical** — frozen at `v0.6.0` (2026-08). Do not use this file to
+> determine current capabilities. Current version and scripts are in
+> [`package.json`](../package.json); the current tool/role contract is
+> [`contracts/REFERENCE.md`](../../contracts/REFERENCE.md).
+> Several statements below were superseded after `v0.6.0`; they are kept as a
+> record, with correction notes where the contradiction is material.
+
 Nothing is blocked. Everything below is deliberately out of scope for
 `v0.6.0`, not unfinished work.
 
@@ -34,6 +41,10 @@ reason to expect that.
 
 ### A merge tool
 
+> Superseded after `v0.6.0`: `contracts/tools.json` and the MCP server now expose
+> `pr_merge`, guarded by an explicit host confirmation. The CI + human review
+> rule below still describes why it is the highest-risk operation.
+
 Intentional. `ffxiv-race-ops` requires CI plus human review before
 `main`, and the whole point of the guard set is that the agent cannot
 skip that. Adding `pr_merge` would mean re-implementing the policy it
@@ -47,6 +58,10 @@ per-repository guard table, and the current `repoBinding` was shaped
 to be a single object on purpose.
 
 ### GitHub App authentication
+
+> Superseded after `v0.6.0`: write operations now go through a broker that
+> authenticates with a GitHub App. The reasoning below applied to the old
+> user-machine-only deployment and no longer describes the current path.
 
 `race-ops-bot`-style App credentials were explicitly out of scope:
 they existed to filter access on the old server-hosted deployment,
