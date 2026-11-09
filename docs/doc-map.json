@@ -4,8 +4,9 @@
     {
       "path": "README.md",
       "status": "living",
-      "defines": "Repository entry point: deliverables, layout, and verification commands.",
+      "defines": "仓库入口：交付物、目录结构与验证命令。",
       "sources": [
+        "AGENTS.md",
         ".github/workflows/ci.yml",
         "scripts/check-contracts.mjs",
         "scripts/check-docs.mjs",
@@ -17,7 +18,7 @@
     {
       "path": "AGENTS.md",
       "status": "living",
-      "defines": "Agent operating rules and the generated document-impact map.",
+      "defines": "Agent 的硬约束、触发条件与生成的文档影响索引。",
       "sources": [
         "docs/doc-map.json",
         "scripts/doc-impact.mjs",
@@ -26,15 +27,25 @@
       ]
     },
     {
+      "path": ".dsh/skills/docs-ssot/SKILL.md",
+      "status": "living",
+      "defines": "文档漂移治理的语义核对流程、Doc-Impact 记录与停止条件。",
+      "sources": [
+        "AGENTS.md",
+        "docs/DOCUMENTATION.md",
+        "scripts/doc-impact.mjs"
+      ]
+    },
+    {
       "path": "contracts/ERRORS.md",
       "status": "living",
-      "defines": "Stable error codes and the response envelope.",
+      "defines": "稳定错误码与响应信封。",
       "sources": []
     },
     {
       "path": "contracts/FIELDS.zh-CN.md",
       "status": "living",
-      "defines": "Field-by-field explanation of the v2 tool-centric contract.",
+      "defines": "v2 tool-centric 契约的逐字段说明。",
       "sources": [
         "contracts/tools.json",
         "contracts/roles.json",
@@ -45,7 +56,7 @@
     {
       "path": "contracts/REFERENCE.md",
       "status": "generated",
-      "defines": "Generated snapshot of the role catalog, tool catalog, and role-to-operation matrix.",
+      "defines": "角色目录、工具目录与角色到操作矩阵的生成快照。",
       "generatedBy": "node scripts/check-contracts.mjs --update",
       "sources": [
         "contracts/tools.json",
@@ -56,7 +67,7 @@
     {
       "path": "contracts/README.md",
       "status": "living",
-      "defines": "The v2 contract model: tool roles, operation overrides, permissions, and generated artifacts.",
+      "defines": "v2 契约模型：工具角色、操作级覆盖、权限与生成产物。",
       "sources": [
         "contracts/tools.json",
         "contracts/roles.json",
@@ -68,19 +79,19 @@
     {
       "path": "dsh-mmw-tools-design.md",
       "status": "historical",
-      "defines": "Architecture and business-logic design (v2, aligned to the race-ops AGENTS.md).",
+      "defines": "架构与业务逻辑设计（v2，对齐 race-ops 的 AGENTS.md）。",
       "sources": []
     },
     {
       "path": "docs/DEPLOYMENTS.md",
       "status": "historical",
-      "defines": "Append-only record of verified deployments.",
+      "defines": "已验证部署的追加式记录。",
       "sources": []
     },
     {
       "path": "docs/DOCUMENTATION.md",
       "status": "living",
-      "defines": "Documentation authority, status labels, generation rules, and impact checks.",
+      "defines": "文档权威顺序、状态标签、生成规则与影响检查。",
       "sources": [
         "docs/doc-map.json",
         "scripts/check-docs.mjs",
@@ -91,7 +102,7 @@
     {
       "path": "docs/OBSERVABILITY.md",
       "status": "living",
-      "defines": "Run-id propagation, audit events, and the trace-storage decision.",
+      "defines": "runId 传播、审计事件与 trace 存储决策。",
       "sources": [
         "dsh-mmw-tools/src/util/**",
         "dsh-mmw-tools/src/gate/**",
@@ -102,25 +113,25 @@
     {
       "path": "dsh-plugin-api-cheatsheet.md",
       "status": "historical",
-      "defines": "Distilled DSH 0.1.5 plugin API reference.",
+      "defines": "DSH 0.1.5 插件 API 精要。",
       "sources": []
     },
     {
       "path": "github-oauth-app-checklist.md",
       "status": "historical",
-      "defines": "GitHub OAuth App registration checklist.",
+      "defines": "GitHub OAuth App 注册清单。",
       "sources": []
     },
     {
       "path": "lark-vs-dsh.md",
       "status": "historical",
-      "defines": "Research notes comparing DSH Feishu plugins with lark-cli.",
+      "defines": "DSH 飞书插件与 lark-cli 的对比研究笔记。",
       "sources": []
     },
     {
       "path": "mmw-tools-routing-layer-plan.md",
       "status": "living",
-      "defines": "Why the authorization layer is shaped this way: decisions, boundaries, and known gaps.",
+      "defines": "授权层为何如此设计：决策、边界与已知缺口。",
       "sources": [
         "mmw-tools-auth/src/**",
         "dsh-mmw-tools/src/gate/**",
@@ -131,7 +142,7 @@
     {
       "path": "mmw-tools-routing-state-machine.md",
       "status": "target design",
-      "defines": "Target state machines for auth, policy, and transport; not shipped behaviour.",
+      "defines": "auth、policy、transport 的目标状态机；不是已交付行为。",
       "sources": [
         "dsh-mmw-tools/src/gate/**",
         "dsh-mmw-tools/src/auth/**",
@@ -142,13 +153,13 @@
     {
       "path": "dsh-mmw-tools/CHANGELOG.md",
       "status": "historical",
-      "defines": "Per-increment history of the plugin.",
+      "defines": "插件逐增量历史。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/README.md",
       "status": "living",
-      "defines": "Plugin install, configuration, tool behavior, security model, and tests.",
+      "defines": "插件安装、配置、工具行为、安全模型与测试。",
       "sources": [
         "dsh-mmw-tools/src/**",
         "dsh-mmw-tools/package.json",
@@ -158,49 +169,49 @@
     {
       "path": "dsh-mmw-tools/docs/AUTH-BROKER.md",
       "status": "historical",
-      "defines": "Design record for the GitHub App + token broker topology.",
+      "defines": "GitHub App + token broker 拓扑的设计记录。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/INCREMENT-2-VERIFICATION.md",
       "status": "historical",
-      "defines": "Client-bundle build decisions verified against DSH source.",
+      "defines": "对照 DSH 源码验证的客户端 bundle 构建决策。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/INCREMENT-3-CHECKLIST.md",
       "status": "historical",
-      "defines": "Per-tool hardening checklist.",
+      "defines": "逐工具加固清单。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/INCREMENT-3-DESIGN.md",
       "status": "historical",
-      "defines": "Design of the eight MCP tools.",
+      "defines": "八个 MCP 工具的设计。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/INCREMENT-4-CHECKLIST.md",
       "status": "historical",
-      "defines": "The mmw_tools_run contract and its non-LLM boundary.",
+      "defines": "mmw_tools_run 契约及其非 LLM 边界。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/INCREMENT-5-DESIGN.md",
       "status": "historical",
-      "defines": "Audit events and storage decisions.",
+      "defines": "审计事件与存储决策。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/NEXT-STEPS.md",
       "status": "historical",
-      "defines": "Frozen v0.6.0 list of deliberately absent capabilities.",
+      "defines": "冻结在 v0.6.0 的“有意缺失能力”清单。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/OPERATIONS-SYNC.md",
       "status": "living",
-      "defines": "Who keeps race-ops AGENTS.md and cordis.patch.yml in sync.",
+      "defines": "谁负责保持 race-ops AGENTS.md 与 cordis.patch.yml 同步。",
       "sources": [
         "dsh-mmw-tools/cordis.patch.yml",
         "dsh-mmw-tools/src/agents-md-check.ts"
@@ -209,7 +220,7 @@
     {
       "path": "dsh-mmw-tools/docs/PANEL-CONTRACT.md",
       "status": "living",
-      "defines": "Settings-panel state machine and action matrix.",
+      "defines": "设置面板状态机与操作矩阵。",
       "sources": [
         "dsh-mmw-tools/src/client/**",
         "dsh-mmw-tools/src/shared/api-paths.ts"
@@ -218,7 +229,7 @@
     {
       "path": "dsh-mmw-tools/docs/PUBLISHING.md",
       "status": "living",
-      "defines": "Release checklist and distribution channels.",
+      "defines": "发布清单与分发渠道。",
       "sources": [
         "dsh-mmw-tools/package.json"
       ]
@@ -226,19 +237,19 @@
     {
       "path": "dsh-mmw-tools/docs/SETTINGS-PANEL-DESIGN.md",
       "status": "historical",
-      "defines": "Settings-panel design record.",
+      "defines": "设置面板设计记录。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/T5-RUNBOOK.md",
       "status": "living",
-      "defines": "Step-by-step real round-trip runbook and stop conditions.",
+      "defines": "真实往返的分步 runbook 与停止条件。",
       "sources": []
     },
     {
       "path": "dsh-mmw-tools/docs/TESTING.md",
       "status": "living",
-      "defines": "Test layers, what each needs, and how to add a case.",
+      "defines": "测试分层、各层依赖与新增用例方式。",
       "sources": [
         "dsh-mmw-tools/package.json",
         "dsh-mmw-tools/tests/**",
@@ -248,13 +259,13 @@
     {
       "path": "dsh-mmw-tools/skills/race-ops-ops/SKILL.md",
       "status": "living",
-      "defines": "The race-ops-ops skill instructions.",
+      "defines": "race-ops-ops skill 的操作说明。",
       "sources": []
     },
     {
       "path": "mmw-tools-auth/README.md",
       "status": "living",
-      "defines": "Auth-core setup, endpoints, security properties, and limitations.",
+      "defines": "auth core 的安装、端点、安全属性与限制。",
       "sources": [
         "mmw-tools-auth/src/**"
       ]
@@ -262,7 +273,7 @@
     {
       "path": "mmw-tools-auth/deploy/README.md",
       "status": "living",
-      "defines": "Production deployment, resource budget, backup/restore, and rollback.",
+      "defines": "生产部署、资源预算、备份恢复与回滚。",
       "sources": [
         "mmw-tools-auth/deploy/*.mjs",
         "mmw-tools-auth/deploy/*.sh",

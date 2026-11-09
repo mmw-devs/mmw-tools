@@ -11,3 +11,4 @@
 *.yaml text eol=lf
 AGENTS.md text eol=lf
 docs/doc-map.json text eol=lf
+.dsh/skills/**/*.md text eol=lf

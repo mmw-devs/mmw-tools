@@ -118,10 +118,12 @@ test("a source glob that matches no tracked file is rejected", () => {
 });
 
 test("empty sources are labelled by document status", () => {
-  const living = [{ path: "docs/live.md", status: "living", defines: "prose", sources: [] }];
-  assert.match(renderDocMap(living), /manual; no automatic trigger/);
-  const historical = [{ path: "docs/old.md", status: "historical", defines: "prose", sources: [] }];
-  assert.match(renderDocMap(historical), /snapshot; no automatic trigger/);
+  const living = [{ path: "docs/live.md", status: "living", defines: "说明", sources: [] }];
+  const livingTable = renderDocMap(living);
+  assert.match(livingTable, /\| 文档 \| 状态 \| 定义内容 \| 这些变化时更新 \|/);
+  assert.match(livingTable, /手动维护；无自动触发/);
+  const historical = [{ path: "docs/old.md", status: "historical", defines: "说明", sources: [] }];
+  assert.match(renderDocMap(historical), /历史快照；无自动触发/);
 });
 
 test("replacing the generated block preserves the surrounding rules", () => {

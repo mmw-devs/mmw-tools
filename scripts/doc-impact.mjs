@@ -154,22 +154,29 @@ function escapeCell(value) {
   return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
+const STATUS_LABELS = {
+  living: "常青",
+  "target design": "目标设计",
+  historical: "历史快照",
+  generated: "生成",
+};
+
 export function renderDocMap(documents) {
   const lines = [
-    "<!-- Generated from docs/doc-map.json. Do not edit by hand. -->",
-    "<!-- Regenerate with: node scripts/doc-impact.mjs --write-agents -->",
+    "<!-- 由 docs/doc-map.json 生成。请勿手改。 -->",
+    "<!-- 重新生成：node scripts/doc-impact.mjs --write-agents -->",
     "",
-    "| Document | Status | Defines | Update when these change |",
+    "| 文档 | 状态 | 定义内容 | 这些变化时更新 |",
     "|---|---|---|---|",
   ];
   for (const document of documents) {
     const sources = document.sources.length === 0
       ? (document.status === "historical"
-        ? "— (snapshot; no automatic trigger)"
-        : "— (manual; no automatic trigger)")
+        ? "—（历史快照；无自动触发）"
+        : "—（手动维护；无自动触发）")
       : document.sources.map((source) => `\`${escapeCell(source)}\``).join("<br>");
     lines.push(
-      `| [\`${escapeCell(document.path)}\`](${document.path}) | ${escapeCell(document.status)} | ${escapeCell(document.defines)} | ${sources} |`,
+      `| [\`${escapeCell(document.path)}\`](${document.path}) | ${escapeCell(STATUS_LABELS[document.status] ?? document.status)} | ${escapeCell(document.defines)} | ${sources} |`,
     );
   }
   return lines.join("\n");

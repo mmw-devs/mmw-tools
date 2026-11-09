@@ -19,6 +19,7 @@ When two documents disagree, the higher entry wins:
 | Plugin version and scripts | [`dsh-mmw-tools/package.json`](../dsh-mmw-tools/package.json) |
 | Deployment layout and host operations | [`mmw-tools-auth/deploy/`](../mmw-tools-auth/deploy/) |
 | Documentation ownership and impact triggers | [`docs/doc-map.json`](doc-map.json) |
+| Semantic document-update procedure | [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md) |
 | Documentation checks | [`scripts/check-docs.mjs`](../scripts/check-docs.mjs), [`scripts/doc-impact.mjs`](../scripts/doc-impact.mjs) |
 | CI gates | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 
@@ -105,6 +106,13 @@ in the diff, the job fails with the document and the triggering file. A
 `historical` snapshot or a living procedure may list no sources; that opts it
 out of the automatic trigger, not out of review.
 
+The machine check cannot tell whether the document now states the truth. That
+judgement is the job of the [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md)
+procedure: read the changed behaviour, locate the facts in the document, and
+record one `Doc-Impact:` line per affected document in the pull request. A
+no-semantic-change claim is allowed, but it must cite a checkable reason; a
+whitespace-only edit is not an update.
+
 When a document no longer owns a fact, change the map. Do not weaken the
 document until the check passes.
 
@@ -117,7 +125,8 @@ documents that carry the most operational weight.
 | Document | Status | Purpose |
 |---|---|---|
 | [`README.md`](../README.md) | living | Entry point, verification commands, repository layout. |
-| [`AGENTS.md`](../AGENTS.md) | living | Agent procedure and the generated document-impact map. |
+| [`AGENTS.md`](../AGENTS.md) | living | Agent hard rules and the generated document-impact index. |
+| [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md) | living | Semantic document-update procedure and `Doc-Impact` record format. |
 | [`contracts/REFERENCE.md`](../contracts/REFERENCE.md) | generated | Current roles, tools, and role-to-operation matrix. |
 | [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) | living | Run ids, audit events, and the trace-storage decision. |
 | [`mmw-tools-routing-layer-plan.md`](../mmw-tools-routing-layer-plan.md) | living design | Why the authorization layer is shaped this way; boundaries and gaps. |

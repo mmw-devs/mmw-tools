@@ -74,7 +74,8 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 
 | Path | What |
 |---|---|
-| `AGENTS.md` | Agent procedure: run the document-impact check and update documents in the same change. |
+| `AGENTS.md` | Agent hard rules and the generated document-impact index. |
+| `.dsh/skills/docs-ssot/SKILL.md` | Semantic document-update procedure and `Doc-Impact` record format. |
 | `docs/doc-map.json` | Document-to-source map used by the impact check. |
 | `dsh-mmw-tools/` | The plugin: DSH bundle, stdio MCP server, Settings panel, tests. |
 | `mmw-tools-auth/` | Feishu H5 authorization core: OAuth, members, roles, plugin tokens, route table. See [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). |
@@ -121,9 +122,10 @@ authoritative.
 
 ## Documentation
 
-[`AGENTS.md`](AGENTS.md) is the operating procedure; [`docs/doc-map.json`](docs/doc-map.json)
-says what each document defines and which source changes require touching it.
-Before committing:
+[`AGENTS.md`](AGENTS.md) holds the hard rules; [`docs/doc-map.json`](docs/doc-map.json)
+says what each document defines and which source changes require touching it;
+[`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md) is the semantic
+update procedure. Before committing:
 
 ```sh
 node scripts/doc-impact.mjs --base origin/main --worktree
