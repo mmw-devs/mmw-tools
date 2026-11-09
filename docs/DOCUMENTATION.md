@@ -86,6 +86,7 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
 | [`dsh-mmw-tools/docs/NEXT-STEPS.md`](../dsh-mmw-tools/docs/NEXT-STEPS.md) | historical | v0.6.0 snapshot. Do not use for current capabilities. |
 | [`mmw-tools-auth/README.md`](../mmw-tools-auth/README.md) | living | Auth-core setup and operator-facing behaviour. |
 | [`mmw-tools-auth/deploy/README.md`](../mmw-tools-auth/deploy/README.md) | living | Deployment procedure and host facts. |
+| [`docs/DEPLOYMENTS.md`](DEPLOYMENTS.md) | historical | Append-only record of what each deploy changed and verified. |
 
 ## When in doubt
 
