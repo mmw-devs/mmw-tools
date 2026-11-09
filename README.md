@@ -122,8 +122,9 @@ authoritative.
 
 ## Documentation
 
-[`AGENTS.md`](AGENTS.md) holds the hard rules; [`docs/doc-map.json`](docs/doc-map.json)
-says what each document defines and which source changes require touching it;
+[`AGENTS.md`](AGENTS.md) holds the hard rules and links the map;
+[`docs/doc-map.json`](docs/doc-map.json) says what each document defines and
+which source changes require touching it;
 [`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md) is the semantic
 update procedure. Before committing:
 
@@ -133,12 +134,9 @@ node scripts/doc-impact.mjs --base origin/main --worktree
 
 CI runs the same check against the pull request base, so a source change whose
 document is untouched fails the build. It also rejects a map that omits a
-tracked markdown file or contains a source glob that matches nothing. Regenerate
-the table in `AGENTS.md` after editing the map:
-
-```sh
-node scripts/doc-impact.mjs --write-agents
-```
+tracked markdown file or contains a source glob that matches nothing.
+`AGENTS.md` links to the map instead of copying it, so there is only one table
+to maintain.
 
 ## Branch cleanup
 

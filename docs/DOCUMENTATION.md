@@ -51,8 +51,8 @@ The absence of a label on a long-lived document is a documentation bug.
 CI runs the check, so a contract change that forgets the generated files turns
 the build red.
 
-`node scripts/doc-impact.mjs --write-agents` generates the document table in
-`AGENTS.md` from `docs/doc-map.json`. Do not edit that table by hand.
+`AGENTS.md` links to `docs/doc-map.json`; it does not copy the map into a
+second table. Do not add a generator for a fact that can be linked instead.
 
 Do not add a second generator for the same fact. Extend the existing one.
 
@@ -91,7 +91,6 @@ has to judge the prose.
 ```sh
 node scripts/doc-impact.mjs --base origin/main --worktree  # before committing
 node scripts/doc-impact.mjs --list                          # inspect the map
-node scripts/doc-impact.mjs --write-agents                  # after editing the map
 ```
 
 CI runs the check against the pull request base commit. Before diffing, it
@@ -118,14 +117,15 @@ document until the check passes.
 
 ## Map
 
-The generated table in [`AGENTS.md`](../AGENTS.md) is the complete index of
-every tracked markdown file. This shorter table is a reading guide to the
-documents that carry the most operational weight.
+[`docs/doc-map.json`](doc-map.json) is the complete index of every tracked
+markdown file. [`AGENTS.md`](../AGENTS.md) links to it and does not duplicate
+it. The shorter table below is a reading guide to the documents that carry the
+most operational weight.
 
 | Document | Status | Purpose |
 |---|---|---|
 | [`README.md`](../README.md) | living | Entry point, verification commands, repository layout. |
-| [`AGENTS.md`](../AGENTS.md) | living | Agent hard rules and the generated document-impact index. |
+| [`AGENTS.md`](../AGENTS.md) | living | Agent hard rules and the pointer to the document map. |
 | [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md) | living | Semantic document-update procedure and `Doc-Impact` record format. |
 | [`contracts/REFERENCE.md`](../contracts/REFERENCE.md) | generated | Current roles, tools, and role-to-operation matrix. |
 | [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) | living | Run ids, audit events, and the trace-storage decision. |

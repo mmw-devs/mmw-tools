@@ -1,27 +1,22 @@
 #!/usr/bin/env node
 // Reports which documents must change when a source file changes, and fails
-// when a changed object's document was left untouched. The map lives in
-// docs/doc-map.json; AGENTS.md carries a generated copy of the same table.
+// when a changed object's document was left untouched. The single map lives in
+// docs/doc-map.json; AGENTS.md only links to it and does not copy the table.
 //
 // Usage:
 //   node scripts/doc-impact.mjs --list
 //   node scripts/doc-impact.mjs --base origin/main
 //   node scripts/doc-impact.mjs --base origin/main --worktree
 //   node scripts/doc-impact.mjs --changed src/a.ts,README.md
-//   node scripts/doc-impact.mjs --write-agents
 //
-// Run `--write-agents` after editing docs/doc-map.json. CI runs the check
-// against the pull request's base commit.
+// CI runs the check against the pull request's base commit.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const MANIFEST_PATH = "docs/doc-map.json";
-export const AGENTS_PATH = "AGENTS.md";
-export const START_MARKER = "<!-- doc-map:start -->";
-export const END_MARKER = "<!-- doc-map:end -->";
 
 const STATUSES = new Set(["living", "target design", "historical", "generated"]);
 
@@ -150,49 +145,10 @@ export function validateManifestCoverage(documents, trackedFiles) {
   return errors;
 }
 
-function escapeCell(value) {
-  return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
-}
-
-const STATUS_LABELS = {
-  living: "常青",
-  "target design": "目标设计",
-  historical: "历史快照",
-  generated: "生成",
-};
-
-export function renderDocMap(documents) {
-  const lines = [
-    "<!-- 由 docs/doc-map.json 生成。请勿手改。 -->",
-    "<!-- 重新生成：node scripts/doc-impact.mjs --write-agents -->",
-    "",
-    "| 文档 | 状态 | 定义内容 | 这些变化时更新 |",
-    "|---|---|---|---|",
-  ];
-  for (const document of documents) {
-    const sources = document.sources.length === 0
-      ? (document.status === "historical"
-        ? "—（历史快照；无自动触发）"
-        : "—（手动维护；无自动触发）")
-      : document.sources.map((source) => `\`${escapeCell(source)}\``).join("<br>");
-    lines.push(
-      `| [\`${escapeCell(document.path)}\`](${document.path}) | ${escapeCell(STATUS_LABELS[document.status] ?? document.status)} | ${escapeCell(document.defines)} | ${sources} |`,
-    );
-  }
-  return lines.join("\n");
-}
-
-export function replaceDocMapBlock(text, block) {
-  const start = text.indexOf(START_MARKER);
-  const end = text.indexOf(END_MARKER);
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`AGENTS.md is missing ${START_MARKER} / ${END_MARKER}`);
-  }
-  return `${text.slice(0, start)}${START_MARKER}\n${block}\n${END_MARKER}${text.slice(end + END_MARKER.length)}`;
-}
-
-export function expectedAgentsText(text, documents) {
-  return replaceDocMapBlock(text, renderDocMap(documents));
+export function listDocuments(documents) {
+  return documents
+    .map((document) => `${document.path} [${document.status}] — ${document.defines}`)
+    .join("\n");
 }
 
 export function loadManifest(root = ROOT) {
@@ -251,14 +207,12 @@ function usage() {
   node scripts/doc-impact.mjs --list
   node scripts/doc-impact.mjs --base <commit> [--worktree] [--json]
   node scripts/doc-impact.mjs --changed <paths> [--json]
-  node scripts/doc-impact.mjs --write-agents
 
 Options:
   --base <commit>  Diff base (default: DOC_BASE or origin/main)
   --worktree       Include uncommitted tracked and untracked files
   --changed <paths>  Comma-separated changed files; skips git (useful in a sandbox)
   --list           Print the document map and exit
-  --write-agents   Rewrite the generated table in AGENTS.md
   --json           Print the check result as JSON
   --help           Show this help`);
 }
@@ -269,7 +223,6 @@ function main() {
     base: null,
     worktree: false,
     list: false,
-    writeAgents: false,
     json: false,
     changed: [],
   };
@@ -288,8 +241,6 @@ function main() {
       options.worktree = true;
     } else if (arg === "--list") {
       options.list = true;
-    } else if (arg === "--write-agents") {
-      options.writeAgents = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -314,30 +265,9 @@ function main() {
     return 2;
   }
 
-  const agentsFile = path.join(ROOT, AGENTS_PATH);
-  if (!existsSync(agentsFile)) {
-    console.error(`${AGENTS_PATH}: missing; create it and add the doc-map markers`);
-    return 2;
-  }
-  const agentsText = readFileSync(agentsFile, "utf8");
-  const expected = expectedAgentsText(agentsText, documents);
-  const agentsCurrent = agentsText.replace(/\r\n/g, "\n") === expected.replace(/\r\n/g, "\n");
-
-  if (options.writeAgents) {
-    writeFileSync(agentsFile, expected, "utf8");
-    console.log(`updated ${AGENTS_PATH}: ${documents.length} document entries`);
-    return 0;
-  }
-
   if (options.list) {
-    console.log(renderDocMap(documents));
+    console.log(listDocuments(documents));
     return 0;
-  }
-
-  if (!agentsCurrent) {
-    console.error(`${AGENTS_PATH}: generated document table is stale.`);
-    console.error("Run: node scripts/doc-impact.mjs --write-agents");
-    return 1;
   }
 
   let base;

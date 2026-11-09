@@ -18,7 +18,7 @@
     {
       "path": "AGENTS.md",
       "status": "living",
-      "defines": "Agent 的硬约束、触发条件与生成的文档影响索引。",
+      "defines": "Agent 的硬约束、触发条件与文档映射入口。",
       "sources": [
         "docs/doc-map.json",
         "scripts/doc-impact.mjs",

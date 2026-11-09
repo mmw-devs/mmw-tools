@@ -7,7 +7,7 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 
 这份规程只解决一个问题：**CI 能证明“文档被碰过”，但证明不了“文档改对了”**。语义判断由执行者完成，判断结果必须留下可复核的记录。
 
-权威顺序见 [`docs/DOCUMENTATION.md`](../../../docs/DOCUMENTATION.md)；硬约束和文档索引见 [`AGENTS.md`](../../../AGENTS.md)；文档到源码的映射见 [`docs/doc-map.json`](../../../docs/doc-map.json)。不要在本文件里复制这些内容。
+权威顺序见 [`docs/DOCUMENTATION.md`](../../../docs/DOCUMENTATION.md)；硬约束见 [`AGENTS.md`](../../../AGENTS.md)；文档到源码的唯一映射见 [`docs/doc-map.json`](../../../docs/doc-map.json)。不要在本文件里复制这些内容。
 
 ## 何时使用
 

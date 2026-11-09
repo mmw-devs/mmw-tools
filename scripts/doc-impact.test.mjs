@@ -1,16 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
 import {
-  AGENTS_PATH,
-  expectedAgentsText,
   evaluateImpact,
   globToRegExp,
   loadManifest,
   normalizePath,
-  renderDocMap,
-  replaceDocMapBlock,
   validateManifest,
   validateManifestCoverage,
   ROOT,
@@ -67,16 +61,9 @@ test("one source can trigger one document once", () => {
   assert.deepEqual(violations[0].triggers, ["src/a.ts", "src/c.ts", "src/deep/b.ts"]);
 });
 
-test("the checked-in manifest is valid and the AGENTS table is current", () => {
+test("the checked-in manifest is valid", () => {
   const documents = loadManifest(ROOT);
   assert.deepEqual(validateManifest(documents, ROOT), []);
-
-  const agents = readFileSync(path.join(ROOT, AGENTS_PATH), "utf8");
-  assert.equal(
-    agents.replace(/\r\n/g, "\n"),
-    expectedAgentsText(agents, documents).replace(/\r\n/g, "\n"),
-  );
-  assert.match(renderDocMap(documents), /`docs\/doc-map\.json`/);
 });
 
 test("every tracked markdown file must be listed in the manifest", () => {
@@ -115,28 +102,4 @@ test("a source glob that matches no tracked file is rejected", () => {
   ]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /source "docs\/dead-\*\.md" matches no tracked file/);
-});
-
-test("empty sources are labelled by document status", () => {
-  const living = [{ path: "docs/live.md", status: "living", defines: "说明", sources: [] }];
-  const livingTable = renderDocMap(living);
-  assert.match(livingTable, /\| 文档 \| 状态 \| 定义内容 \| 这些变化时更新 \|/);
-  assert.match(livingTable, /手动维护；无自动触发/);
-  const historical = [{ path: "docs/old.md", status: "historical", defines: "说明", sources: [] }];
-  assert.match(renderDocMap(historical), /历史快照；无自动触发/);
-});
-
-test("replacing the generated block preserves the surrounding rules", () => {
-  const original = [
-    "# Rules",
-    "",
-    "<!-- doc-map:start -->",
-    "old table",
-    "<!-- doc-map:end -->",
-    "",
-    "tail",
-  ].join("\n");
-  const replaced = replaceDocMapBlock(original, "new table");
-  assert.match(replaced, /^# Rules\n\n<!-- doc-map:start -->\nnew table\n<!-- doc-map:end -->\n\ntail$/);
-  assert.throws(() => replaceDocMapBlock("# no markers", "x"), /missing/);
 });
