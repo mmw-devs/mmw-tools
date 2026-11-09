@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily mmw-tools auth database snapshot
+Documentation=file:///opt/mmw-tools-auth/deploy/README.md
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=300
+Persistent=true
+Unit=mmw-tools-auth-backup.service
+
+[Install]
+WantedBy=timers.target

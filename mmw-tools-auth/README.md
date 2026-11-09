@@ -207,5 +207,7 @@ node tests/run.mjs
 - SQLite 单进程；不支持多实例共享同一个库。
 - 管理 UI 目前只编辑角色，不编辑工具目录；目录以 `contracts/` 为准。
 - 没有 per-call 授权接口；插件缓存授权表，缓存上限由 `ttlSeconds` 和操作风险决定。
-- systemd/nginx 目前是脚本 + 手工步骤（见 `deploy/`），还没有自动备份与回滚。
+- systemd/nginx 目前是脚本 + 手工步骤（见 `deploy/`）。`deploy/install-ops.sh`
+  安装每日 SQLite 快照、健康检查定时器和 journald 容量上限；快照默认只留在本机，
+  异地副本需要另外配置。回滚步骤见 `deploy/README.md`。
 - `node:sqlite` 会打印 ExperimentalWarning；这是 Node 24 的预期行为。
