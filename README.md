@@ -46,17 +46,16 @@ routes; it registers all tools statically and checks the `allowed` set on every 
 cd mmw-tools-auth
 cp .env.example .env
 node --env-file=.env src/main.mjs   # http://127.0.0.1:4326
-node tests/run.mjs                  # 13 mock-Feishu tests
+node tests/run.mjs                  # auth-core test suite
 ```
 
 Configuration, bootstrap-admin flow, endpoints, and limitations:
 [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). Deployment steps are in
 [`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md).
 
-**Deployed:** `https://mmw-tools.mmw-team.icu` — `/health` returns
-`{"ok":true,"contractVersion":2,...}`; `api/me` and `/v1/agent/routes` return 401
-without a token. The initial admin (`weunimix`) is configured; the one-time
-bootstrap token has been removed.
+**Deployment:** host layout, TLS, and verification steps are in
+[`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md). The auth
+core listens on loopback only; nginx terminates TLS.
 
 ## First customer: [`mmw-devs/ffxiv-race-ops`](https://github.com/mmw-devs/ffxiv-race-ops)
 
@@ -84,6 +83,7 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). Current role/operation matrix: [`contracts/REFERENCE.md`](contracts/REFERENCE.md) (generated). |
 | `scripts/check-contracts.mjs` | Validates the catalog, regenerates the golden route tables and `contracts/REFERENCE.md`. |
 | `scripts/check-docs.mjs` | Rejects stale identifiers in living docs and missing status labels on long-lived docs. See [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md). |
+| `docs/OBSERVABILITY.md` | Run ids, audit events, and why trace storage is a bounded JSONL file rather than a collector. |
 | `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
 | `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |
@@ -136,7 +136,7 @@ default to a dry run. Add long-lived exceptions with `--keep <pattern>`.
 
 ```sh
 node scripts/check-contracts.mjs
-node mmw-tools-auth/tests/run.mjs   # 14 auth-core assertions
+node mmw-tools-auth/tests/run.mjs
 node --test scripts/prune-merged-branches.test.mjs
 cd dsh-mmw-tools
 pnpm check                    # typecheck, namespace, and the full test suite

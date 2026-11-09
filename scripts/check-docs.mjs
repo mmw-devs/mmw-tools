@@ -13,12 +13,14 @@ const LIVING_DOCS = [
   "README.md",
   "contracts/README.md",
   "docs/DOCUMENTATION.md",
+  "docs/OBSERVABILITY.md",
   "mmw-tools-routing-layer-plan.md",
   "mmw-tools-auth/README.md",
   "dsh-mmw-tools/README.md",
 ];
 
 const STATUS_DOCS = [
+  "docs/OBSERVABILITY.md",
   "mmw-tools-routing-layer-plan.md",
   "mmw-tools-routing-state-machine.md",
   "dsh-mmw-tools/docs/NEXT-STEPS.md",
@@ -29,6 +31,7 @@ const FORBIDDEN = [
   [/\bfeatures\.json\b/, "the feature catalog file was replaced by contracts/tools.json"],
   [/\brace-ops\.(?:read|edit|pr)\b/, "the old permission names were replaced by tool/operation roles"],
   [/当前\s*\d+\s*个用例/, "test counts drift; describe coverage instead"],
+  [/\b\d+\s+(?:[\w.-]+\s+){0,3}(?:tests?|assertions?)\b/i, "test counts drift; describe coverage instead"],
   [/\b(?:ten|nine|eleven|twelve)\s+MCP tools\b/i, "tool counts drift; link to contracts instead"],
 ];
 
