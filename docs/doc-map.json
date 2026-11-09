@@ -31,6 +31,23 @@
       ]
     },
     {
+      "path": "contracts/ERRORS.md",
+      "status": "living",
+      "defines": "Stable error codes and the response envelope.",
+      "sources": []
+    },
+    {
+      "path": "contracts/FIELDS.zh-CN.md",
+      "status": "living",
+      "defines": "Field-by-field explanation of the v2 tool-centric contract.",
+      "sources": [
+        "contracts/tools.json",
+        "contracts/roles.json",
+        "contracts/tools.schema.json",
+        "contracts/routes.schema.json"
+      ]
+    },
+    {
       "path": "contracts/REFERENCE.md",
       "status": "generated",
       "defines": "Generated snapshot of the role catalog, tool catalog, and role-to-operation matrix.",
@@ -52,6 +69,18 @@
         "mmw-tools-auth/src/policy.mjs",
         "scripts/check-contracts.mjs"
       ]
+    },
+    {
+      "path": "dsh-mmw-tools-design.md",
+      "status": "historical",
+      "defines": "Architecture and business-logic design (v2, aligned to the race-ops AGENTS.md).",
+      "sources": []
+    },
+    {
+      "path": "docs/DEPLOYMENTS.md",
+      "status": "historical",
+      "defines": "Append-only record of verified deployments.",
+      "sources": []
     },
     {
       "path": "docs/DOCUMENTATION.md",
@@ -77,9 +106,21 @@
       ]
     },
     {
-      "path": "docs/DEPLOYMENTS.md",
+      "path": "dsh-plugin-api-cheatsheet.md",
       "status": "historical",
-      "defines": "Append-only record of verified deployments.",
+      "defines": "Distilled DSH 0.1.5 plugin API reference.",
+      "sources": []
+    },
+    {
+      "path": "github-oauth-app-checklist.md",
+      "status": "historical",
+      "defines": "GitHub OAuth App registration checklist.",
+      "sources": []
+    },
+    {
+      "path": "lark-vs-dsh.md",
+      "status": "historical",
+      "defines": "Research notes comparing DSH Feishu plugins with lark-cli.",
       "sources": []
     },
     {
@@ -105,9 +146,115 @@
       ]
     },
     {
+      "path": "dsh-mmw-tools/CHANGELOG.md",
+      "status": "historical",
+      "defines": "Per-increment history of the plugin.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/README.md",
+      "status": "living",
+      "defines": "Plugin install, configuration, tool behavior, security model, and tests.",
+      "sources": [
+        "dsh-mmw-tools/src/**",
+        "dsh-mmw-tools/package.json",
+        "dsh-mmw-tools/cordis.patch.yml"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/docs/AUTH-BROKER.md",
+      "status": "historical",
+      "defines": "Design record for the GitHub App + token broker topology.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/INCREMENT-2-VERIFICATION.md",
+      "status": "historical",
+      "defines": "Client-bundle build decisions verified against DSH source.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/INCREMENT-3-CHECKLIST.md",
+      "status": "historical",
+      "defines": "Per-tool hardening checklist.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/INCREMENT-3-DESIGN.md",
+      "status": "historical",
+      "defines": "Design of the eight MCP tools.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/INCREMENT-4-CHECKLIST.md",
+      "status": "historical",
+      "defines": "The mmw_tools_run contract and its non-LLM boundary.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/INCREMENT-5-DESIGN.md",
+      "status": "historical",
+      "defines": "Audit events and storage decisions.",
+      "sources": []
+    },
+    {
       "path": "dsh-mmw-tools/docs/NEXT-STEPS.md",
       "status": "historical",
       "defines": "Frozen v0.6.0 list of deliberately absent capabilities.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/OPERATIONS-SYNC.md",
+      "status": "living",
+      "defines": "Who keeps race-ops AGENTS.md and cordis.patch.yml in sync.",
+      "sources": [
+        "dsh-mmw-tools/cordis.patch.yml",
+        "dsh-mmw-tools/src/agents-md-check.ts"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/docs/PANEL-CONTRACT.md",
+      "status": "living",
+      "defines": "Settings-panel state machine and action matrix.",
+      "sources": [
+        "dsh-mmw-tools/src/client/**",
+        "dsh-mmw-tools/src/shared/api-paths.ts"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/docs/PUBLISHING.md",
+      "status": "living",
+      "defines": "Release checklist and distribution channels.",
+      "sources": [
+        "dsh-mmw-tools/package.json"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/docs/SETTINGS-PANEL-DESIGN.md",
+      "status": "historical",
+      "defines": "Settings-panel design record.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/T5-RUNBOOK.md",
+      "status": "living",
+      "defines": "Step-by-step real round-trip runbook and stop conditions.",
+      "sources": []
+    },
+    {
+      "path": "dsh-mmw-tools/docs/TESTING.md",
+      "status": "living",
+      "defines": "Test layers, what each needs, and how to add a case.",
+      "sources": [
+        "dsh-mmw-tools/package.json",
+        "dsh-mmw-tools/tests/**",
+        "dsh-mmw-tools/mcp-server/tests/**"
+      ]
+    },
+    {
+      "path": "dsh-mmw-tools/skills/race-ops-ops/SKILL.md",
+      "status": "living",
+      "defines": "The race-ops-ops skill instructions.",
       "sources": []
     },
     {
@@ -120,16 +267,6 @@
         "mmw-tools-auth/src/auth.mjs",
         "mmw-tools-auth/src/feishu.mjs",
         "mmw-tools-auth/src/store.mjs"
-      ]
-    },
-    {
-      "path": "dsh-mmw-tools/README.md",
-      "status": "living",
-      "defines": "Plugin install, configuration, tool behavior, security model, and tests.",
-      "sources": [
-        "dsh-mmw-tools/src/**",
-        "dsh-mmw-tools/package.json",
-        "dsh-mmw-tools/cordis.patch.yml"
       ]
     },
     {

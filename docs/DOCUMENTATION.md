@@ -95,8 +95,9 @@ node scripts/doc-impact.mjs --write-agents                  # after editing the 
 
 CI runs the check against the pull request base commit. If a changed source
 matches a document's globs and the document itself is not in the diff, the job
-fails with the document and the triggering file. A `historical` snapshot may
-list no sources; that opts it out of the automatic trigger, not out of review.
+fails with the document and the triggering file. A `historical` snapshot or a
+living procedure may list no sources; that opts it out of the automatic trigger,
+not out of review.
 
 When a document no longer owns a fact, change the map. Do not weaken the
 document until the check passes.

@@ -78,6 +78,13 @@ test("the checked-in manifest is valid and the AGENTS table is current", () => {
   assert.match(renderDocMap(documents), /`docs\/doc-map\.json`/);
 });
 
+test("empty sources are labelled by document status", () => {
+  const living = [{ path: "docs/live.md", status: "living", defines: "prose", sources: [] }];
+  assert.match(renderDocMap(living), /manual; no automatic trigger/);
+  const historical = [{ path: "docs/old.md", status: "historical", defines: "prose", sources: [] }];
+  assert.match(renderDocMap(historical), /snapshot; no automatic trigger/);
+});
+
 test("replacing the generated block preserves the surrounding rules", () => {
   const original = [
     "# Rules",

@@ -136,7 +136,9 @@ export function renderDocMap(documents) {
   ];
   for (const document of documents) {
     const sources = document.sources.length === 0
-      ? "— (snapshot; no automatic trigger)"
+      ? (document.status === "historical"
+        ? "— (snapshot; no automatic trigger)"
+        : "— (manual; no automatic trigger)")
       : document.sources.map((source) => `\`${escapeCell(source)}\``).join("<br>");
     lines.push(
       `| [\`${escapeCell(document.path)}\`](${document.path}) | ${escapeCell(document.status)} | ${escapeCell(document.defines)} | ${sources} |`,
