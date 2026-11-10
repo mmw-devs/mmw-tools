@@ -76,7 +76,7 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 |---|---|
 | `AGENTS.md` | Agent hard rules and the generated document-impact index. |
 | `.dsh/skills/docs-ssot/SKILL.md` | Semantic document-update procedure and `Doc-Impact` record format. |
-| `docs/doc-map.json` | Document-to-source map used by the impact check. |
+| `scripts/doc-map.json` | Document-to-source map used by the impact check. |
 | `dsh-mmw-tools/` | The plugin: DSH bundle, stdio MCP server, Settings panel, tests. |
 | `mmw-tools-auth/` | Feishu H5 authorization core: OAuth, members, roles, plugin tokens, route table. See [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). |
 | `mmw-tools-auth/deploy/` | systemd/nginx/TLS install, verified SQLite snapshots, health timer, rollback. See [`deploy/README.md`](mmw-tools-auth/deploy/README.md). |
@@ -123,7 +123,7 @@ authoritative.
 ## Documentation
 
 [`AGENTS.md`](AGENTS.md) holds the hard rules and links the map;
-[`docs/doc-map.json`](docs/doc-map.json) says what each document defines and
+[`scripts/doc-map.json`](scripts/doc-map.json) says what each document defines and
 which source changes require touching it;
 [`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md) is the semantic
 update procedure. Before committing:

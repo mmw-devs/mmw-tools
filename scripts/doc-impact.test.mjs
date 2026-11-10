@@ -92,7 +92,7 @@ test("a document that is not tracked by git is rejected", () => {
 test("a new untracked markdown must be registered", () => {
   const errors = validateNewMarkdown(fixture, ["docs/new.md", "src/new.ts"]);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /docs\/new\.md: new markdown is not in docs\/doc-map\.json/);
+  assert.match(errors[0], /docs\/new\.md: new markdown is not in scripts\/doc-map\.json/);
   assert.match(errors[0], /docs-ssot skill/);
 });
 

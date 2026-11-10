@@ -1,13 +1,13 @@
 ---
 name: docs-ssot
-description: 当源码改动触发文档影响检查、需要修改 AGENTS.md 或 docs/doc-map.json、或要判断某段文档是否已经漂移时使用。给出语义核对步骤、Doc-Impact 记录格式和停止条件。
+description: 当源码改动触发文档影响检查、需要修改 AGENTS.md 或 scripts/doc-map.json、或要判断某段文档是否已经漂移时使用。给出语义核对步骤、Doc-Impact 记录格式和停止条件。
 ---
 
 # 文档漂移治理规程
 
 这份规程只解决一个问题：**CI 能证明“文档被碰过”，但证明不了“文档改对了”**。语义判断由执行者完成，判断结果必须留下可复核的记录。
 
-权威顺序见 [`docs/DOCUMENTATION.md`](../../../docs/DOCUMENTATION.md)；硬约束见 [`AGENTS.md`](../../../AGENTS.md)；文档到源码的唯一映射见 [`docs/doc-map.json`](../../../docs/doc-map.json)。不要在本文件里复制这些内容。
+权威顺序见 [`docs/DOCUMENTATION.md`](../../../docs/DOCUMENTATION.md)；硬约束见 [`AGENTS.md`](../../../AGENTS.md)；文档到源码的唯一映射见 [`scripts/doc-map.json`](../../../scripts/doc-map.json)。不要在本文件里复制这些内容。
 
 ## 何时使用
 
@@ -49,8 +49,8 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 |---|---|
 | 文档直接写了被改的事实（端点、字段、错误码、默认值、权限、命令） | 在同一个 change 内更新该段，并写 `Doc-Impact: <path> — 已更新：<事实>` |
 | 文档只链接到源，正文没有复制该事实 | 正文可以不动，写 `Doc-Impact: <path> — 无语义变更：<文档只链接，未复制该事实>` |
-| 文档已经不再拥有这条事实，事实迁到了代码或另一份文档 | 改 `docs/doc-map.json` 的 `sources`/`defines`，不要把原文档改成假话；写清迁移去向 |
-| 新增了一个文档 | 在 `docs/doc-map.json` 加条目：`status`、`defines`、`sources`；用 `--worktree` 确认不再报 “new markdown is not in docs/doc-map.json” |
+| 文档已经不再拥有这条事实，事实迁到了代码或另一份文档 | 改 `scripts/doc-map.json` 的 `sources`/`defines`，不要把原文档改成假话；写清迁移去向 |
+| 新增了一个文档 | 在 `scripts/doc-map.json` 加条目：`status`、`defines`、`sources`；用 `--worktree` 确认不再报 “new markdown is not in scripts/doc-map.json” |
 | 文档是 `generated` | 跑生成命令（契约用 `node scripts/check-contracts.mjs --update`），审查生成 diff，禁止手改 |
 | 文档是 `historical` | 不改写正文；需要时追加带日期的更正说明，并说明它不再是当前事实 |
 | 源码改动确实不影响任何文档事实，但文档仍被 glob 命中 | 写 `Doc-Impact: <path> — 无语义变更：<具体依据>`；依据必须是可检查的，例如“该文档只描述 CLI 名称，本次只改内部重试次数” |
@@ -70,7 +70,7 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 
 - 找不到哪份文档拥有被改事实。
 - 文档与代码的冲突需要产品决策（例如角色范围、是否暴露新端点）。
-- 需要改 `scripts/doc-impact.mjs`、`docs/doc-map.json` 或 CI 才能让检查通过，但你不确定这是映射问题还是实现问题。
+- 需要改 `scripts/doc-impact.mjs`、`scripts/doc-map.json` 或 CI 才能让检查通过，但你不确定这是映射问题还是实现问题。
 - 生成文件与源不一致，且你无法判断哪边是权威。
 
 ## 验证

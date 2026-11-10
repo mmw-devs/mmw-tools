@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Reports which documents must change when a source file changes, and fails
 // when a changed object's document was left untouched. The single map lives in
-// docs/doc-map.json; AGENTS.md only links to it and does not copy the table.
+// scripts/doc-map.json; AGENTS.md only links to it and does not copy the table.
 //
 // Usage:
 //   node scripts/doc-impact.mjs --list
@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const MANIFEST_PATH = "docs/doc-map.json";
+export const MANIFEST_PATH = "scripts/doc-map.json";
 
 const STATUSES = new Set(["living", "target design", "historical", "generated"]);
 
@@ -78,7 +78,7 @@ export function evaluateImpact(documents, changedFiles) {
 export function validateManifest(documents, root = ROOT) {
   const errors = [];
   if (!Array.isArray(documents) || documents.length === 0) {
-    return ["docs/doc-map.json: expected a non-empty documents array"];
+    return ["scripts/doc-map.json: expected a non-empty documents array"];
   }
   const seen = new Set();
   for (const document of documents) {
@@ -125,7 +125,7 @@ export function validateManifestCoverage(documents, trackedFiles) {
 
   for (const file of tracked) {
     if (file.endsWith(".md") && !mapped.has(file)) {
-      errors.push(`${file}: tracked markdown is not listed in docs/doc-map.json`);
+      errors.push(`${file}: tracked markdown is not listed in scripts/doc-map.json`);
     }
   }
 
@@ -151,7 +151,7 @@ export function validateNewMarkdown(documents, untrackedFiles) {
     .sort()
     .filter((file) => file.endsWith(".md") && !mapped.has(file))
     .map((file) =>
-      `${file}: new markdown is not in docs/doc-map.json; add an entry with the docs-ssot skill, then rerun the impact check`);
+      `${file}: new markdown is not in scripts/doc-map.json; add an entry with the docs-ssot skill, then rerun the impact check`);
 }
 
 export function listDocuments(documents) {
@@ -283,7 +283,7 @@ function main() {
     }
   }
   if (errors.length > 0) {
-    console.error("docs/doc-map.json is invalid:\n");
+    console.error("scripts/doc-map.json is invalid:\n");
     for (const error of errors) console.error(`- ${error}`);
     return 2;
   }
@@ -331,7 +331,7 @@ function main() {
   for (const violation of violations) {
     console.error(`- ${violation.document} — ${violation.defines}`);
     for (const trigger of violation.triggers) console.error(`    changed: ${trigger}`);
-    console.error("    action: update the document, or change docs/doc-map.json if it no longer defines this fact.");
+    console.error("    action: update the document, or change scripts/doc-map.json if it no longer defines this fact.");
   }
   console.error("\nSee docs/DOCUMENTATION.md and AGENTS.md.");
   return 1;

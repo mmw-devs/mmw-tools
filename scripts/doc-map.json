@@ -11,7 +11,7 @@
         "scripts/check-contracts.mjs",
         "scripts/check-docs.mjs",
         "scripts/doc-impact.mjs",
-        "docs/doc-map.json",
+        "scripts/doc-map.json",
         "mmw-tools-auth/deploy/**"
       ]
     },
@@ -20,7 +20,7 @@
       "status": "living",
       "defines": "Agent 的硬约束、触发条件与文档映射入口。",
       "sources": [
-        "docs/doc-map.json",
+        "scripts/doc-map.json",
         "scripts/doc-impact.mjs",
         "scripts/check-docs.mjs",
         ".github/workflows/ci.yml"
@@ -93,7 +93,7 @@
       "status": "living",
       "defines": "文档权威顺序、状态标签、生成规则与影响检查。",
       "sources": [
-        "docs/doc-map.json",
+        "scripts/doc-map.json",
         "scripts/check-docs.mjs",
         "scripts/doc-impact.mjs",
         ".github/workflows/ci.yml"
