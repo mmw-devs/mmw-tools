@@ -134,9 +134,10 @@ node scripts/doc-impact.mjs --base origin/main --worktree
 
 CI runs the same check against the pull request base, so a source change whose
 document is untouched fails the build. It also rejects a map that omits a
-tracked markdown file or contains a source glob that matches nothing.
-`AGENTS.md` links to the map instead of copying it, so there is only one table
-to maintain.
+tracked markdown file or contains a source glob that matches nothing. With
+`--worktree`, an untracked new markdown that is not in the map is reported
+before it reaches CI. `AGENTS.md` links to the map instead of copying it, so
+there is only one table to maintain.
 
 ## Branch cleanup
 

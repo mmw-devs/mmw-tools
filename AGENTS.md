@@ -28,6 +28,8 @@ Status: living
    node scripts/doc-impact.mjs --changed "src/a.ts,README.md"
    ```
 
+   `--worktree` 也会检查未跟踪的新 markdown；新建文档时，它会把“还没登记”的文件报出来。按 `docs-ssot` skill 在 `docs/doc-map.json` 加条目，再重跑。
+
 2. 输出列出的每个文档，都要在同一个 change 内处理。不能留到下一个 PR。
 3. 按 `docs-ssot` skill 做语义核对，不要只做空白、标点或无关句子的“仪式性修改”。
 4. 在 PR 描述里为每个受影响文档写一行记录：

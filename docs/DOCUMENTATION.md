@@ -105,6 +105,11 @@ in the diff, the job fails with the document and the triggering file. A
 `historical` snapshot or a living procedure may list no sources; that opts it
 out of the automatic trigger, not out of review.
 
+With `--worktree`, untracked markdown is also checked. Creating a new document
+without adding it to `docs/doc-map.json` fails immediately with the new path,
+instead of waiting for CI. The fix is the `docs-ssot` procedure: choose a
+status, write the `defines` line, add the source globs, then rerun the check.
+
 The machine check cannot tell whether the document now states the truth. That
 judgement is the job of the [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md)
 procedure: read the changed behaviour, locate the facts in the document, and

@@ -145,6 +145,15 @@ export function validateManifestCoverage(documents, trackedFiles) {
   return errors;
 }
 
+export function validateNewMarkdown(documents, untrackedFiles) {
+  const mapped = new Set(documents.map((document) => normalizePath(document.path)));
+  return [...new Set(untrackedFiles.map(normalizePath))]
+    .sort()
+    .filter((file) => file.endsWith(".md") && !mapped.has(file))
+    .map((file) =>
+      `${file}: new markdown is not in docs/doc-map.json; add an entry with the docs-ssot skill, then rerun the impact check`);
+}
+
 export function listDocuments(documents) {
   return documents
     .map((document) => `${document.path} [${document.status}] — ${document.defines}`)
@@ -171,6 +180,14 @@ function git(args, cwd = ROOT) {
 function trackedFilesOrNull() {
   try {
     return splitNull(git(["ls-files", "-z"]));
+  } catch {
+    return null;
+  }
+}
+
+function untrackedFilesOrNull() {
+  try {
+    return splitNull(git(["ls-files", "--others", "--exclude-standard", "-z"]));
   } catch {
     return null;
   }
@@ -210,7 +227,7 @@ function usage() {
 
 Options:
   --base <commit>  Diff base (default: DOC_BASE or origin/main)
-  --worktree       Include uncommitted tracked and untracked files
+  --worktree       Include uncommitted tracked and untracked files; report unregistered new markdown
   --changed <paths>  Comma-separated changed files; skips git (useful in a sandbox)
   --list           Print the document map and exit
   --json           Print the check result as JSON
@@ -258,6 +275,12 @@ function main() {
     errors.push(...validateManifestCoverage(documents, trackedFiles));
   } else if (process.env.CI) {
     errors.push("cannot list tracked files with git; the coverage check would be skipped in CI");
+  }
+  if (options.worktree) {
+    const untrackedFiles = untrackedFilesOrNull();
+    if (untrackedFiles) {
+      errors.push(...validateNewMarkdown(documents, untrackedFiles));
+    }
   }
   if (errors.length > 0) {
     console.error("docs/doc-map.json is invalid:\n");

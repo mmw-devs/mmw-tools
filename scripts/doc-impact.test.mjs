@@ -7,6 +7,7 @@ import {
   normalizePath,
   validateManifest,
   validateManifestCoverage,
+  validateNewMarkdown,
   ROOT,
 } from "./doc-impact.mjs";
 
@@ -86,6 +87,17 @@ test("a document that is not tracked by git is rejected", () => {
   ]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /docs\/contract\.md: document is not tracked by git/);
+});
+
+test("a new untracked markdown must be registered", () => {
+  const errors = validateNewMarkdown(fixture, ["docs/new.md", "src/new.ts"]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /docs\/new\.md: new markdown is not in docs\/doc-map\.json/);
+  assert.match(errors[0], /docs-ssot skill/);
+});
+
+test("a new markdown already in the map is not reported", () => {
+  assert.deepEqual(validateNewMarkdown(fixture, ["docs/contract.md"]), []);
 });
 
 test("a source glob that matches no tracked file is rejected", () => {
