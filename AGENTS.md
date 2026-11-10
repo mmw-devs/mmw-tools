@@ -54,4 +54,4 @@ Status: living
 
 ## 文档地图
 
-[`scripts/doc-map.json`](scripts/doc-map.json) 是文档到源码的唯一映射：每个 tracked markdown 的职责、状态和触发它的源码范围都在里面。改源码前先读它；本文件不复制第二份表。
+[`scripts/doc-map.json`](scripts/doc-map.json) 是文档到源码的唯一映射：每个 tracked markdown 的职责、状态和触发它的源码范围都在里面。状态标错也在清单里修正，不要把历史快照改写成“当前”。改源码前先读它；本文件不复制第二份表。

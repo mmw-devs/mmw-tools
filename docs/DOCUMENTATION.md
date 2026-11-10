@@ -38,7 +38,9 @@ Every document that is not a live source starts with one of:
 - `Status: historical` — a snapshot from a named version. It is not updated and
   must not be cited as current. Corrections are append-only notes, not rewrites.
 
-The absence of a label on a long-lived document is a documentation bug.
+The absence of a label on a long-lived document is a documentation bug. A
+document whose body says “design agreed, not yet implemented” belongs under
+`target design`, and the map must use the same label.
 
 ## What must be generated
 
