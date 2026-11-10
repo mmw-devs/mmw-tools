@@ -18,6 +18,9 @@ When two documents disagree, the higher entry wins:
 | Plugin tool map and gate | [`dsh-mmw-tools/src/gate/`](../dsh-mmw-tools/src/gate/) |
 | Plugin version and scripts | [`dsh-mmw-tools/package.json`](../dsh-mmw-tools/package.json) |
 | Deployment layout and host operations | [`mmw-tools-auth/deploy/`](../mmw-tools-auth/deploy/) |
+| Documentation ownership and impact triggers | [`scripts/doc-map.json`](../scripts/doc-map.json) |
+| Semantic document-update procedure | [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md) |
+| Documentation checks | [`scripts/check-docs.mjs`](../scripts/check-docs.mjs), [`scripts/doc-impact.mjs`](../scripts/doc-impact.mjs) |
 | CI gates | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 
 If a narrative document needs one of these facts, it should link to the source
@@ -48,6 +51,9 @@ The absence of a label on a long-lived document is a documentation bug.
 CI runs the check, so a contract change that forgets the generated files turns
 the build red.
 
+`AGENTS.md` links to `scripts/doc-map.json`; it does not copy the map into a
+second table. Do not add a generator for a fact that can be linked instead.
+
 Do not add a second generator for the same fact. Extend the existing one.
 
 ## What not to write by hand
@@ -74,11 +80,58 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
    [`README.md`](../README.md#verify).
 5. Do not hand-edit generated files.
 
+## Document impact
+
+`scripts/doc-map.json` is the machine-readable answer to “what does this
+document define, and which source changes make it stale?” Each entry has a
+`defines` sentence and a list of source globs. The check is deliberately
+narrow: it proves that the document was touched, not that the update is good.
+Review still has to judge the prose.
+
+```sh
+node scripts/doc-impact.mjs --base origin/main --worktree  # before committing
+node scripts/doc-impact.mjs --list                          # inspect the map
+```
+
+CI runs the check against the pull request base commit. Before diffing, it
+validates the map itself: every tracked markdown file must have an entry, every
+entry must be a tracked file, and every source glob must match at least one
+tracked file. That closes the “new document” and “new module under an explicit
+list” holes. The coverage pass needs `git ls-files`; it is skipped only in a
+local sandbox without git, and CI fails closed when git is unavailable.
+
+If a changed source matches a document's globs and the document itself is not
+in the diff, the job fails with the document and the triggering file. A
+`historical` snapshot or a living procedure may list no sources; that opts it
+out of the automatic trigger, not out of review.
+
+With `--worktree`, untracked markdown is also checked. Creating a new document
+without adding it to `scripts/doc-map.json` fails immediately with the new path,
+instead of waiting for CI. The fix is the `docs-ssot` procedure: choose a
+status, write the `defines` line, add the source globs, then rerun the check.
+
+The machine check cannot tell whether the document now states the truth. That
+judgement is the job of the [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md)
+procedure: read the changed behaviour, locate the facts in the document, and
+record one `Doc-Impact:` line per affected document in the pull request. A
+no-semantic-change claim is allowed, but it must cite a checkable reason; a
+whitespace-only edit is not an update.
+
+When a document no longer owns a fact, change the map. Do not weaken the
+document until the check passes.
+
 ## Map
+
+[`scripts/doc-map.json`](../scripts/doc-map.json) is the complete index of every tracked
+markdown file. [`AGENTS.md`](../AGENTS.md) links to it and does not duplicate
+it. The shorter table below is a reading guide to the documents that carry the
+most operational weight.
 
 | Document | Status | Purpose |
 |---|---|---|
 | [`README.md`](../README.md) | living | Entry point, verification commands, repository layout. |
+| [`AGENTS.md`](../AGENTS.md) | living | Agent hard rules and the pointer to the document map. |
+| [`.dsh/skills/docs-ssot/SKILL.md`](../.dsh/skills/docs-ssot/SKILL.md) | living | Semantic document-update procedure and `Doc-Impact` record format. |
 | [`contracts/REFERENCE.md`](../contracts/REFERENCE.md) | generated | Current roles, tools, and role-to-operation matrix. |
 | [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) | living | Run ids, audit events, and the trace-storage decision. |
 | [`mmw-tools-routing-layer-plan.md`](../mmw-tools-routing-layer-plan.md) | living design | Why the authorization layer is shaped this way; boundaries and gaps. |
@@ -87,6 +140,7 @@ table; see `policy.mjs` for the shape” rather than a copied JSON example.
 | [`mmw-tools-auth/README.md`](../mmw-tools-auth/README.md) | living | Auth-core setup and operator-facing behaviour. |
 | [`mmw-tools-auth/deploy/README.md`](../mmw-tools-auth/deploy/README.md) | living | Deployment procedure and host facts. |
 | [`docs/DEPLOYMENTS.md`](DEPLOYMENTS.md) | historical | Append-only record of what each deploy changed and verified. |
+| [`scripts/doc-map.json`](../scripts/doc-map.json) | manifest | Document-to-source map used by the impact check. |
 
 ## When in doubt
 

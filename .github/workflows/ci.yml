@@ -35,6 +35,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The documentation-impact check diffs the pull request against its
+          # base commit; a shallow checkout does not contain that commit.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -55,6 +59,18 @@ jobs:
 
       - name: Check documentation rules
         run: node scripts/check-docs.mjs
+
+      - name: Test document impact map
+        run: node --test scripts/doc-impact.test.mjs
+
+      - name: Check documentation impact
+        env:
+          DOC_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$DOC_BASE" ] || [ "$DOC_BASE" = "0000000000000000000000000000000000000000" ]; then
+            DOC_BASE="origin/main"
+          fi
+          node scripts/doc-impact.mjs --base "$DOC_BASE"
 
       - name: Test branch cleanup policy
         run: node --test scripts/prune-merged-branches.test.mjs

@@ -6,18 +6,14 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadManifest } from "./doc-impact.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const LIVING_DOCS = [
-  "README.md",
-  "contracts/README.md",
-  "docs/DOCUMENTATION.md",
-  "docs/OBSERVABILITY.md",
-  "mmw-tools-routing-layer-plan.md",
-  "mmw-tools-auth/README.md",
-  "dsh-mmw-tools/README.md",
-];
+// 常青文档从映射派生，避免两处维护同一份清单。
+const LIVING_DOCS = loadManifest(ROOT)
+  .filter((document) => document.status === "living")
+  .map((document) => document.path);
 
 const STATUS_DOCS = [
   "docs/OBSERVABILITY.md",
