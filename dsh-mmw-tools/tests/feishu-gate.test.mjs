@@ -132,6 +132,10 @@ try {
   eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "race-ops operation allowed for operator");
   eq((await gate.check("mcp__mmw-tools__pr_merge")).ok, true, "pr_merge allowed by policy; host confirmation is separate");
   eq((await gate.check("mcp__mmw-tools__unknown")).ok, false, "unknown tool is denied");
+  truthy(
+    (await gate.check("mcp__mmw-tools__unknown")).reason.startsWith("[mmw_contract_mismatch]"),
+    "unknown own tool carries the contract-mismatch prefix"
+  );
 
   await auth.logout();
   eq((await auth.view()).signedIn, false, "logout clears the token");
@@ -165,6 +169,7 @@ try {
   const gate = new PolicyGate({ auth: fake, enabled: true });
   const denied = await gate.check("mcp__mmw-tools__repo_read");
   eq(denied.ok, false, "viewer is denied race-ops");
+  truthy(denied.reason.startsWith("[mmw_route_denied]"), "role denial carries the route-denied prefix");
   truthy(denied.reason.includes("operator"), "denial names required roles");
   eq((await gate.check("mmw_tools_status")).ok, true, "status bypasses the role gate");
 }
@@ -243,6 +248,36 @@ try {
     const decision = await gate.check(name);
     eq(decision.ok, false, `no route table denies ${name}`);
     truthy(decision.reason.includes("飞书授权不可用"), `denial explains the outage for ${name}`);
+    truthy(
+      decision.reason.startsWith("[mmw_policy_unavailable]"),
+      `outage denial carries the policy-unavailable prefix for ${name}`
+    );
+  }
+}
+
+// The refusal prefix tells the agent which layer failed: local token, server
+// session, or the policy fetch. The Chinese explanation stays for the human.
+{
+  const cases = [
+    ["auth-required", "[mmw_auth_required]"],
+    ["mmw_auth_required", "[mmw_auth_required]"],
+    ["mmw_session_expired", "[mmw_session_expired]"],
+    ["network", "[mmw_policy_unavailable]"],
+    ["http-500", "[mmw_policy_unavailable]"],
+    ["invalid-response", "[mmw_policy_unavailable]"],
+  ];
+  for (const [code, prefix] of cases) {
+    const gate = new PolicyGate({
+      auth: {
+        routes: async () => {
+          throw new FeishuAuthError(code, `stub failure ${code}`);
+        },
+      },
+      enabled: true,
+    });
+    const decision = await gate.check("mcp__mmw-tools__repo_read");
+    eq(decision.ok, false, `stub ${code} denies`);
+    truthy(decision.reason.startsWith(prefix), `stub ${code} maps to ${prefix}`);
   }
 }
 
@@ -308,6 +343,7 @@ try {
   mode = "revoked";
   const afterRevoke = await gate.check("mcp__mmw-tools__repo_edit");
   eq(afterRevoke.ok, false, "write sees the revoked operation after 15s");
+  truthy(afterRevoke.reason.startsWith("[mmw_route_denied]"), "revocation carries the route-denied prefix");
   truthy(afterRevoke.reason.includes("operator"), "revocation denial names the required role");
   eq(routeFetches, fetchesAfterRead + 1, "write refetched the table");
 

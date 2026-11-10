@@ -21,10 +21,30 @@ All JSON responses that fail use one envelope:
 |---|---|---|---|
 | `mmw_auth_required` | 401 | No plugin token / not logged in | 请先在 Settings → MMW Tools 使用飞书登录 |
 | `mmw_session_expired` | 401 | Plugin token expired or revoked | 登录已过期，请重新登录 |
-| `mmw_route_denied` | 403 | `toolId` is not in the current `allowed` set | 当前账号的角色不能消费该工具 |
-| `mmw_policy_unavailable` | 503 | No usable authorization table, or a write operation has a stale table | 暂时无法确认工具授权，请稍后重试 |
+| `mmw_route_denied` | 403 | The operation is not in `allowedOperations` (v2), or the tool is not in `allowed` (v1) | 当前账号的角色不能消费该工具 |
+| `mmw_policy_unavailable` | 503 | No usable authorization table, a malformed response, or an unreachable core | 暂时无法确认工具授权，请稍后重试 |
 | `mmw_tool_unavailable` | 503 | Transport failed to start or crashed | 工具暂时不可用，请稍后重试 |
 | `mmw_contract_mismatch` | 500 | Local implementation and catalog disagree (`publicName`, roles, or risk) | 插件与功能契约不一致，请升级插件 |
+
+## How a refusal reaches the agent
+
+HTTP clients get the JSON envelope above. MCP tool calls do not: the plugin
+returns the refusal as an error message. Since the O1.2 change that message
+starts with the code in brackets, followed by the human explanation:
+
+```text
+[mmw_route_denied] 当前账号的角色不能消费 race-ops；需要 operator / admin 角色
+```
+
+The bracketed prefix is the stable part; agents may branch on it. The prose after
+it is not stable and may be translated. The gate can emit `mmw_auth_required`,
+`mmw_session_expired`, `mmw_route_denied`, `mmw_policy_unavailable`, and
+`mmw_contract_mismatch`.
+
+`mmw_tool_unavailable` is transport-level. The gate does not emit it because the
+policy decision runs before the MCP child starts, and the transport bridge does
+not yet wrap its own failures with this code. Do not rely on it until that gap
+is closed; see [`docs/CONFORMANCE.md`](../docs/CONFORMANCE.md).
 
 ## Internal / admin codes
 

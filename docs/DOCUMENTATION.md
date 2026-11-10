@@ -142,6 +142,8 @@ most operational weight.
 | [`mmw-tools-auth/README.md`](../mmw-tools-auth/README.md) | living | Auth-core setup and operator-facing behaviour. |
 | [`mmw-tools-auth/deploy/README.md`](../mmw-tools-auth/deploy/README.md) | living | Deployment procedure and host facts. |
 | [`docs/DEPLOYMENTS.md`](DEPLOYMENTS.md) | historical | Append-only record of what each deploy changed and verified. |
+| [`docs/CONFORMANCE.md`](CONFORMANCE.md) | historical | 2026-11-11 claims-vs-evidence snapshot; not current behaviour. |
+| [`docs/MULTI-REPO-ROUTING.md`](MULTI-REPO-ROUTING.md) | target design | Multi-repo authorization options; none implemented. |
 | [`scripts/doc-map.json`](../scripts/doc-map.json) | manifest | Document-to-source map used by the impact check. |
 
 ## When in doubt

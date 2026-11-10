@@ -88,6 +88,12 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 
 “先拒绝、再询问”保证确认框不会成为绕过策略的入口。
 
+拒绝消息以稳定错误码开头（`[mmw_route_denied]`、`[mmw_policy_unavailable]`、
+`[mmw_auth_required]`、`[mmw_session_expired]`、`[mmw_contract_mismatch]`），
+中文说明在后；码表与“哪一层发哪个码”见 [`contracts/ERRORS.md`](contracts/ERRORS.md)。
+`mmw_tool_unavailable` 仍在目标设计里：传输层尚未把启动失败或崩溃包装成这个码，
+插件 README 与 `docs/CONFORMANCE.md` 都按“未发出”记录。
+
 ## 3. 一次调用的路径
 
 ```

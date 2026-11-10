@@ -65,7 +65,10 @@ and `REFERENCE.md`, then run the auth and plugin tests.
 
 `GET /v1/agent/routes` is an authorization table:
 
-- `allowed`: tool IDs the member may consume.
+- `allowed`: tool IDs for which **at least one** operation is available to the
+  member. This is a coarse summary, not a per-call grant: a viewer sees
+  `race-ops` here while `allowedOperations` contains only the read operations.
+  The gate decides on `allowedOperations`.
 - `allowedOperations`: operation full IDs (`toolId.operationId`) the member may
   call; the gate checks this first.
 - `denied`: tools the member cannot consume, with `requiredRoles`.

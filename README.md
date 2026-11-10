@@ -89,6 +89,8 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `scripts/check-docs.mjs` | Rejects stale identifiers in living docs and missing status labels on long-lived docs. See [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md). |
 | `scripts/doc-impact.mjs` | Maps changed source files to the documents that define them; fails when the document was not updated. |
 | `docs/OBSERVABILITY.md` | Run ids, audit events, and why trace storage is a bounded JSONL file rather than a collector. |
+| `docs/CONFORMANCE.md` | 2026-11-11 snapshot of claims vs. evidence; historical, not current behaviour. |
+| `docs/MULTI-REPO-ROUTING.md` | Target design for multi-repo authorization; not implemented. |
 | `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
 | `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |

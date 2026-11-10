@@ -263,6 +263,18 @@
       "sources": []
     },
     {
+      "path": "docs/CONFORMANCE.md",
+      "status": "historical",
+      "defines": "2026-11-11 main@732db95 的声称-证据-判定清单；不是当前行为。",
+      "sources": []
+    },
+    {
+      "path": "docs/MULTI-REPO-ROUTING.md",
+      "status": "target design",
+      "defines": "多仓库授权的 A/B/C 方案对比与推荐；均未实现。",
+      "sources": []
+    },
+    {
       "path": "mmw-tools-auth/README.md",
       "status": "living",
       "defines": "auth core 的安装、端点、安全属性与限制。",

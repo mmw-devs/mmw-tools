@@ -24,7 +24,7 @@ and it is what a contributor should run before every commit.
 | `tests/skills.test.mjs` | the skill catalog and `race-ops-ops` instructions |
 | `tests/client-bundle.test.mjs` | the `__ModuleLoader__` shape of `lib/client.js` |
 | `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
-| `tests/feishu-gate.test.mjs` | authorization tables, gate decisions, token rotation and refresh |
+| `tests/feishu-gate.test.mjs` | authorization tables, gate decisions and refusal-code prefixes, token rotation and refresh |
 | `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
@@ -103,3 +103,6 @@ differently around line endings.
 4. Every refusal in `mcp-server/src/tools/` should have a case in
    `tests/integration-git.test.mjs` (for ordering and side effects) or in
    `mcp-server/tests/guard.test.mjs` (for the guard itself).
+5. Every gate refusal code must have a case that asserts the `[mmw_*]` prefix,
+   not just the Chinese explanation. The prefix is the stable part agents branch
+   on; see `contracts/ERRORS.md`.

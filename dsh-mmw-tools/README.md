@@ -225,7 +225,12 @@ At call time the plugin:
    at 15 s so a revoked writer loses access quickly);
 3. allows the call only if `allowedOperations` contains the operation id; the
    tool-level `allowed` list is a v1 compatibility fallback;
-4. otherwise returns `mmw_route_denied`;
+4. otherwise returns a refusal whose message starts with the stable code in
+   brackets — `[mmw_route_denied]` for a missing operation, `[mmw_auth_required]`
+   / `[mmw_session_expired]` for the token, `[mmw_policy_unavailable]` when the
+   table cannot be fetched, and `[mmw_contract_mismatch]` for an unknown own tool;
+   the Chinese text after the prefix is for humans. `mmw_tool_unavailable` is a
+   transport-level code and is not emitted by this gate;
 5. for `pr_merge`, only after the policy check, asks the operator.
 
 The plugin token is rotated automatically once it is inside its last day: a
