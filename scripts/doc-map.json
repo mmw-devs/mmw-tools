@@ -168,7 +168,7 @@
     },
     {
       "path": "dsh-mmw-tools/docs/AUTH-BROKER.md",
-      "status": "historical",
+      "status": "target design",
       "defines": "GitHub App + token broker 拓扑的设计记录。",
       "sources": []
     },

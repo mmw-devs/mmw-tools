@@ -53,6 +53,7 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 | 新增了一个文档 | 在 `scripts/doc-map.json` 加条目：`status`、`defines`、`sources`；用 `--worktree` 确认不再报 “new markdown is not in scripts/doc-map.json” |
 | 文档是 `generated` | 跑生成命令（契约用 `node scripts/check-contracts.mjs --update`），审查生成 diff，禁止手改 |
 | 文档是 `historical` | 不改写正文；需要时追加带日期的更正说明，并说明它不再是当前事实 |
+| 文档正文说“设计已定、尚未实现”，但 map 标成 `historical` | 改 map 的 `status` 为 `target design`；不要为了通过检查把正文改写成“已实现” |
 | 源码改动确实不影响任何文档事实，但文档仍被 glob 命中 | 写 `Doc-Impact: <path> — 无语义变更：<具体依据>`；依据必须是可检查的，例如“该文档只描述 CLI 名称，本次只改内部重试次数” |
 | 无法判断，或依据依赖未合并的另一个 PR | 写 `needs-human-review` 并停下，不要用空白或标点改动蒙混过关 |
 

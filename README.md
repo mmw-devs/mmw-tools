@@ -74,9 +74,9 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 
 | Path | What |
 |---|---|
-| `AGENTS.md` | Agent hard rules and the generated document-impact index. |
+| `AGENTS.md` | Agent hard rules and the pointer to the document map. |
 | `.dsh/skills/docs-ssot/SKILL.md` | Semantic document-update procedure and `Doc-Impact` record format. |
-| `scripts/doc-map.json` | Document-to-source map used by the impact check. |
+| `scripts/doc-map.json` | Document-to-source map and status labels used by the impact check. |
 | `dsh-mmw-tools/` | The plugin: DSH bundle, stdio MCP server, Settings panel, tests. |
 | `mmw-tools-auth/` | Feishu H5 authorization core: OAuth, members, roles, plugin tokens, route table. See [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). |
 | `mmw-tools-auth/deploy/` | systemd/nginx/TLS install, verified SQLite snapshots, health timer, rollback. See [`deploy/README.md`](mmw-tools-auth/deploy/README.md). |
