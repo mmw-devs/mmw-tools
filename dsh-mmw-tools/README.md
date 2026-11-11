@@ -2,7 +2,7 @@
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge it.
 
-Authentication is broker-mediated (GitHub App); no webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which the host gates behind an explicit confirmation.
+Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived installation token scoped to the repository operations the member's roles allow. No webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which the host gates behind an explicit confirmation.
 
 ```
 agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
@@ -41,7 +41,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
 | `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub | the operator's account must pass the broker's allowlist: a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. The second path is the reason the plugin exists — an outsider can operate the repo without joining the org |
+| GitHub (optional) | only needed when you sign in with GitHub: the account must pass the broker's allowlist — a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. A Feishu member whose roles include this repository's `repo_read` / `repo_edit` / `pr_create` operations does **not** need a GitHub account |
 | Network | `https://race-ops-broker.mmw-team.icu` and `https://mmw-tools.mmw-team.icu` reachable |
 
 No OAuth App, client id or client secret is needed on the operator's machine:
@@ -68,10 +68,15 @@ dialog at the local directory `<clone>/dsh-mmw-tools` instead — the build
 output (`lib/`, `mcp-server/dist/`) is committed, so no build step is needed
 on the operator's machine.
 
-Then open **Settings → MMW Tools** and press **登录 GitHub**.
-Then open **Settings → MMW Tools 授权** and press **使用飞书登录**; the gate
-denies every business tool until that login completes (`mmw_tools_status` is
-the exception).
+Then open **Settings → MMW Tools 授权** and press **使用飞书登录**. This is the
+primary path: the gate denies every business tool until that login completes
+(`mmw_tools_status` is the exception), and the broker mints the repository token
+from the Feishu identity. No GitHub account is involved.
+
+A GitHub login remains available in **Settings → MMW Tools** (button
+**登录 GitHub（可选）**) for people who prefer it or whose Feishu roles do not
+cover the repository. Either credential produces the same kind of short-lived
+installation token; see `docs/AUTH-BROKER.md` §12.
 
 ### Which profile to install into
 
@@ -194,9 +199,9 @@ Three things keep it visible:
 
 | Control | Effect |
 |---|---|
-| **登录 GitHub** | Starts the broker login and opens the verification page |
-| **重新获取仓库权限** | Re-checks the broker's repository access |
-| **退出登录** | Revokes the broker session and clears the local session |
+| **登录 GitHub（可选）** | Starts the broker login and opens the verification page |
+| **重新获取仓库权限** | Re-checks the broker's repository access (GitHub mode only) |
+| **退出登录** | Revokes the broker session and clears the local session (GitHub mode only) |
 
 **Settings → MMW Tools 授权** (Feishu):
 
@@ -204,6 +209,11 @@ Three things keep it visible:
 |---|---|
 | **使用飞书登录** | Opens the auth core, then polls until the browser completes |
 | **退出飞书** | Revokes the plugin token and clears `~/.dsh/dsh-mmw-tools-feishu.json` |
+
+When a Feishu credential is active, the GitHub panel reports
+`已登录（飞书）· <member>` and hides the GitHub-only refresh/logout controls;
+**退出飞书** in the Feishu panel ends that session. `mmw_tools_status` reports
+the active `mode` (`feishu`, `github`, or `none`).
 
 The panels are plain React with inline styles; `lib/client.js` registers both
 sections through the DSH web `__ModuleLoader__` factory contract.
@@ -235,6 +245,22 @@ rotation never deletes a replacement token written by a concurrent request.
 
 With `feishu.enabled: true`, a missing/expired token denies business tools.
 `mmw_tools_status` remains callable so the agent can report why.
+
+The Feishu token is also a **repository credential**. When the Git operations
+need an installation token and no GitHub session is preferred, the plugin sends
+the plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it
+with `GET /v1/me` and `GET /v1/agent/routes`, then mints a token whose
+`permissions` are narrowed to what those roles allow:
+
+| Route-table operations | Minted scope |
+|---|---|
+| `race-ops.repo_read` | `contents: read`, `pull_requests: read` |
+| `race-ops.repo_edit` **and** `race-ops.pr_create` | `contents: write`, `pull_requests: write` |
+| neither | refused (`feishu-no-access`) |
+
+The Feishu credential is preferred when both exist; a valid GitHub session is
+the fallback when the Feishu token is stale. The broker-side check is what makes
+the Feishu login a security boundary rather than just a client-side gate.
 
 ### Scope of the Feishu gate
 
@@ -335,7 +361,7 @@ the plugin at all.
 
 **Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
 
-**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
+**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. That installation token may be minted from either a GitHub session or a Feishu plugin token; a Feishu-minted token is narrowed to read or write by the route table, rather than carrying the App's full permission set. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
 
 **Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
 
@@ -389,7 +415,7 @@ on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 
 | Document | Contents |
 |---|---|
-| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, threat model, deployment, ICP blocker |
+| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, the Feishu direct path, threat model, deployment |
 | [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) | The panel's state machine: four phases, action matrix, acceptance checks |
 | [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
 | [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | Step-by-step real round trip against the bound repo: gates, stop conditions, cleanup |

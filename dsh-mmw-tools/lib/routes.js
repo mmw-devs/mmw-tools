@@ -99,11 +99,15 @@ export function makeRoutes(deps) {
                 // accessTokenMasked, scope, ...) are deliberately gone: they
                 // described one credential where there are now two, which is what
                 // let the panel show "configured: true" next to "no_token".
+                const repoAccess = await flow.repoAccess();
+                // Mint before reading the view: for a Feishu-only login the identity
+                // arrives with the installation token, so this order keeps the panel
+                // from flashing an empty login next to "signed_in".
                 const view = await store.view();
                 const phase = await flow.phase();
-                const repoAccess = await flow.repoAccess();
                 writeJson(res, 200, {
                     phase,
+                    mode: view.mode,
                     session: {
                         login: view.login,
                         expiresAt: view.accessTokenExpiresAt,

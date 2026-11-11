@@ -107,6 +107,11 @@ export interface CreateInstallationTokenOptions {
   installationId: string | number;
   /** Restrict the token to these repositories. Omit for all installed. */
   repositories?: string[];
+  /**
+   * Restrict the token's permissions. Omit to inherit the installation's
+   * full set (the broker's membership check needs that).
+   */
+  permissions?: Record<string, string>;
   fetchImpl?: typeof fetch;
   now?: number;
 }
@@ -134,6 +139,9 @@ export async function createInstallationToken(
   const body: Record<string, unknown> = {};
   if (opts.repositories && opts.repositories.length > 0) {
     body.repositories = opts.repositories;
+  }
+  if (opts.permissions && Object.keys(opts.permissions).length > 0) {
+    body.permissions = opts.permissions;
   }
 
   let res: Response;

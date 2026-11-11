@@ -170,6 +170,64 @@ await withServer({}, async ({ base }) => {
   eq(afterRevoke.status, 401, "a revoked session cannot mint");
 });
 
+console.log("\n--- the Feishu header mints without a GitHub session ---");
+{
+  const authCalls = [];
+  const authImpl = async (url, init = {}) => {
+    authCalls.push(String(url));
+    const p = new URL(String(url)).pathname;
+    if (p === "/v1/me") return json({ id: "ou_zhangsan", name: "张三" });
+    if (p === "/v1/agent/routes") {
+      return json({
+        allowedOperations: ["race-ops.repo_read", "race-ops.repo_edit", "race-ops.pr_create"],
+      });
+    }
+    return json({ message: "unexpected" }, 500);
+  };
+  await withServer(
+    {
+      authUrl: "https://auth.example",
+      fetchImpl: authImpl,
+      mintInstallationToken: async (opts = {}) => ({
+        token: "ghs_feishu_http",
+        expiresAt: Date.now() + 3_600_000,
+        permissions: opts.permissions,
+      }),
+    },
+    async ({ base }) => {
+      const res = await post(base, "/installation-token", {
+        headers: { "x-mmw-feishu-token": "fs-plugin-token" },
+      });
+      eq(res.status, 200, "a Feishu header alone mints a token");
+      const body = await res.json();
+      eq(body.token, "ghs_feishu_http", "the minted token is returned");
+      eq(body.authMode, "feishu", "the reply names the Feishu path");
+      eq(body.scope, "write", "the role's operations decide the scope");
+      eq(body.login, "张三", "the Feishu identity is returned");
+      eq(body.permissions?.contents, "write", "the token is scoped to contents:write");
+      eq(authCalls.length, 2, "the broker verified the token with the auth core");
+    }
+  );
+}
+{
+  const authImpl = async (url) => {
+    const p = new URL(String(url)).pathname;
+    if (p === "/v1/me") return json({ id: "ou_nobody", name: "nobody" });
+    if (p === "/v1/agent/routes") return json({ allowedOperations: [] });
+    return json({ message: "unexpected" }, 500);
+  };
+  await withServer(
+    { authUrl: "https://auth.example", fetchImpl: authImpl },
+    async ({ base }) => {
+      const res = await post(base, "/installation-token", {
+        headers: { "x-mmw-feishu-token": "fs-plugin-token" },
+      });
+      eq(res.status, 403, "a role with no access is refused over HTTP");
+      eq((await res.json()).error, "feishu-no-access", "the refusal is machine-readable");
+    }
+  );
+}
+
 console.log("\n--- denial renders a page, and issues nothing ---");
 await withServer({ fetchImpl: fakeGithub({ membership: "none" }).impl }, async ({ base }) => {
   const started = await (await post(base, "/session/start")).json();

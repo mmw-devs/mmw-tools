@@ -1,6 +1,9 @@
 # AUTH-BROKER — GitHub App + token broker
 
-Status: design agreed (topology B). Not yet implemented.
+Status: target design (topology B). The GitHub path is deployed; the Feishu
+direct path (§12) is implemented in the broker and plugin, but stays off until
+the broker sets `MMW_TOOLS_AUTH_URL`. See §12 for what is shipped and what is
+still a gap.
 Supersedes the Device Flow design in `OAUTH-FLOW.md` for repo access.
 Device Flow is not deleted: it is re-scoped to *identity only* (see §3).
 
@@ -18,6 +21,12 @@ three properties that matter:
 2. **user 与 repo 权限解耦**。使用者登录只证明"他是谁"，不产生任何仓库权限。
 3. **撤销是单点的**。从允许名单移除某人，或卸载 App，立即生效；不需要
    逐个仓库改权限。
+
+Since 2026-11-11 there is a second, GitHub-free route: a **Feishu member** whose
+roles include this repository's operations signs in only to the auth core, and
+the broker mints the same kind of installation token from that plugin token
+(§12). The bot identity, the user/repo permission split, and single-point
+revocation are unchanged; what changes is who can ask the broker for a token.
 
 ## 2. 拓扑
 
@@ -44,17 +53,41 @@ three properties that matter:
 
 私钥**只存在于 broker**。插件所在的机器上没有任何能铸造仓库权限的东西。
 
+The Feishu path adds a second front door to the same broker:
+
+```
+┌─────────────┐  1. 飞书登录（浏览器）   ┌──────────────────┐
+│  使用者机器  │ ───────────────────────▶ │  auth core       │
+│  DSH 插件    │ ◀─────────────────────── │  /v1/me, routes  │
+└──────┬──────┘  2. pluginToken (0600)   └──────────────────┘
+       │ 3. POST /installation-token
+       │    X-MMW-Feishu-Token: <pluginToken>
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Broker（腾讯云）                                             │
+│  · 用 pluginToken 调 /v1/me + /v1/agent/routes               │
+│  · 按 allowedOperations 决定 read / write / 拒绝              │
+│  · 用私钥签 JWT → 换**收窄权限**的 installation token          │
+└──────────────────────────────┬───────────────────────────────┘
+                               ▼
+                    GitHub App 已安装到 ffxiv-race-ops
+```
+
+The auth core is the only place that answers "who is this and what may they
+do"; the broker does not keep a second role table.
+
 ## 3. 三个身份层次
 
 | 层 | 证明什么 | 凭据 | 存放 | 有效期 |
 |---|---|---|---|---|
-| 使用者身份 | 你是 mmw-devs 成员 / 在白名单里 | GitHub user token（只用于 `/user`、`/user/memberships/...`，不落盘） | broker 内存 | 用户名 + 校验结果缓存 10 分钟 |
+| 使用者身份 | 你是 `mmw-devs` 成员 / 在白名单里，**或**是有本仓库 operation 的飞书成员 | GitHub user token（只用于 `/user`，不落盘）**或**飞书 pluginToken（auth core 签发，插件 0600 保存） | broker 内存 / 插件本机 | GitHub：校验结果缓存 10 分钟；飞书：pluginToken 自身 TTL |
 | 插件会话 | 这个插件实例已被 broker 认可 | session token（32 字节随机，sha256 存库） | 插件本机 0600 | 12 小时 |
 | 仓库写入 | App 被安装在仓库上且具备权限 | installation token | 插件本机内存（可选缓存 ≤ 50 分钟） | 1 小时 |
 
 关键性质：**session token 不能直接写仓库**。它只能向 broker 换一个 1 小时的
 installation token，而 broker 每次都会重新检查该 session 仍然有效且使用者
-仍在允许名单里。踢人不需要等 token 过期。
+仍在允许名单里。踢人不需要等 token 过期。Feishu 签发的 token 还会按路由表
+收窄 `permissions`，不是 App 的完整权限集。
 
 ## 4. GitHub App 注册清单
 
@@ -107,12 +140,14 @@ Permissions —— **只给这些，其他全部 No access**：
   "pendingSessions": 0,
   "activeSessions": 0,
   "allowCacheEntries": 0,
-  "allowListSize": 3
+  "allowListSize": 3,
+  "feishuEnabled": true
 }
 ```
 
 `allowListSize` 是名单人数（`allowListSize`，不是 `allowlistSize`），部署后用它确认新配置
-真的被加载；不返回姓名，也不返回任何密钥。
+真的被加载；不返回姓名，也不返回任何密钥。`feishuEnabled` 只表示 broker 配了
+`MMW_TOOLS_AUTH_URL`，不代表 auth core 当前可达。
 
 ### `POST /session/start`
 
@@ -185,24 +220,51 @@ https://github.com/login/oauth/authorize
 
 ### `POST /installation-token`
 
+Two credential forms share one mint path:
+
 ```
-Authorization: Bearer <sessionToken>
+Authorization: Bearer <sessionToken>          # GitHub path
+X-MMW-Feishu-Token: <pluginToken>             # Feishu path; no GitHub session
 ```
 
-响应：
+If both are present the Feishu header wins (the plugin sends only one).
+
+Response:
 
 ```json
 {
   "token": "ghs_...",
   "expiresAt": 1780000000000,
   "repository": "mmw-devs/ffxiv-race-ops",
-  "permissions": { "contents": "write", "pull_requests": "write" }
+  "permissions": { "contents": "write", "pull_requests": "write" },
+  "authMode": "feishu",
+  "login": "张三",
+  "scope": "write"
 }
 ```
 
-流程：校验 session（未过期、未撤销）→ **重新确认使用者仍在允许名单**
+`authMode`, `login` and `scope` are present on the Feishu path; a GitHub mint
+returns `authMode: "github"` (and may omit `login`/`scope` for compatibility
+with older brokers).
+
+**GitHub path** — 校验 session（未过期、未撤销）→ **重新确认使用者仍在允许名单**
 （缓存 10 分钟）→ 私钥签 JWT（`iat=now-60s`, `exp=now+540s`）→
 `POST /app/installations/{id}/access_tokens` → 返回 token。
+
+**Feishu path**：
+
+1. `GET /v1/me` with `Authorization: Bearer <pluginToken>`; a string `id` is
+   required.
+2. `GET /v1/agent/routes`; read `allowedOperations`.
+3. Decide the scope: `race-ops.repo_read` → read;
+   `race-ops.repo_edit` **and** `race-ops.pr_create` → write; neither →
+   `403 feishu-no-access` (no mint).
+4. Mint with only the needed permissions — read:
+   `{contents: "read", pull_requests: "read"}`, write:
+   `{contents: "write", pull_requests: "write"}`.
+5. Failure codes: auth core 401/403 → `feishu-auth-rejected`; non-2xx / bad
+   JSON → `feishu-check-failed` / `feishu-bad-response`; network → 
+   `feishu-unreachable`; no `MMW_TOOLS_AUTH_URL` → `feishu-not-configured`.
 
 ### `POST /session/revoke`
 
@@ -261,6 +323,35 @@ session_start      -> session_authorized login=weunimix
 
 无论哪种模式，`BROKER_DENIED_USERS` 里的用户名一律拒绝（应急拉黑）。
 
+### 飞书直连（2026-11-11）
+
+This is a **second authorization source**, not a change to the GitHub allowlist.
+`POST /installation-token` with `X-MMW-Feishu-Token` asks the auth core who the
+member is and what the route table allows. The GitHub org/allowlist check is
+not consulted on this path — the member may have no GitHub account at all.
+
+The scope decision uses the same operation ids the plugin gate uses:
+
+| `allowedOperations` contains | Scope | Minted permissions |
+|---|---|---|
+| `race-ops.repo_read` | read | `contents: read`, `pull_requests: read` |
+| `race-ops.repo_edit` **and** `race-ops.pr_create` | write | `contents: write`, `pull_requests: write` |
+| neither | — | refused, `feishu-no-access` |
+
+Properties worth stating:
+
+- The broker does **not** cache the Feishu decision. Every mint calls
+  `/v1/me` and `/v1/agent/routes`, so a role revocation takes effect on the next
+  token request, not after a TTL.
+- The minted token is narrower than the App's installation token; it carries
+  only the read or write permissions above.
+- A Feishu member is not added to `BROKER_ALLOWED_USERS` and does not need a
+  GitHub username. The two paths are independent.
+
+The residual gap is in §7: a write-scoped token can still call the GitHub API
+directly, including merging a PR. The plugin's `pr_merge` confirmation is a
+client-side control; the broker does not proxy writes.
+
 ## 7. 威胁模型
 
 | 威胁 | 缓解 |
@@ -269,13 +360,17 @@ session_start      -> session_authorized login=weunimix
 | 浏览器 URL 泄漏（历史记录、截图） | `state` ≠ `pollSecret`，只泄漏 `state` 拿不到 session |
 | 回调被重放 | `state` 一次性，用后即焚；5 分钟未回调则过期 |
 | 允许名单里的账号被盗 | installation token 只有 Contents+PR 写，且只限一个仓库；GitHub 侧审计可见 bot 操作时间线 |
+| 飞书 pluginToken 被盗 | 只在该 token 的 TTL 内可用；broker 每次 mint 都向 auth core 复核；撤销角色后下一次 mint 即拒绝；minted token 只带 read 或 contents+pull_requests write |
+| 飞书 write token 被直接使用 | **不防**：`pull_requests: write` 足以直接调 GitHub API 合并 PR；插件侧的 `pr_merge` 确认不是服务端边界。彻底隔离需要 broker 代理写操作 |
 | 私钥泄漏 | 只能重签：GitHub App 删旧 key、生成新 key、重启 broker；已发 installation token 自然 1 小时内过期 |
 | broker 被 DDoS | 每 IP 每分钟 60 次、每 state 轮询 1 次/2 秒；超限 429 |
 | 日志泄漏 | 只记 `login`、`state` 前 8 位、结果码；token 一律不进日志（复用 `redactTokens`） |
 | 中间人 | 强制 HTTPS，HSTS；broker 只监听 127.0.0.1，由 Caddy/nginx 终止 TLS |
 
 **明确不防的**：拿到 installation token 的人可以在 1 小时内任意写仓库
-（这正是它的用途）。所以 token 不落盘，只在内存里，用完即弃。
+（这正是它的用途），包括飞书 write token 直接调 GitHub API 合并 PR。
+插件把 token 写到 0600 文件供 MCP 子进程读取，不是只在内存里用完即弃；
+文件权限和机器账户是这一层的边界。
 
 ## 8. 插件侧改动
 
@@ -321,6 +416,8 @@ BROKER_ORG=mmw-devs
 BROKER_ALLOW_MODE=org
 BROKER_ALLOWED_USERS=
 BROKER_DENIED_USERS=
+# 飞书直连（可选）：配了才会接受 X-MMW-Feishu-Token；broker 必须能访问 auth core。
+MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu
 PORT=8787
 # 出网走本机 mihomo（Clash）的 HTTP 监听口；不开这个，跨境到 github.com
 # 偶尔会卡住（2026-10-29 那次 504 的直接原因）。Node ≥ 24 的 fetch 才会
@@ -503,10 +600,35 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 8a、8b 完全不依赖你的服务器，可以立刻开始。
 
-## 11. 未决
+## 12. 飞书直连：已实现与未实现
 
-1. **域名与证书**：broker 用哪个域名？DNS 能指到腾讯云吗？（callback URL 必须是
-   HTTPS，这一步没完成 8d 无法进行）
-2. **允许名单模式**：`org`（mmw-devs 成员）还是 `list`（手写用户名）？
-3. **App 归属**：注册在 `mmw-devs` 组织下，还是你的个人账号下？组织下更规范，
-   但需要你是组织 owner。
+**已实现（2026-11-11）**
+
+- broker 接受 `X-MMW-Feishu-Token`；用 `/v1/me` 取身份、`/v1/agent/routes` 取
+  `allowedOperations`，按 §6 的表决定 read/write/拒绝，再用收窄的
+  `permissions` mint installation token。
+- 插件先试飞书凭据（`FeishuAuth.credential()`），失败才回退 GitHub session；
+  `/api/mmw-tools/status` 与 `mmw_tools_status` 返回 `mode`。
+- 面板：飞书模式显示「已登录（飞书）」，隐藏「重新获取仓库权限」「退出登录」，
+  GitHub 按钮降级为「登录 GitHub（可选）」。
+- 测试：`broker/tests/core.test.mjs`、`broker/tests/server.test.mjs`、
+  `tests/broker-auth.test.mjs` 覆盖 write/read/无权限/错误码/回退。
+
+**上线步骤**
+
+1. `/opt/race-ops-broker/.env` 加
+   `MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu`。
+2. `systemctl restart race-ops-broker`。
+3. `GET /health` 看到 `"feishuEnabled": true`。
+4. 飞书成员在插件里完成飞书登录，不需要 GitHub 账号。只读要 `viewer`；开 PR
+   要 `editor` 或更高（`repo_edit` + `pr_create`）。
+
+**未实现（仍是缺口）**
+
+- broker 不代理写操作。write token 带 `contents: write` + `pull_requests: write`，
+  拿到后可以直接调 GitHub API，包括合并 PR；插件的 `pr_merge` 确认只是客户端
+  约束。按 operation 逐次代理写是下一步。
+- 撤销角色只在**下一次 mint** 生效；已发出的 token 最多还能用 1 小时（GitHub
+  installation token 的固有 TTL）。
+- 没有按单个 PR/分支再收窄；token 对 App 安装范围内的仓库都有效（目前只装了
+  一个仓库）。

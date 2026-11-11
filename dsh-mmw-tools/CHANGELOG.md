@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — Feishu members can open PRs without a GitHub account
+
+### Added
+
+- **The broker accepts a Feishu plugin token as a second credential.** `POST
+  /installation-token` now also reads `X-MMW-Feishu-Token`, verifies it with
+  the auth core (`/v1/me`, `/v1/agent/routes`), and mints a narrowed
+  installation token: `race-ops.repo_read` → contents/PR read;
+  `race-ops.repo_edit` + `race-ops.pr_create` → contents/PR write; neither →
+  `feishu-no-access`. The org/allowlist path is unchanged, and a GitHub
+  account is no longer required to clone, edit, or open a PR.
+- The broker reads `MMW_TOOLS_AUTH_URL`; `/health` reports `feishuEnabled`.
+  Until it is set, the Feishu header is refused with `feishu-not-configured`.
+- The plugin tries the Feishu credential first (`FeishuAuth.credential()`),
+  falls back to a GitHub session, and reports `mode: "github" | "feishu" |
+  "none"` in `/api/mmw-tools/status` and `mmw_tools_status`. The GitHub panel
+  labels its button `登录 GitHub（可选）` and renders no GitHub refresh/logout
+  controls in Feishu mode.
+
+### Security
+
+- The Feishu check is server-side: a process that calls the broker directly
+  cannot skip the gate. The remaining gap is unchanged in kind: a write-scoped
+  installation token can call the GitHub API directly, including merging a PR.
+
+### Tests
+
+- broker core/server tests cover write/read scope, missing token, missing
+  `MMW_TOOLS_AUTH_URL`, no repository operation, auth-core 401/500.
+- `broker-auth` covers Feishu-only minting, Feishu-over-GitHub preference,
+  fallback when the Feishu token is rejected, and no-credential behaviour.
+
 ## Unreleased — the plugin stopped owning the session's tool set
 
 ### Fixed

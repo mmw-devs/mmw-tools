@@ -37,6 +37,14 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 /** How long an allowlist verdict is trusted before asking GitHub again. */
 const ALLOW_CACHE_MS = 10 * 60 * 1000;
 
+/**
+ * Operations the auth core must grant before this broker hands out a
+ * repository token without a GitHub login.
+ */
+const FEISHU_READ_OPERATION = "race-ops.repo_read";
+const FEISHU_EDIT_OPERATION = "race-ops.repo_edit";
+const FEISHU_PR_OPERATION = "race-ops.pr_create";
+
 export class BrokerRefused extends Error {
   constructor(code, message, status = 403) {
     super(message);
@@ -105,6 +113,9 @@ export class BrokerCore {
     this.allowMode = opts.allowMode ?? "org"; // "org" | "list"
     this.allowList = (opts.allowList ?? []).map((u) => String(u).toLowerCase()).filter(Boolean);
     this.denyList = (opts.denyList ?? []).map((u) => String(u).toLowerCase()).filter(Boolean);
+    // Optional: when set, a Feishu plugin token can substitute for a GitHub
+    // login. The token is verified against the auth core, not trusted.
+    this.authUrl = opts.authUrl ? String(opts.authUrl).replace(/\/+$/, "") : "";
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? (() => Date.now());
     this.sessionTtlMs = opts.sessionTtlMs ?? SESSION_TTL_MS;
@@ -394,6 +405,131 @@ export class BrokerCore {
     return verdict;
   }
 
+  /**
+   * Feishu path: the auth core already knows who this person is and which
+   * operations their roles grant. The broker asks it each time a token is
+   * minted, so a revoked role takes effect on the next refresh.
+   *
+   * The plugin token is a bearer credential: it is forwarded only to the
+   * configured auth service and never logged or persisted here.
+   */
+  async #resolveFeishu(pluginToken) {
+    if (!this.authUrl) {
+      throw new BrokerRefused(
+        "feishu-not-configured",
+        "this broker has no auth service URL configured",
+        503
+      );
+    }
+    const token = String(pluginToken ?? "").trim();
+    if (!token) throw new BrokerRefused("feishu-token-required", "no Feishu credential", 401);
+
+    const me = await this.#authGet("/v1/me", token);
+    if (!me || typeof me.id !== "string" || me.id.length === 0) {
+      throw new BrokerRefused("feishu-bad-response", "the auth service did not identify the member", 502);
+    }
+
+    const routes = await this.#authGet("/v1/agent/routes", token);
+    const operations = Array.isArray(routes.allowedOperations)
+      ? routes.allowedOperations.map(String)
+      : [];
+    const canEdit =
+      operations.includes(FEISHU_EDIT_OPERATION) && operations.includes(FEISHU_PR_OPERATION);
+    const canRead = operations.includes(FEISHU_READ_OPERATION);
+    if (!canRead && !canEdit) {
+      throw new BrokerRefused(
+        "feishu-no-access",
+        `${String(me.name ?? me.id)} 的飞书角色没有该仓库的权限`,
+        403
+      );
+    }
+
+    return {
+      login: String(me.name ?? me.id),
+      scope: canEdit ? "write" : "read",
+    };
+  }
+
+  /** One bounded auth-service call. Errors never echo the token. */
+  async #authGet(pathname, token) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.githubAttempts; attempt++) {
+      try {
+        const signal =
+          typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(this.githubTimeoutMs)
+            : undefined;
+        const res = await this.fetchImpl(`${this.authUrl}${pathname}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            "User-Agent": "dsh-race-ops-broker",
+          },
+          signal,
+        });
+        if (res.status === 401 || res.status === 403) {
+          throw new BrokerRefused(
+            "feishu-auth-rejected",
+            "飞书授权已失效，请重新登录",
+            401
+          );
+        }
+        if (!res.ok) {
+          throw new BrokerRefused(
+            "feishu-check-failed",
+            `the auth service answered HTTP ${res.status}`,
+            502
+          );
+        }
+        const body = await res.json().catch(() => null);
+        if (!body || typeof body !== "object") {
+          throw new BrokerRefused(
+            "feishu-bad-response",
+            "the auth service returned a non-JSON body",
+            502
+          );
+        }
+        return body;
+      } catch (err) {
+        if (err instanceof BrokerRefused) throw err;
+        lastError = err;
+        if (attempt < this.githubAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        }
+      }
+    }
+    throw new BrokerRefused(
+      "feishu-unreachable",
+      `the auth service did not answer within ${this.githubTimeoutMs / 1000}s ` +
+        `(${lastError?.name ?? "network error"})`,
+      502
+    );
+  }
+
+  /**
+   * Mint a token for a Feishu-authenticated member. This is the path that
+   * lets someone without a GitHub account open a PR: the PR is authored by
+   * the App installation, and the person is identified by Feishu.
+   */
+  async issueInstallationTokenForFeishu(pluginToken) {
+    const resolved = await this.#resolveFeishu(pluginToken);
+    const permissions =
+      resolved.scope === "read"
+        ? { contents: "read", pull_requests: "read" }
+        : { contents: "write", pull_requests: "write" };
+    const mint = this.mintInstallationToken ?? defaultMint(this);
+    const result = await mint({ permissions });
+    return {
+      token: result.token,
+      expiresAt: result.expiresAt,
+      repository: this.repository,
+      permissions: result.permissions ?? permissions,
+      authMode: "feishu",
+      login: resolved.login,
+      scope: resolved.scope,
+    };
+  }
+
   /** One installation token, reused briefly for membership checks. */
   async #installationTokenForChecks() {
     const now = this.now();
@@ -516,6 +652,9 @@ export class BrokerCore {
       // Makes the explicit grant visible on /health after a deploy: the
       // count, never the names.
       allowListSize: this.allowList.length,
+      // Whether this deployment can authorize a Feishu member without a
+      // GitHub login. The URL itself is not secret, but it is not needed.
+      feishuEnabled: Boolean(this.authUrl),
     };
   }
 }
@@ -525,7 +664,7 @@ export class BrokerCore {
  * token limited to the single configured repository.
  */
 function defaultMint(core) {
-  return async () => {
+  return async (opts = {}) => {
     const { createInstallationToken } = await import(
       new URL("../lib/auth/github-app.js", import.meta.url).href
     );
@@ -535,6 +674,9 @@ function defaultMint(core) {
       installationId: core.installationId,
       repositories: [core.repo],
       fetchImpl: core.fetchImpl,
+      // Checks (membership) need the App's own permission set, so they call
+      // this without options. Feishu modes pass an explicit, narrower set.
+      ...(opts.permissions ? { permissions: opts.permissions } : {}),
     });
   };
 }
