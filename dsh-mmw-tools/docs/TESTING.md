@@ -33,8 +33,8 @@ and it is what a contributor should run before every commit.
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior |
 | `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback |
-| `broker/tests/core.test.mjs` | broker core state and policy, Feishu scope resolution |
-| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers |
+| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, merge approval, path allow/deny |
+| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |
 

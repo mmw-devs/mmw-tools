@@ -22,6 +22,7 @@ import {
   LIMITS,
   runPreflight,
 } from "../guard.js";
+import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,6 +48,8 @@ export interface PrCreateConfig {
   repoName: string;
   githubToken: string | null;
   remoteName?: string;
+  brokerUrl?: string;
+  writeAuthFile?: string;
 }
 
 const PR_URL_RE = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/;
@@ -83,6 +86,39 @@ export async function prCreate(
   assertNoTokens(input.body, "body");
 
   const draft = input.draft !== false; // default true
+
+  // ---------- Broker proxy ----------
+  // Nothing was pushed locally: the broker created the branch commit through
+  // the GitHub API in repo_edit, and now creates the PR from that head.
+  if (
+    brokerWriteEnabled({
+      brokerUrl: cfg.brokerUrl ?? "",
+      writeAuthFile: cfg.writeAuthFile ?? "",
+    })
+  ) {
+    const result = await brokerWrite<{
+      number?: unknown;
+      url?: unknown;
+      head_sha?: unknown;
+    }>(
+      { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+      "/v1/write/pr_create",
+      { head, base, title: input.title, body: input.body, draft },
+      { timeoutMs: 90_000 }
+    );
+    const url = typeof result.url === "string" ? result.url : "";
+    if (!PR_URL_RE.test(url)) {
+      throw new GithubRefusedError(
+        "pr-url-malformed",
+        `broker returned an unexpected PR URL: ${url || String(result.url)}`
+      );
+    }
+    return {
+      number: typeof result.number === "number" ? result.number : Number(url.match(/\/pull\/(\d+)$/)?.[1] ?? 0),
+      url,
+      head_sha: typeof result.head_sha === "string" ? result.head_sha : "",
+    };
+  }
 
   // ---------- Push ----------
   const remote = cfg.remoteName ?? "origin";

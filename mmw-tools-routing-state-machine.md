@@ -12,8 +12,9 @@
 > 范围：DSH 插件侧的授权执行状态机；飞书鉴权核心只作为输入事件出现。
 > 当前授权单位是 tool（`allowed` tool IDs）；`allowedOperations` 是 operation 级明细。角色只决定能否消费工具；`requiredPermissions` 是工具自身能力。
 > 2026-11-11 补记：`AUTHENTICATED` 现在也可以由飞书 pluginToken 直接进入——broker
-> 用该 token 调 auth core 路由表并按 operation 收窄 installation token，不需要
-> GitHub session；第 4 节的 `LOGIN_PENDING` 轮询仍只描述 GitHub 往返。
+> 用该 token 调 auth core 路由表；客户端只拿只读 installation token，写操作在
+> 2026-11-12 起走 broker `/v1/write/*` 逐次校验，不需要 GitHub session；
+> 第 4 节的 `LOGIN_PENDING` 轮询仍只描述 GitHub 往返。
 
 ---
 

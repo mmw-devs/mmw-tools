@@ -29,6 +29,7 @@ import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { assertSafeRepoPath, assertAllowlisted, assertBranchPrefix, assertWithinLimit, assertNoTokens, runPreflight, GithubRefusedError, LIMITS, } from "../guard.js";
+import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
 const execFileAsync = promisify(execFile);
 /* ============================================================== */
 /*  State machine                                                  */
@@ -80,6 +81,16 @@ export async function repoEdit(input, cfg) {
         throw new GithubRefusedError("commit-message-subject-too-long", `commit_message subject is ${subject.length} chars (max ${LIMITS.COMMIT_MESSAGE_SUBJECT_MAX_CHARS})`);
     }
     // ---------- Step 5: ensure branch exists ----------
+    // Broker mode: the child holds only a read credential. Send the edits to
+    // the broker, which authorizes the member's operation and commits through
+    // GitHub's Git Data API. The legacy local path below stays for stand-alone
+    // use and for hosts that have not enabled the write proxy.
+    if (brokerWriteEnabled({
+        brokerUrl: cfg.brokerUrl ?? "",
+        writeAuthFile: cfg.writeAuthFile ?? "",
+    })) {
+        return editThroughBroker(input, cfg, branch);
+    }
     await ensureBranch(cfg.workingDir, branch, cfg.baseBranch);
     // ---------- Step 5b: one-time prerequisites ----------
     // Deliberately before any edit is written: a failed bootstrap must
@@ -164,6 +175,54 @@ export async function repoEdit(input, cfg) {
         files_changed: input.edits.map((e) => e.path),
         preflight: preflightResult,
         bootstrap: { ran: bootstrap.ran, exit_code: bootstrap.exitCode, stderr: bootstrap.stderr },
+    };
+}
+/** Current head of `branch` on origin, or null when it does not exist. */
+async function resolveBranchHead(cfg, branch) {
+    const owner = cfg.repoOwner ?? "";
+    const repo = cfg.repoName ?? "";
+    const token = cfg.githubToken ?? "";
+    if (!owner || !repo || !token) {
+        throw new GithubRefusedError("broker-read-credential-missing", "broker 写模式需要只读仓库令牌来确认分支基点");
+    }
+    const ref = branch.split("/").map(encodeURIComponent).join("/");
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${ref}`, {
+        headers: {
+            accept: "application/vnd.github+json",
+            authorization: `Bearer ${token}`,
+            "user-agent": "dsh-mmw-tools",
+        },
+    });
+    if (response.status === 404)
+        return null;
+    if (!response.ok) {
+        throw new GithubRefusedError("branch-head-failed", `读取 ${branch} 的 head 失败（HTTP ${response.status}）`);
+    }
+    const data = (await response.json());
+    return typeof data.object?.sha === "string" ? data.object.sha : null;
+}
+async function editThroughBroker(input, cfg, branch) {
+    const baseSha = (await resolveBranchHead(cfg, branch)) ??
+        (await resolveBranchHead(cfg, cfg.baseBranch));
+    if (!baseSha) {
+        throw new GithubRefusedError("base-sha-unavailable", `无法确定 ${branch} 或 ${cfg.baseBranch} 的当前提交`);
+    }
+    const result = await brokerWrite({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/write/repo_edit", {
+        branch,
+        base_sha: baseSha,
+        message: input.commit_message,
+        edits: input.edits,
+    });
+    return {
+        branch: typeof result.branch === "string" ? result.branch : branch,
+        new_commit_sha: typeof result.new_commit_sha === "string" ? result.new_commit_sha : "",
+        files_changed: Array.isArray(result.files_changed)
+            ? result.files_changed
+            : input.edits.map((e) => e.path),
+        // The broker has no checkout to run a local preflight in. CI remains the
+        // authority; the response says so explicitly rather than faking a pass.
+        preflight: { ran: false, exit_code: 0, stdout: "", stderr: "" },
+        bootstrap: { ran: false, exit_code: 0, stderr: "" },
     };
 }
 /* ============================================================== */

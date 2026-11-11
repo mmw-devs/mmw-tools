@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import { readdirSync, readFileSync } from "node:fs";
 import { PLUGIN_ID, PLUGIN_DISPLAY_NAME, PLUGIN_NAMESPACE, CORDIS_INJECT, SYSTEM_PROMPT_SECTION_ORDER, mcpServerEntryPath, } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd } from "./agents-md-check.js";
-import { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+import { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
 import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { installWorkspaceGuard } from "./gate/workspace-guard.js";
@@ -231,7 +231,7 @@ function extendedEnv() {
 // Exported for tests: this is the seam that was broken (the child received
 // no binding at all), so it is asserted directly rather than only through a
 // real spawn, which not every sandbox permits.
-export function mcpBindingEnv(binding, workingDir) {
+export function mcpBindingEnv(binding, workingDir, brokerUrl = "") {
     const env = {
         GHOST_WORKING_DIR: workingDir,
         GHOST_REPO_URL: `https://github.com/${binding.owner}/${binding.name}.git`,
@@ -244,7 +244,12 @@ export function mcpBindingEnv(binding, workingDir) {
         GHOST_PREFLIGHT_CMD: binding.preflight.cmd,
         GHOST_PREFLIGHT_TIMEOUT: String(binding.preflight.timeoutSeconds),
         GHOST_TOKEN_FILE: installationTokenPath(),
+        // The child reads this per call. It carries the identity credential for
+        // broker-proxied writes, not a GitHub installation token.
+        MMW_WRITE_AUTH_FILE: writeAuthPath(),
     };
+    if (brokerUrl)
+        env.MMW_BROKER_URL = brokerUrl;
     if (binding.bootstrap.cmd.length > 0) {
         env.GHOST_BOOTSTRAP_CMD = binding.bootstrap.cmd;
         env.GHOST_BOOTSTRAP_WHEN_MISSING = binding.bootstrap.whenMissing;
@@ -718,6 +723,7 @@ export function apply(ctx, config) {
     const auth = new BrokerAuth({
         brokerUrl,
         installationTokenFile: installationTokenPath(),
+        writeAuthFile: writeAuthPath(),
         // The broker decides which repository a token writes to; this plugin
         // decides which repository it edits. Passing the binding here lets the
         // two be compared instead of failing later as a bare 403.
@@ -943,7 +949,7 @@ export function apply(ctx, config) {
                 const transport = new StdioClientTransport({
                     command: process.execPath,
                     args: [pathToConnect],
-                    env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir) },
+                    env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir, brokerUrl) },
                 });
                 await client.connect(transport);
                 const { tools } = await client.request({ method: "tools/list" }, ListToolsResultSchema);
@@ -1028,6 +1034,6 @@ export const inject = CORDIS_INJECT;
 // (The MCP child process imports from this same bundle via the lib
 //  entry — see NEXT-STEPS.md "Settings web panel".)
 export { mcpServerEntryPath } from "./const.js";
-export { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+export { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
 export { SessionStore } from "./auth/session-store.js";
 export { makeRoutes, API } from "./routes.js";

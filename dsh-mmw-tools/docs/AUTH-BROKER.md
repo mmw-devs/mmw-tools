@@ -330,27 +330,26 @@ This is a **second authorization source**, not a change to the GitHub allowlist.
 member is and what the route table allows. The GitHub org/allowlist check is
 not consulted on this path — the member may have no GitHub account at all.
 
-The scope decision uses the same operation ids the plugin gate uses:
+The scope decision uses the same operation ids the plugin gate uses. The
+`/installation-token` endpoint always answers with a **read-only** client token;
+write operations are proxied per call in §13.
 
-| `allowedOperations` contains | Scope | Minted permissions |
-|---|---|---|
-| `race-ops.repo_read` | read | `contents: read`, `pull_requests: read` |
-| `race-ops.repo_edit` **and** `race-ops.pr_create` | write | `contents: write`, `pull_requests: write` |
-| neither | — | refused, `feishu-no-access` |
+| `allowedOperations` contains | Client token |
+|---|---|
+| any of `repo_read` / `repo_edit` / `pr_create` / `pr_merge` | read: `contents: read`, `pull_requests: read` |
+| none | refused, `feishu-no-access` |
 
 Properties worth stating:
 
 - The broker does **not** cache the Feishu decision. Every mint calls
   `/v1/me` and `/v1/agent/routes`, so a role revocation takes effect on the next
   token request, not after a TTL.
-- The minted token is narrower than the App's installation token; it carries
-  only the read or write permissions above.
+- The client token is read-only even for an `editor` or `operator`. A stolen
+  token file cannot write a branch or merge a PR.
+- Write authorization is checked again on every `/v1/write/*` call (§13); it is
+  not inferred from holding a client token.
 - A Feishu member is not added to `BROKER_ALLOWED_USERS` and does not need a
   GitHub username. The two paths are independent.
-
-The residual gap is in §7: a write-scoped token can still call the GitHub API
-directly, including merging a PR. The plugin's `pr_merge` confirmation is a
-client-side control; the broker does not proxy writes.
 
 ## 7. 威胁模型
 
@@ -359,17 +358,19 @@ client-side control; the broker does not proxy writes.
 | 插件机器被入侵 | 只有 12 小时 session + 1 小时 installation token；`/session/revoke` 立即失效；私钥不在本机 |
 | 浏览器 URL 泄漏（历史记录、截图） | `state` ≠ `pollSecret`，只泄漏 `state` 拿不到 session |
 | 回调被重放 | `state` 一次性，用后即焚；5 分钟未回调则过期 |
-| 允许名单里的账号被盗 | installation token 只有 Contents+PR 写，且只限一个仓库；GitHub 侧审计可见 bot 操作时间线 |
-| 飞书 pluginToken 被盗 | 只在该 token 的 TTL 内可用；broker 每次 mint 都向 auth core 复核；撤销角色后下一次 mint 即拒绝；minted token 只带 read 或 contents+pull_requests write |
-| 飞书 write token 被直接使用 | **不防**：`pull_requests: write` 足以直接调 GitHub API 合并 PR；插件侧的 `pr_merge` 确认不是服务端边界。彻底隔离需要 broker 代理写操作 |
+| 允许名单里的账号被盗 | 客户端 token 只有 Contents/PR 读；写操作要经过 broker 的 `/v1/write/*`，每次重新校验 session 与允许名单；GitHub 侧审计可见 bot 操作时间线 |
+| 飞书 pluginToken 被盗 | 只在该 token 的 TTL 内可用；broker 每次 mint 与每次写调用都向 auth core 复核；撤销角色后下一次调用即拒绝；客户端 token 只读 |
+| 本机进程自行调用 `/v1/write/pr_merge/approval` | **部分防**：approval 绑定 member、PR、head SHA，5 分钟过期且一次性；但它不区分“用户在宿主里点了确认”与“agent 自己发 HTTP”。宿主对 `pr_merge` 的 ask 是 UI 门，不是服务端边界；彻底隔离需要 host-only secret |
 | 私钥泄漏 | 只能重签：GitHub App 删旧 key、生成新 key、重启 broker；已发 installation token 自然 1 小时内过期 |
 | broker 被 DDoS | 每 IP 每分钟 60 次、每 state 轮询 1 次/2 秒；超限 429 |
 | 日志泄漏 | 只记 `login`、`state` 前 8 位、结果码；token 一律不进日志（复用 `redactTokens`） |
 | 中间人 | 强制 HTTPS，HSTS；broker 只监听 127.0.0.1，由 Caddy/nginx 终止 TLS |
 
-**明确不防的**：拿到 installation token 的人可以在 1 小时内任意写仓库
-（这正是它的用途），包括飞书 write token 直接调 GitHub API 合并 PR。
-插件把 token 写到 0600 文件供 MCP 子进程读取，不是只在内存里用完即弃；
+**明确不防的**：broker 内存里的 write token 可以在 1 小时内任意写仓库
+（这正是它的用途），但它不再下发到客户端。客户端拿到的
+`~/.dsh/dsh-mmw-tools-write-auth.json`（0600）只含飞书 pluginToken 或
+GitHub sessionToken，不含 GitHub write token；能读该文件、又能发 HTTP 的
+本地进程可以自行申请 approval 并触发合并，宿主确认拦不住这条路。
 文件权限和机器账户是这一层的边界。
 
 ## 8. 插件侧改动
@@ -397,10 +398,12 @@ client-side control; the broker does not proxy writes.
 callback URL 必须是 HTTPS，所以没有证书这条路走不通。
 
 ```
-/opt/dsh-race-ops-broker/
-  app.pem            # 0400, owner=service user
-  .env               # 0400
-  broker.mjs
+/opt/race-ops-broker/
+  app.pem            # 0400, owner=raceops
+  .env               # 0400, owner=raceops
+  broker/core.mjs
+  broker/server.mjs
+  lib/auth/github-app.js
 ```
 
 `.env`：
@@ -411,11 +414,20 @@ GITHUB_APP_ID=123456
 GITHUB_APP_CLIENT_ID=Iv1...
 GITHUB_APP_CLIENT_SECRET=...
 GITHUB_APP_INSTALLATION_ID=...
-GITHUB_APP_PRIVATE_KEY_PATH=/opt/dsh-race-ops-broker/app.pem
+GITHUB_APP_PRIVATE_KEY_PATH=/opt/race-ops-broker/app.pem
 BROKER_ORG=mmw-devs
 BROKER_ALLOW_MODE=org
 BROKER_ALLOWED_USERS=
 BROKER_DENIED_USERS=
+# 写代理（§13）：默认关闭；开启后客户端仍只拿只读 token。
+BROKER_WRITE_ENABLED=true
+# 与插件侧的 allowlist/denylist 保持一致；逗号分隔，支持 **/*/?。
+BROKER_ALLOWLIST_PATHS=public/data.json,scripts/**
+BROKER_DENYLIST_PATHS=AGENTS.md,.github/**
+BROKER_BASE_BRANCH=main
+BROKER_BRANCH_PREFIX=content/
+# 可选：写审计 JSONL；目录必须对服务用户可写。不配则只写进程日志。
+BROKER_AUDIT_LOG=/opt/race-ops-broker/write-audit.jsonl
 # 飞书直连（可选）：配了才会接受 X-MMW-Feishu-Token；broker 必须能访问 auth core。
 MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu
 PORT=8787
@@ -458,11 +470,12 @@ Description=dsh race-ops broker
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/dsh-race-ops-broker
-ExecStart=/usr/bin/node broker.mjs
+WorkingDirectory=/opt/race-ops-broker
+ExecStart=/usr/local/bin/node /opt/race-ops-broker/broker/server.mjs
 Restart=always
-EnvironmentFile=/opt/dsh-race-ops-broker/.env
-User=broker
+EnvironmentFile=/opt/race-ops-broker/.env
+User=raceops
+Group=raceops
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -602,33 +615,134 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 ## 12. 飞书直连：已实现与未实现
 
-**已实现（2026-11-11）**
+**已实现（2026-11-12）**
 
 - broker 接受 `X-MMW-Feishu-Token`；用 `/v1/me` 取身份、`/v1/agent/routes` 取
-  `allowedOperations`，按 §6 的表决定 read/write/拒绝，再用收窄的
-  `permissions` mint installation token。
+  `allowedOperations`。`/installation-token` 只发只读客户端 token；写操作改为
+  每次调用都校验 operation 的 `/v1/write/*` 代理（§13）。
 - 插件先试飞书凭据（`FeishuAuth.credential()`），失败才回退 GitHub session；
   `/api/mmw-tools/status` 与 `mmw_tools_status` 返回 `mode`。
+- 插件把当前凭据写入 `~/.dsh/dsh-mmw-tools-write-auth.json`（0600），MCP 子进程
+  用它调用 broker；文件里是飞书 pluginToken 或 GitHub sessionToken，不是 GitHub
+  write token。
 - 面板：飞书模式显示「已登录（飞书）」，隐藏「重新获取仓库权限」「退出登录」，
   GitHub 按钮降级为「登录 GitHub（可选）」。
+- MCP 的 `repo_edit` / `pr_create` / `pr_merge` 在有写认证时走 broker；没有写认证
+  时保留旧的本地 git / `gh` 路径，供独立使用与旧测试。
 - 测试：`broker/tests/core.test.mjs`、`broker/tests/server.test.mjs`、
-  `tests/broker-auth.test.mjs` 覆盖 write/read/无权限/错误码/回退。
+  `tests/broker-auth.test.mjs` 覆盖只读 token、写授权、幂等、approval、路径
+  allow/deny 与回退。
 
 **上线步骤**
 
 1. `/opt/race-ops-broker/.env` 加
-   `MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu`。
+   `MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu`，并按 §13 配
+   `BROKER_WRITE_ENABLED=true` 与 allow/deny 列表。
 2. `systemctl restart race-ops-broker`。
-3. `GET /health` 看到 `"feishuEnabled": true`。
+3. `GET /health` 看到 `"feishuEnabled": true` 与 `"writeEnabled": true`。
 4. 飞书成员在插件里完成飞书登录，不需要 GitHub 账号。只读要 `viewer`；开 PR
    要 `editor` 或更高（`repo_edit` + `pr_create`）。
 
 **未实现（仍是缺口）**
 
-- broker 不代理写操作。write token 带 `contents: write` + `pull_requests: write`，
-  拿到后可以直接调 GitHub API，包括合并 PR；插件的 `pr_merge` 确认只是客户端
-  约束。按 operation 逐次代理写是下一步。
-- 撤销角色只在**下一次 mint** 生效；已发出的 token 最多还能用 1 小时（GitHub
-  installation token 的固有 TTL）。
-- 没有按单个 PR/分支再收窄；token 对 App 安装范围内的仓库都有效（目前只装了
-  一个仓库）。
+- 没有 host-only 的 merge secret。能读 0600 写认证文件、又能发 HTTP 的本地进程
+  可以自行申请 approval 并合并；宿主的 `pr_merge` 确认只是 UI 门。
+- 没有按单个 PR/分支再收窄；写代理只校验分支前缀、base 分支与路径 allow/deny。
+- 幂等与 approval 状态在 broker 内存里，重启即丢。approval 丢失只会让合并失败；
+  幂等丢失时重试仍由 `pr_create` 的同 head 查询兜底。
+- 读 token 撤销最多延迟 1 小时（GitHub installation token 的固有 TTL）；写操作
+  每次调用都重新校验，撤销立即生效。
+- 没有 SQLite/多实例；审计是单文件 JSONL，轮转靠外部。
+
+## 13. 写代理（2026-11-12）
+
+客户端不再持有 GitHub write token。`repo_edit`、`pr_create`、`pr_merge` 由
+broker 用内存里的 write token 代执行，broker 是唯一能写仓库的进程。
+
+### 端点
+
+| 方法与路径 | operation | 说明 |
+|---|---|---|
+| `POST /v1/write/repo_edit` | `race-ops.repo_edit` | 用 Git Data API 建 blob/tree/commit/ref |
+| `POST /v1/write/pr_create` | `race-ops.pr_create` | 创建 PR；同 head 的 open PR 直接复用 |
+| `POST /v1/write/pr_merge/approval` | `race-ops.pr_merge` | 取一次性 approval，不合并 |
+| `POST /v1/write/pr_merge` | `race-ops.pr_merge` | 消费 approval 并合并 |
+
+### 凭据与授权
+
+- 飞书：`X-MMW-Feishu-Token: <pluginToken>`；GitHub：`Authorization: Bearer
+  <sessionToken>`。凭据只从 header 读，body 里的同名字段被忽略。
+- 飞书每次调用都重新取 `/v1/agent/routes`，缺对应 operation 返回
+  `feishu-operation-denied`（403），不依赖上一次 mint 的 scope。
+- GitHub session 走 `#sessionFor` + `#checkAllowlist`；组织成员/白名单用户被视为
+  可信写者，不再区分读/写角色。
+- `BROKER_WRITE_ENABLED` 不是 `true` 时所有 `/v1/write/*` 返回
+  `write-disabled`（503）。没有凭据返回 `write-credential-required`（401）。
+- write token 由 broker 以 `contents: write` + `pull_requests: write` mint，
+  缓存 60 秒；它只存在于 broker 内存，响应里不出现。
+
+### `repo_edit`
+
+请求：
+
+```json
+{
+  "branch": "content/foo",
+  "base_sha": "<40 hex>",
+  "message": "…",
+  "edits": [
+    { "path": "src/a.txt", "content": "…" },
+    { "path": "src/b.txt", "delete": true }
+  ],
+  "idempotency_key": "optional"
+}
+```
+
+- `branch` 必须以 `BROKER_BRANCH_PREFIX` 开头；`base_sha` 必须等于该分支当前
+  head（分支不存在时等于 base 分支 head），否则 `base-sha-mismatch`（409）。
+- 路径经 `normalizeRepoPath` 规范化；必须命中 `BROKER_ALLOWLIST_PATHS`，命中
+  `BROKER_DENYLIST_PATHS` 即拒绝（deny 优先）。
+- 最多 50 条编辑、单文件 1 MiB、总计 4 MiB；`replace` 必须恰好匹配一次，
+  `insert` 追加，`patch` 不支持。
+- 内容校验（preflight/测试）仍由 CI 负责；broker 只做结构、路径与并发检查。
+- 成功返回 `{branch, base_sha, new_commit_sha, files_changed, idempotent}`。
+
+### `pr_create`
+
+请求 `{head, base, title, body, draft}`。`head` 必须已存在且以分支前缀开头；
+`base` 必须等于 `BROKER_BASE_BRANCH`；`draft` 默认 `true`。broker 先查同 head
+的 open PR，有则复用，没有才创建。成功返回 `{number, url, head_sha, draft}`。
+
+### `pr_merge`
+
+1. `POST /v1/write/pr_merge/approval` 传 `{pr_number, merge_method,
+   commit_title}`。broker 读 PR，校验 open、base、分支前缀；draft 先
+   `PATCH draft:false`；`mergeable_state` 必须为 `clean`（`unknown` 最多轮询
+   5 次 × 2 秒）。通过后生成 32 字节 `approval_id`，绑定 member、PR、head SHA、
+   method 与 title，5 分钟过期，仅一次有效。
+2. 宿主向用户确认后，`POST /v1/write/pr_merge` 传 `{approval_id, pr_number,
+   head_sha, merge_method, commit_title}`。broker 校验 approval 未过期、成员与
+   PR 一致；重新读 PR，head SHA 必须仍等于 approval 里的值（否则
+   `approval-stale`）；最后 `PUT /pulls/{n}/merge`。
+3. approval 在发出 merge 请求前删除，重放不会二次合并。
+
+### 幂等、审计与配置
+
+- `Idempotency-Key` header 或请求里的 `idempotency_key` 都可用；缺省时按
+  operation + body 派生。成功结果在内存保留 24 小时，重试返回
+  `idempotent: true` 与原结果。
+- 成功的写与 approval 追加到 `BROKER_AUDIT_LOG`（JSONL），字段含
+  `requestId`、operation、结果码与 PR/commit 标识；不记 token、文件正文或
+  commit message。
+- 相关环境变量：`BROKER_WRITE_ENABLED`、`BROKER_ALLOWLIST_PATHS`、
+  `BROKER_DENYLIST_PATHS`、`BROKER_BASE_BRANCH`、`BROKER_BRANCH_PREFIX`、
+  `BROKER_AUDIT_LOG`。`/health` 报告 `writeEnabled`、`pendingApprovals` 与
+  `idempotencyEntries`。
+
+### 残留边界
+
+- approval 绑定参数但不绑定“人真的点了确认”。能读 0600 写认证文件并直接发
+  HTTP 的进程可以自调用 approval + merge；宿主确认只在工具调用路径上生效。
+- 写 token 仍是仓库级 `contents/pull_requests: write`，没有按文件/PR 的 GitHub
+  侧细粒度；broker 的路径与分支检查是唯一收窄点。
+- 审计文件不自动轮转；生产上应交给 logrotate 或定期归档。

@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { GithubRefusedError } from "../guard.js";
+import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +19,8 @@ export interface PrMergeConfig {
   repoOwner: string;
   repoName: string;
   branchPrefix: string;
+  brokerUrl?: string;
+  writeAuthFile?: string;
 }
 
 interface PrView {
@@ -65,6 +68,64 @@ export async function prMerge(
 
   if (!Number.isInteger(number) || number <= 0) {
     throw new GithubRefusedError("bad-pr-number", `pr_number 必须是正整数，收到 ${String(input.pr_number)}`);
+  }
+
+  const method: MergeMethod = input.merge_method ?? "squash";
+  if (!["merge", "squash", "rebase"].includes(method)) {
+    throw new GithubRefusedError("bad-merge-method", `不支持的 merge_method: ${String(method)}`);
+  }
+
+  // ---------- Broker proxy ----------
+  // The host already asked the human; the broker additionally pins the
+  // approval to this PR, this head SHA and a five-minute window, and consumes
+  // it on use. That makes a replayed or stale call fail instead of merging
+  // whatever the branch happens to point at later.
+  if (
+    brokerWriteEnabled({
+      brokerUrl: cfg.brokerUrl ?? "",
+      writeAuthFile: cfg.writeAuthFile ?? "",
+    })
+  ) {
+    const approval = await brokerWrite<{
+      approval_id?: unknown;
+      head_sha?: unknown;
+    }>(
+      { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+      "/v1/write/pr_merge/approval",
+      {
+        pr_number: number,
+        merge_method: method,
+        commit_title: input.commit_title,
+      },
+      { timeoutMs: 90_000 }
+    );
+    const approvalId =
+      typeof approval.approval_id === "string" ? approval.approval_id : "";
+    const headSha = typeof approval.head_sha === "string" ? approval.head_sha : "";
+    if (!approvalId || !headSha) {
+      throw new GithubRefusedError(
+        "approval-invalid",
+        "broker 没有返回有效的合并审批凭据"
+      );
+    }
+    const merged = await brokerWrite<{ branch?: unknown }>(
+      { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+      "/v1/write/pr_merge",
+      {
+        approval_id: approvalId,
+        pr_number: number,
+        head_sha: headSha,
+        merge_method: method,
+        commit_title: input.commit_title,
+      },
+      { timeoutMs: 120_000 }
+    );
+    return {
+      number,
+      merged: true,
+      method,
+      branch: typeof merged.branch === "string" ? merged.branch : "",
+    };
   }
 
   const readView = async (): Promise<PrView> =>
@@ -118,16 +179,11 @@ export async function prMerge(
     );
   }
 
-  const method: MergeMethod = input.merge_method ?? "squash";
-  if (!["merge", "squash", "rebase"].includes(method)) {
-    throw new GithubRefusedError("bad-merge-method", `不支持的 merge_method: ${String(method)}`);
-  }
-
-  const args = ["pr", "merge", String(number), "--repo", repo, `--${method}`];
+  const methodArgs = ["pr", "merge", String(number), "--repo", repo, `--${method}`];
   if (typeof input.commit_title === "string" && input.commit_title.trim() !== "") {
-    args.push("--subject", input.commit_title.trim());
+    methodArgs.push("--subject", input.commit_title.trim());
   }
-  await gh(args, cfg.workingDir);
+  await gh(methodArgs, cfg.workingDir);
 
   return { number, merged: true, method, branch: view.headRefName };
 }
