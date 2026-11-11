@@ -69,6 +69,10 @@ without parsing tool arguments.
   per-call route-table reads. Those are policy inputs, not execution events.
 - There is no sampling, no span tree, and no latency histogram. The gate records
   decisions, not durations.
+- The `pr_merge` operations-contract check runs inside the MCP server after the
+  gate has already decided the call. Its refusal is a tool error carrying the run
+  id (`contract-merge-forbidden`), not a second `gate_decision` event; the audit
+  log still shows only the decision that allowed the call.
 - Credential lifecycle is not a governed tool call and emits no `gate_decision`
   event: `/installation-token`, the write-auth refresh, and the Feishu token
   refresh are visible to the user through `mmw_tools_status` and the panel, not

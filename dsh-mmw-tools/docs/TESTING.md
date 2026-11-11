@@ -38,6 +38,20 @@ and it is what a contributor should run before every commit.
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |
 
+### `mcp-server` unit tests
+
+`mcp-server/tests/*.test.mjs` are plain Node scripts (no subprocess, no network)
+that import the built `mcp-server/dist/` modules and assert the server-side
+guards. `pnpm -C mcp-server test` runs them; the plugin's `pnpm check` does not,
+because they need the MCP build output.
+
+| Suite | Asserts |
+|---|---|
+| `tests/guard.test.mjs` | preflight and merge guards invoked directly |
+| `tests/pr-preview.test.mjs` | preview URL extraction and check-state parsing |
+| `tests/contract-gate.test.mjs` | op-log command extraction (CRLF, multi-block, malformed JSON) and the `agentMerge` verdict: L2 allowed; L3, L1, unknown, missing and mixed cases refused |
+| `tests/tools-list-schema.test.mjs` | the advertised `tools/list` input schemas |
+
 ### `pnpm test:smoke`
 
 Starts `mcp-server/dist/index.js` as a real stdio child, performs the JSON-RPC
