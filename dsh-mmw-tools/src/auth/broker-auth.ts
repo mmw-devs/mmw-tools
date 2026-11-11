@@ -87,6 +87,12 @@ export interface BrokerAuthOptions {
   /** Where the child reads `accessToken` from. */
   installationTokenFile: string;
   /**
+   * Where the child reads the credential for broker-proxied writes. Contains
+   * a Feishu plugin token or a GitHub session token, never a GitHub
+   * installation token: the broker mints its own write token and keeps it.
+   */
+  writeAuthFile?: string;
+  /**
    * `owner/name` this plugin edits. The broker decides which repository a
    * token can write to; comparing the two turns a misconfiguration into a
    * clear error instead of an unexplained 403 halfway through an edit.
@@ -124,6 +130,7 @@ export class BrokerAuth {
   private readonly broker: BrokerClient;
   private readonly now: () => number;
   private readonly tokenFile: string;
+  private readonly writeAuthFile: string;
   private readonly repository: string;
   private readonly feishu: FeishuCredentialSource | null;
 
@@ -137,6 +144,7 @@ export class BrokerAuth {
       new BrokerClient({ brokerUrl: opts.brokerUrl });
     this.now = opts.now ?? (() => Date.now());
     this.tokenFile = opts.installationTokenFile;
+    this.writeAuthFile = (opts.writeAuthFile ?? "").trim();
     this.repository = (opts.repository ?? "").trim();
     this.feishu = opts.feishu ?? null;
   }
@@ -339,7 +347,8 @@ export class BrokerAuth {
     if (
       !force &&
       cached &&
-      cached.expiresAt - INSTALLATION_MARGIN_MS > this.now()
+      cached.expiresAt - INSTALLATION_MARGIN_MS > this.now() &&
+      (!this.writeAuthFile || existsSync(this.writeAuthFile))
     ) {
       return cached.token;
     }
@@ -349,6 +358,7 @@ export class BrokerAuth {
     if (!session && !feishuToken) {
       this.installation = null;
       await this.removeTokenFile();
+      await this.removeWriteAuth();
       return null;
     }
 
@@ -356,6 +366,7 @@ export class BrokerAuth {
     this.assertRepository(issued);
     this.installation = issued;
     await this.writeTokenFile(issued);
+    await this.writeWriteAuth(issued, session, feishuToken);
     return issued.token;
   }
 
@@ -400,6 +411,7 @@ export class BrokerAuth {
           await this.store.clear();
           this.installation = null;
           await this.removeTokenFile();
+          await this.removeWriteAuth();
         }
         return false;
       }
@@ -430,6 +442,7 @@ export class BrokerAuth {
     this.pending = null;
     this.installation = null;
     await this.removeTokenFile();
+    await this.removeWriteAuth();
     await this.store.clear();
     if (session) {
       try {
@@ -455,6 +468,46 @@ export class BrokerAuth {
     }
   }
 
+  /**
+   * A broker-proxied write presents the credential that proved *who* the
+   * caller is, not a repository token. The broker mints the write token
+   * itself, so this file never grants repository access on its own.
+   */
+  private async writeWriteAuth(
+    issued: InstallationTokenResult,
+    session: SessionRecord | null,
+    feishuToken: string | null
+  ): Promise<void> {
+    if (!this.writeAuthFile) return;
+    const kind = issued.authMode === "feishu" ? "feishu" : "github";
+    const token = kind === "feishu" ? feishuToken : session?.sessionToken ?? "";
+    if (!token) {
+      await this.removeWriteAuth();
+      return;
+    }
+    const payload = JSON.stringify(
+      { kind, token, expiresAt: issued.expiresAt },
+      null,
+      2
+    );
+    await mkdir(path.dirname(this.writeAuthFile), { recursive: true });
+    await writeFile(this.writeAuthFile, payload, { mode: 0o600 });
+    try {
+      await chmod(this.writeAuthFile, 0o600);
+    } catch {
+      /* Windows / FAT */
+    }
+  }
+
+  private async removeWriteAuth(): Promise<void> {
+    if (!this.writeAuthFile || !existsSync(this.writeAuthFile)) return;
+    try {
+      await unlink(this.writeAuthFile);
+    } catch {
+      /* best effort */
+    }
+  }
+
   private async removeTokenFile(): Promise<void> {
     if (!existsSync(this.tokenFile)) return;
     try {
@@ -468,4 +521,9 @@ export class BrokerAuth {
 /** Default location the MCP child is told to read. */
 export function installationTokenPath(): string {
   return path.join(homedir(), ".dsh", "dsh-mmw-tools-installation.json");
+}
+
+/** Where the child reads the identity credential for broker-proxied writes. */
+export function writeAuthPath(): string {
+  return path.join(homedir(), ".dsh", "dsh-mmw-tools-write-auth.json");
 }

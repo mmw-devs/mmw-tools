@@ -2,7 +2,7 @@
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge it.
 
-Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived installation token scoped to the repository operations the member's roles allow. No webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which the host gates behind an explicit confirmation.
+Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived, **read-only** installation token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which asks the host and requires a one-time broker approval bound to the PR head SHA.
 
 ```
 agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
@@ -75,8 +75,8 @@ from the Feishu identity. No GitHub account is involved.
 
 A GitHub login remains available in **Settings → MMW Tools** (button
 **登录 GitHub（可选）**) for people who prefer it or whose Feishu roles do not
-cover the repository. Either credential produces the same kind of short-lived
-installation token; see `docs/AUTH-BROKER.md` §12.
+cover the repository. Either credential yields a read-only client token; writes
+are proxied by the broker (see `docs/AUTH-BROKER.md` §13).
 
 ### Which profile to install into
 
@@ -224,7 +224,9 @@ The tool catalog is tool-centric: each tool declares `roles` and
 `requiredPermissions`; there is no role → permission table. Operations may
 override the tool's roles, and `race-ops` uses that to expose a ladder: `viewer`
 reads, `editor` writes and opens PRs, `operator` / `admin` can also merge.
-`pr_merge` keeps the host confirmation as the final protection.
+`pr_merge` asks the host and requires a one-time broker approval bound to the PR
+head SHA. The host confirmation is a UI gate, not a security boundary: a local
+process that can read the write-auth file can call the approval endpoint itself.
 `mmw-tools-status` is `always: true`.
 
 At call time the plugin:
@@ -246,17 +248,24 @@ rotation never deletes a replacement token written by a concurrent request.
 With `feishu.enabled: true`, a missing/expired token denies business tools.
 `mmw_tools_status` remains callable so the agent can report why.
 
-The Feishu token is also a **repository credential**. When the Git operations
-need an installation token and no GitHub session is preferred, the plugin sends
-the plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it
-with `GET /v1/me` and `GET /v1/agent/routes`, then mints a token whose
-`permissions` are narrowed to what those roles allow:
+The Feishu token is also a **repository credential**, but only for the broker:
+the client never receives a GitHub write token. When a Git operation needs an
+installation token and no GitHub session is preferred, the plugin sends the
+plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it with
+`GET /v1/me` and `GET /v1/agent/routes`, then mints a **read-only** token:
 
-| Route-table operations | Minted scope |
+| Route-table operations | Client token |
 |---|---|
-| `race-ops.repo_read` | `contents: read`, `pull_requests: read` |
-| `race-ops.repo_edit` **and** `race-ops.pr_create` | `contents: write`, `pull_requests: write` |
-| neither | refused (`feishu-no-access`) |
+| any of `repo_read` / `repo_edit` / `pr_create` / `pr_merge` | `contents: read`, `pull_requests: read` |
+| none | refused (`feishu-no-access`) |
+
+Writes are proxied per call, never minted for the client: `repo_edit`,
+`pr_create`, and `pr_merge` go to `POST /v1/write/*`, which re-checks the exact
+operation (and, for GitHub, the session plus allowlist) before using a write
+token that exists only in broker memory. The plugin stores the credential used
+for those calls in `~/.dsh/dsh-mmw-tools-write-auth.json` (mode `0600`); the MCP
+child reads it and sends `X-MMW-Feishu-Token` or `Authorization: Bearer`. See
+`docs/AUTH-BROKER.md` §13 for the request shapes and the approval nonce.
 
 The Feishu credential is preferred when both exist; a valid GitHub session is
 the fallback when the Feishu token is stale. The broker-side check is what makes
@@ -351,23 +360,28 @@ the plugin at all.
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |
 | `repo_read` | Read one file (100 KiB default, 500 KiB hard cap, refuses binary) |
 | `repo_search` | `git grep`, capped results, redacted snippets |
-| `repo_edit` | Validate → apply edits atomically → preflight → commit (no push) |
-| `pr_create` | Push the branch and open a PR (draft by default; pass `draft: false` to open it ready) |
+| `repo_edit` | Validate → apply edits atomically → preflight → commit. With a broker write credential, the commit is created by the broker instead (no push) |
+| `pr_create` | Open a PR (draft by default; pass `draft: false` to open it ready). With a broker write credential, the broker pushes and opens it |
 | `pr_preview` | Preview URLs from the hosting check, plus check states and draft/merge state; read-only, optionally waits for the deployment |
 | `pr_list` | List PRs (titles and bodies redacted) |
-| `pr_merge` | Mark a draft ready if needed, then merge — only after the host's confirmation prompt |
+| `pr_merge` | Mark a draft ready if needed, then merge. With a broker write credential, first fetch a one-time approval bound to the head SHA, then merge; the host still asks |
+
+When `MMW_BROKER_URL` and a readable write-auth file are present, these three
+write tools call the broker's `/v1/write/*` endpoints; otherwise they keep the
+local git/`gh` behavior for standalone use.
 
 ## Security model
 
 **Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
 
-**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. That installation token may be minted from either a GitHub session or a Feishu plugin token; a Feishu-minted token is narrowed to read or write by the route table, rather than carrying the App's full permission set. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
+**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour client installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. That client token is always read-only, whether minted from a GitHub session or a Feishu plugin token. Writes use `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`), which holds the Feishu pluginToken or GitHub sessionToken — never a GitHub write token; the broker keeps that token in memory. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
 
 **Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
 
 **Known trade-offs**, stated rather than hidden:
 
-- `repo_clone` and `pr_create` pass the token on the git command line, so it is briefly visible in the process list. It is never written to `.git/config`: `repo_clone` resets `origin` to the credential-free URL immediately after cloning, and `pr_create` pushes to an explicit URL without `-u`, because `-u <url>` would store that URL — token included — as `branch.<name>.remote`. A future version should use `GIT_ASKPASS` and drop the argv exposure too.
+- When not using the broker's write proxy, `repo_clone` and `pr_create` pass the token on the git command line, so it is briefly visible in the process list. It is never written to `.git/config`: `repo_clone` resets `origin` to the credential-free URL immediately after cloning, and `pr_create` pushes to an explicit URL without `-u`, because `-u <url>` would store that URL — token included — as `branch.<name>.remote`. A future version should use `GIT_ASKPASS` and drop the argv exposure too.
+- The broker approval nonce binds the member, PR, and head SHA, and is single-use. It does not prove a human clicked the host prompt: a local process that can read the write-auth file and send HTTP can request the approval and merge by itself. The host `pr_merge` confirmation is a UI gate, not the security boundary; closing this needs a host-held merge secret.
 - `repo_edit` matches `find` byte-for-byte. On a Windows checkout with `core.autocrlf` the working tree holds CRLF, so a multi-line `find` written with LF will not match; the edit is refused with `find-not-found` rather than applied half-way. Read the file with `repo_read` first and reuse its exact bytes.
 - `preflight` and `bootstrap` commands run through the shell on Windows, because `npm` there is `npm.cmd` and `execFile` does not consult `PATHEXT`. Without this every npm-based pre-flight failed with `ENOENT` on the platform this plugin is mostly used on. The command string comes from your own plugin config, never from the agent.
 - `repo_edit`'s `patch` mode is not implemented; use `replace` or `insert`.
@@ -415,7 +429,7 @@ on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
 
 | Document | Contents |
 |---|---|
-| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, the Feishu direct path, threat model, deployment |
+| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, the Feishu direct path, the write proxy, threat model, deployment |
 | [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) | The panel's state machine: four phases, action matrix, acceptance checks |
 | [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
 | [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | Step-by-step real round trip against the bound repo: gates, stop conditions, cleanup |

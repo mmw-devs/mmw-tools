@@ -1,34 +1,55 @@
 # Changelog
 
-## Unreleased — Feishu members can open PRs without a GitHub account
+## Unreleased — Feishu members can open PRs without a GitHub account, through a write proxy
 
 ### Added
 
 - **The broker accepts a Feishu plugin token as a second credential.** `POST
-  /installation-token` now also reads `X-MMW-Feishu-Token`, verifies it with
-  the auth core (`/v1/me`, `/v1/agent/routes`), and mints a narrowed
-  installation token: `race-ops.repo_read` → contents/PR read;
-  `race-ops.repo_edit` + `race-ops.pr_create` → contents/PR write; neither →
-  `feishu-no-access`. The org/allowlist path is unchanged, and a GitHub
-  account is no longer required to clone, edit, or open a PR.
-- The broker reads `MMW_TOOLS_AUTH_URL`; `/health` reports `feishuEnabled`.
-  Until it is set, the Feishu header is refused with `feishu-not-configured`.
+  /installation-token` also reads `X-MMW-Feishu-Token`, verifies it with the
+  auth core (`/v1/me`, `/v1/agent/routes`), and returns a **read-only** client
+  token. The org/allowlist path is unchanged, and a GitHub account is no longer
+  required to clone, edit, or open a PR.
+- **The broker proxies writes.** `POST /v1/write/repo_edit`,
+  `/v1/write/pr_create`, `/v1/write/pr_merge/approval`, and
+  `/v1/write/pr_merge` re-check the exact operation on every call and use a
+  write token that exists only in broker memory. `repo_edit` uses the Git Data
+  API and requires `base_sha` to equal the current head; `pr_create` reuses an
+  open PR for the same head; `pr_merge` needs a five-minute, single-use
+  approval bound to the member, PR, and head SHA.
+- The broker reads `MMW_TOOLS_AUTH_URL`, `BROKER_WRITE_ENABLED`,
+  `BROKER_ALLOWLIST_PATHS`, `BROKER_DENYLIST_PATHS`, `BROKER_BASE_BRANCH`,
+  `BROKER_BRANCH_PREFIX`, and `BROKER_AUDIT_LOG`; `/health` reports
+  `feishuEnabled`, `writeEnabled`, `pendingApprovals`, and `idempotencyEntries`.
 - The plugin tries the Feishu credential first (`FeishuAuth.credential()`),
   falls back to a GitHub session, and reports `mode: "github" | "feishu" |
   "none"` in `/api/mmw-tools/status` and `mmw_tools_status`. The GitHub panel
   labels its button `登录 GitHub（可选）` and renders no GitHub refresh/logout
   controls in Feishu mode.
+- The plugin writes `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`) with the
+  Feishu pluginToken or GitHub sessionToken; `repo_edit`, `pr_create`, and
+  `pr_merge` use it to call the broker. Without that file they keep the local
+  git/`gh` path.
+
+### Changed
+
+- **Client installation tokens are now read-only for both GitHub and Feishu.**
+  A write role no longer receives `contents: write` / `pull_requests: write`;
+  all writes go through `/v1/write/*`.
 
 ### Security
 
-- The Feishu check is server-side: a process that calls the broker directly
-  cannot skip the gate. The remaining gap is unchanged in kind: a write-scoped
-  installation token can call the GitHub API directly, including merging a PR.
+- The Feishu check is server-side and repeated for every write; a process that
+  calls the broker directly cannot skip the gate.
+- A write-scoped installation token is no longer sent to clients. The remaining
+  gap is local: a process that can read the `0600` write-auth file and send HTTP
+  can request the merge approval itself. Closing that needs a host-held merge
+  secret.
 
 ### Tests
 
-- broker core/server tests cover write/read scope, missing token, missing
-  `MMW_TOOLS_AUTH_URL`, no repository operation, auth-core 401/500.
+- broker core/server tests cover read-only client tokens, write-disabled,
+  operation denial, `base_sha` mismatch, path allow/deny, idempotency,
+  approval expiry/staleness/replay, draft handling, and the HTTP write routes.
 - `broker-auth` covers Feishu-only minting, Feishu-over-GitHub preference,
   fallback when the Feishu token is rejected, and no-credential behaviour.
 

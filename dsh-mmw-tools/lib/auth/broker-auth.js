@@ -36,6 +36,7 @@ export class BrokerAuth {
     broker;
     now;
     tokenFile;
+    writeAuthFile;
     repository;
     feishu;
     pending = null;
@@ -47,6 +48,7 @@ export class BrokerAuth {
                 new BrokerClient({ brokerUrl: opts.brokerUrl });
         this.now = opts.now ?? (() => Date.now());
         this.tokenFile = opts.installationTokenFile;
+        this.writeAuthFile = (opts.writeAuthFile ?? "").trim();
         this.repository = (opts.repository ?? "").trim();
         this.feishu = opts.feishu ?? null;
     }
@@ -239,7 +241,8 @@ export class BrokerAuth {
         const cached = this.installation;
         if (!force &&
             cached &&
-            cached.expiresAt - INSTALLATION_MARGIN_MS > this.now()) {
+            cached.expiresAt - INSTALLATION_MARGIN_MS > this.now() &&
+            (!this.writeAuthFile || existsSync(this.writeAuthFile))) {
             return cached.token;
         }
         const session = await this.store.readValid(this.now());
@@ -247,12 +250,14 @@ export class BrokerAuth {
         if (!session && !feishuToken) {
             this.installation = null;
             await this.removeTokenFile();
+            await this.removeWriteAuth();
             return null;
         }
         const issued = await this.mintInstallationToken(session, feishuToken);
         this.assertRepository(issued);
         this.installation = issued;
         await this.writeTokenFile(issued);
+        await this.writeWriteAuth(issued, session, feishuToken);
         return issued.token;
     }
     /**
@@ -296,6 +301,7 @@ export class BrokerAuth {
                     await this.store.clear();
                     this.installation = null;
                     await this.removeTokenFile();
+                    await this.removeWriteAuth();
                 }
                 return false;
             }
@@ -325,6 +331,7 @@ export class BrokerAuth {
         this.pending = null;
         this.installation = null;
         await this.removeTokenFile();
+        await this.removeWriteAuth();
         await this.store.clear();
         if (session) {
             try {
@@ -346,6 +353,40 @@ export class BrokerAuth {
             /* Windows / FAT */
         }
     }
+    /**
+     * A broker-proxied write presents the credential that proved *who* the
+     * caller is, not a repository token. The broker mints the write token
+     * itself, so this file never grants repository access on its own.
+     */
+    async writeWriteAuth(issued, session, feishuToken) {
+        if (!this.writeAuthFile)
+            return;
+        const kind = issued.authMode === "feishu" ? "feishu" : "github";
+        const token = kind === "feishu" ? feishuToken : session?.sessionToken ?? "";
+        if (!token) {
+            await this.removeWriteAuth();
+            return;
+        }
+        const payload = JSON.stringify({ kind, token, expiresAt: issued.expiresAt }, null, 2);
+        await mkdir(path.dirname(this.writeAuthFile), { recursive: true });
+        await writeFile(this.writeAuthFile, payload, { mode: 0o600 });
+        try {
+            await chmod(this.writeAuthFile, 0o600);
+        }
+        catch {
+            /* Windows / FAT */
+        }
+    }
+    async removeWriteAuth() {
+        if (!this.writeAuthFile || !existsSync(this.writeAuthFile))
+            return;
+        try {
+            await unlink(this.writeAuthFile);
+        }
+        catch {
+            /* best effort */
+        }
+    }
     async removeTokenFile() {
         if (!existsSync(this.tokenFile))
             return;
@@ -360,4 +401,8 @@ export class BrokerAuth {
 /** Default location the MCP child is told to read. */
 export function installationTokenPath() {
     return path.join(homedir(), ".dsh", "dsh-mmw-tools-installation.json");
+}
+/** Where the child reads the identity credential for broker-proxied writes. */
+export function writeAuthPath() {
+    return path.join(homedir(), ".dsh", "dsh-mmw-tools-write-auth.json");
 }

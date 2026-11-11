@@ -59,10 +59,12 @@ without parsing tool arguments.
 
 ## What is not covered yet
 
-- The broker (GitHub App session exchange, installation tokens, and the Feishu
-  `/v1/me` + `/v1/agent/routes` checks) does not receive the run id, so
-  broker-side events cannot be joined to a gate decision. Adding that means
-  changing the broker protocol; it is not a logging change.
+- The broker (GitHub App session exchange, installation tokens, the Feishu
+  `/v1/me` + `/v1/agent/routes` checks, and the `/v1/write/*` proxy) does not
+  receive the run id, so broker-side events cannot be joined to a gate decision.
+  The write proxy appends its own JSONL audit with a broker-generated request id;
+  that id is a separate correlation key, not the gate's run id. Adding the run id
+  means changing the broker protocol; it is not a logging change.
 - The auth core records member and role changes in its own audit table, but not
   per-call route-table reads. Those are policy inputs, not execution events.
 - There is no sampling, no span tree, and no latency histogram. The gate records

@@ -202,9 +202,9 @@ console.log("\n--- the Feishu header mints without a GitHub session ---");
       const body = await res.json();
       eq(body.token, "ghs_feishu_http", "the minted token is returned");
       eq(body.authMode, "feishu", "the reply names the Feishu path");
-      eq(body.scope, "write", "the role's operations decide the scope");
+      eq(body.scope, "read", "client tokens are read-only even for an editor");
       eq(body.login, "张三", "the Feishu identity is returned");
-      eq(body.permissions?.contents, "write", "the token is scoped to contents:write");
+      eq(body.permissions?.contents, "read", "the token is scoped to contents:read");
       eq(authCalls.length, 2, "the broker verified the token with the auth core");
     }
   );
@@ -344,6 +344,29 @@ console.log("\n--- rate limiting ---");
     await new Promise((r) => server.close(r));
   }
 }
+
+console.log("\n--- write proxy over HTTP ---");
+await withServer({}, async ({ base }) => {
+  const res = await post(base, "/v1/write/repo_edit", {
+    headers: { "content-type": "application/json", "x-mmw-feishu-token": "fs" },
+    body: JSON.stringify({
+      branch: "content/x",
+      base_sha: "a".repeat(40),
+      message: "m",
+      edits: [],
+    }),
+  });
+  eq(res.status, 503, "the write proxy is off by default");
+  eq((await res.json()).error, "write-disabled", "the refusal is machine-readable");
+});
+await withServer({ writeEnabled: true }, async ({ base }) => {
+  const res = await post(base, "/v1/write/no-such-op", {
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  eq(res.status, 404, "an unknown write endpoint is 404");
+  eq((await res.json()).error, "not-found", "the 404 is machine-readable");
+});
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
