@@ -241,8 +241,15 @@ export class BrokerAuth {
         const cached = this.installation;
         if (!force &&
             cached &&
-            cached.expiresAt - INSTALLATION_MARGIN_MS > this.now() &&
-            (!this.writeAuthFile || existsSync(this.writeAuthFile))) {
+            cached.expiresAt - INSTALLATION_MARGIN_MS > this.now()) {
+            if (this.writeAuthFile) {
+                // A re-login rotates the Feishu plugin token without changing the
+                // cached read token. Refresh the broker credential on the cache path
+                // too, otherwise MCP keeps presenting the token from before the login.
+                const session = await this.store.readValid(this.now());
+                const feishuToken = this.feishu ? await this.feishu.credential() : null;
+                await this.writeWriteAuth(cached, session, feishuToken);
+            }
             return cached.token;
         }
         const session = await this.store.readValid(this.now());
@@ -361,9 +368,17 @@ export class BrokerAuth {
     async writeWriteAuth(issued, session, feishuToken) {
         if (!this.writeAuthFile)
             return;
-        const kind = issued.authMode === "feishu" ? "feishu" : "github";
-        const token = kind === "feishu" ? feishuToken : session?.sessionToken ?? "";
-        if (!token) {
+        let kind;
+        let token;
+        if (feishuToken) {
+            kind = "feishu";
+            token = feishuToken;
+        }
+        else if (session?.sessionToken) {
+            kind = "github";
+            token = session.sessionToken;
+        }
+        else {
             await this.removeWriteAuth();
             return;
         }
