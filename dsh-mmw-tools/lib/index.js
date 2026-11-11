@@ -389,6 +389,10 @@ function makeStatusTool(deps) {
         },
         async execute() {
             const brokerLine = deps.brokerUrl;
+            // Mint/refresh the repository credential before reading the view: a
+            // Feishu login only becomes visible through the issued token, so a
+            // view-first order would report the stale GitHub session instead.
+            await deps.flow.repoAccess();
             const view = await deps.store.view();
             const status = await deps.flow.resolvedStatus();
             const driftLine = deps.agentsMdDrift
@@ -403,7 +407,7 @@ function makeStatusTool(deps) {
                 authLines.push(view.mode === "feishu" ? "登录方式: 飞书（无需 GitHub 账号）" : "登录方式: GitHub");
                 authLines.push(`登录身份: ${view.login || "(unknown)"}`);
                 authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
-                authLines.push("仓库写入使用 broker 签发的 1 小时 App 令牌");
+                authLines.push("仓库写入由 broker 按 operation 代理；客户端 token 只读");
             }
             else if (status === "reauth_needed") {
                 authLines.push("⚠️ 会话已过期 — 请在面板里重新登录（飞书或 GitHub）");
@@ -414,6 +418,11 @@ function makeStatusTool(deps) {
             else {
                 authLines.push("未登录 — 请先在面板完成飞书登录；GitHub 登录也可用");
             }
+            const nextStep = status === "authorized"
+                ? "可直接使用仓库工具；写操作会走 broker 代理。"
+                : status === "device_pending"
+                    ? "等待浏览器完成授权 — 面板会自动继续，无需操作。"
+                    : "请用户在面板完成飞书登录（有 GitHub 账号也可用 GitHub 登录；agent 不参与登录）。";
             return {
                 ok: true,
                 message: `${PLUGIN_DISPLAY_NAME} 已挂载（plugin_id=${PLUGIN_ID}）。\n` +
@@ -423,7 +432,7 @@ function makeStatusTool(deps) {
                     `MCP server entry: ${pathToConnect}\n` +
                     `\n--- Auth ---\n${authLines.join("\n")}\n` +
                     `\n--- AGENTS.md ---\n${driftLine}\n` +
-                    `\n下一步：请用户在面板完成飞书登录（有 GitHub 账号也可用 GitHub 登录；agent 不参与登录）。`,
+                    `\n下一步：${nextStep}`,
                 pluginId: PLUGIN_ID,
                 repoOwner: String(deps.repo.owner ?? ""),
                 repoName: String(deps.repo.name ?? ""),
