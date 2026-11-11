@@ -196,11 +196,14 @@ window.__ModuleLoader__.load({
       return `${m}:${String(rest).padStart(2, "0")}`;
     }
     
-    function hoursMinutes(totalSeconds) {
+    function formatRemaining(totalSeconds) {
       const secs = Math.max(0, Math.floor(totalSeconds));
-      const h = Math.floor(secs / 3600);
+      const d = Math.floor(secs / 86400);
+      const h = Math.floor((secs % 86400) / 3600);
       const m = Math.floor((secs % 3600) / 60);
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      if (d > 0) return `${d} 天 ${h} 小时`;
+      if (h > 0) return `${h} 小时 ${m} 分钟`;
+      return `${m} 分钟`;
     }
     
     /** The one-line state sentence for each of the four phases (contract §6). */
@@ -210,8 +213,8 @@ window.__ModuleLoader__.load({
           return `等待浏览器授权 · 剩余 ${mmss(view.session.secondsRemaining)}`;
         case "signed_in":
           return view.mode === "feishu"
-            ? `已登录（飞书）· ${view.session.login || "飞书成员"} · 令牌剩余 ${hoursMinutes(view.session.secondsRemaining)}`
-            : `已登录 · ${view.session.login} · 会话剩余 ${hoursMinutes(view.session.secondsRemaining)}`;
+            ? `已登录（飞书）· ${view.session.login || "飞书成员"} · 仓库令牌剩余 ${formatRemaining(view.session.secondsRemaining)}`
+            : `已登录 · ${view.session.login} · 会话剩余 ${formatRemaining(view.session.secondsRemaining)}`;
         case "expired":
           return "会话已过期，请重新登录";
         default:
@@ -509,7 +512,7 @@ window.__ModuleLoader__.load({
             _jsx("p", { style: s.dim, children: `角色：${view.roles?.length ? view.roles.join(", ") : "(无)"}` }, "roles"),
             _jsx(
               "p",
-              { style: s.dim, children: `授权服务：${view.authServiceUrl} · 剩余 ${Math.ceil(view.secondsRemaining / 60)} 分钟` },
+              { style: s.dim, children: `授权服务：${view.authServiceUrl} · 剩余 ${formatRemaining(view.secondsRemaining)}` },
               "svc"
             )
           );

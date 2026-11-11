@@ -374,7 +374,10 @@ function formatExpiry(timestampMs) {
     if (minutes < 60)
         return `约 ${minutes} 分钟`;
     const hours = Math.floor(minutes / 60);
-    return `约 ${hours} 小时 ${minutes - hours * 60} 分钟`;
+    if (hours < 24)
+        return `约 ${hours} 小时 ${minutes - hours * 60} 分钟`;
+    const days = Math.floor(hours / 24);
+    return `约 ${days} 天 ${hours - days * 24} 小时`;
 }
 function makeStatusTool(deps) {
     return defineTool({
@@ -406,7 +409,10 @@ function makeStatusTool(deps) {
             if (status === "authorized") {
                 authLines.push(view.mode === "feishu" ? "登录方式: 飞书（无需 GitHub 账号）" : "登录方式: GitHub");
                 authLines.push(`登录身份: ${view.login || "(unknown)"}`);
-                authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
+                authLines.push(`${view.mode === "feishu" ? "仓库令牌剩余" : "会话剩余"}: ${formatExpiry(view.accessTokenExpiresAt)}`);
+                if (view.mode === "feishu") {
+                    authLines.push("飞书授权剩余: 见面板「飞书授权」一栏（默认 7 天）");
+                }
                 authLines.push("仓库写入由 broker 按 operation 代理；客户端 token 只读");
             }
             else if (status === "reauth_needed") {
