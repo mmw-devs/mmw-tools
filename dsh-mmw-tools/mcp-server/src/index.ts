@@ -306,7 +306,8 @@ const TOOLS: ToolDef[] = [
     name: "pr_merge",
     description:
       "合并一个 PR。必须由用户明确要求后才调用 —— 宿主会在执行前弹出确认，未确认则不会合并。" +
-      "仅合并 content/* 分支的 PR；是否可合并以 GitHub 的分支保护结论（mergeStateStatus）为准。",
+      "仅合并 content/* 分支的 PR；是否可合并以 GitHub 的分支保护结论（mergeStateStatus）为准。" +
+      "若仓库有 contract/operations.json，PR 提交的 op-log command 属于 agentMerge=false 的级别（如 L3）时会拒绝合并。",
     inputSchema: {
       type: "object",
       properties: {

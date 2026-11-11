@@ -4,6 +4,12 @@
 
 ### Added
 
+- **`pr_merge` honours the repository's operations contract.** Before either the
+  broker or the local `gh` path, it reads `contract/operations.json` at the PR
+  head and refuses when any op-log `command` in the PR's commits belongs to a
+  level with `agentMerge: false` (L1/L3 in `race-ops`). Unknown commands, a
+  missing `command`, or a level without `agentMerge` also refuse. Repositories
+  without that file are unaffected.
 - **The broker accepts a Feishu plugin token as a second credential.** `POST
   /installation-token` also reads `X-MMW-Feishu-Token`, verifies it with the
   auth core (`/v1/me`, `/v1/agent/routes`), and returns a **read-only** client

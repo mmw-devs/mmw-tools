@@ -16,7 +16,7 @@ node scripts/check-contracts.mjs --update
 ## Snapshot
 
 - Contract version: 2
-- Catalog revision: `sha256:ab3956985032576e567e571ed124d6468d559cb1d6e78418a1f32e7787f1a60e`
+- Catalog revision: `sha256:a5864baf0e5baed4378a7723097c742990da894af1bc265b3b929312698f7226`
 - Tools: 2
 - Operations: 12
 - Roles: 4

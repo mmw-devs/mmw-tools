@@ -229,6 +229,10 @@ reads, `editor` writes and opens PRs, `operator` / `admin` can also merge.
 `pr_merge` asks the host and requires a one-time broker approval bound to the PR
 head SHA. The host confirmation is a UI gate, not a security boundary: a local
 process that can read the write-auth file can call the approval endpoint itself.
+Before either merge path, `pr_merge` reads `contract/operations.json` at the PR
+head and refuses when the PR's op-log `command` belongs to a level with
+`agentMerge: false` (L1/L3 in `race-ops`) — the same contract `COMMANDS.md` is
+generated from. Repositories without that file are unaffected.
 `mmw-tools-status` is `always: true`.
 
 At call time the plugin:
