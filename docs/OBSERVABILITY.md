@@ -69,6 +69,10 @@ without parsing tool arguments.
   per-call route-table reads. Those are policy inputs, not execution events.
 - There is no sampling, no span tree, and no latency histogram. The gate records
   decisions, not durations.
+- Credential lifecycle is not a governed tool call and emits no `gate_decision`
+  event: `/installation-token`, the write-auth refresh, and the Feishu token
+  refresh are visible to the user through `mmw_tools_status` and the panel, not
+  through the audit log.
 - The local JSONL file is per plugin host. Two hosts do not share a trace store.
 
 ## If central storage becomes necessary

@@ -36,6 +36,19 @@
   A write role no longer receives `contents: write` / `pull_requests: write`;
   all writes go through `/v1/write/*`.
 
+### Fixed
+
+- **A cached installation token left MCP on the old write credential after a
+  Feishu re-login.** The cache-hit path now re-reads the valid GitHub session
+  and `FeishuAuth.credential()` and rewrites `write-auth`, so the next
+  `repo_edit` / `pr_create` / `pr_merge` uses the current identity.
+- **`mmw_tools_status` reported the stale GitHub session in Feishu mode.** It
+  now mints the repository credential before reading the view, so the first
+  call after startup reports `mode: "feishu"` and the Feishu login.
+- **Expiry labels were ambiguous.** The Feishu panel shows `剩余 N 天 H 小时`
+  instead of a raw minute count, and the one-hour installation token is labelled
+  `仓库令牌剩余` rather than being confused with the 7-day Feishu authorization.
+
 ### Security
 
 - The Feishu check is server-side and repeated for every write; a process that
