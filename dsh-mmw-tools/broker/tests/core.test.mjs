@@ -494,6 +494,135 @@ console.log("\n--- a hung GitHub call is bounded ---");
   }
 }
 
+/* ---------------- Feishu direct path ---------------- */
+
+/**
+ * A fake auth core: /v1/me names the member, /v1/agent/routes lists the
+ * operations their roles grant. Records the Authorization header so the
+ * tests can prove the plugin token is forwarded, not trusted blindly.
+ */
+function fakeAuthService({
+  name = "张三",
+  id = "ou_zhangsan",
+  operations = ["race-ops.repo_read", "race-ops.repo_edit", "race-ops.pr_create"],
+  meStatus = 200,
+  routesStatus = 200,
+} = {}) {
+  const calls = [];
+  const impl = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    const path = new URL(String(url)).pathname;
+    if (path === "/v1/me") return json({ id, name }, meStatus);
+    if (path === "/v1/agent/routes") return json({ allowedOperations: operations }, routesStatus);
+    return json({ message: "unexpected" }, 500);
+  };
+  return { impl, calls };
+}
+
+console.log("\n--- Feishu: a write role mints a scoped token ---");
+{
+  const auth = fakeAuthService();
+  const minted = [];
+  const { core } = makeCore({
+    authUrl: "https://auth.example",
+    fetchImpl: auth.impl,
+    mintInstallationToken: async (opts = {}) => {
+      minted.push(opts);
+      return { token: "ghs_feishu_write", expiresAt: NOW + 3_600_000, permissions: opts.permissions };
+    },
+  });
+
+  const issued = await core.issueInstallationTokenForFeishu("fs-plugin-token");
+  eq(issued.token, "ghs_feishu_write", "the broker returns the minted token");
+  eq(issued.authMode, "feishu", "the reply names the Feishu path");
+  eq(issued.scope, "write", "edit plus PR permission is a write scope");
+  eq(issued.login, "张三", "the reply carries the Feishu identity");
+  eq(minted.length, 1, "the mint is called exactly once");
+  eq(minted[0].permissions?.contents, "write", "contents is write");
+  eq(minted[0].permissions?.pull_requests, "write", "pull_requests is write");
+  eq(auth.calls.length, 2, "the broker asks /v1/me and /v1/agent/routes");
+  eq(
+    auth.calls[0].init.headers.Authorization,
+    "Bearer fs-plugin-token",
+    "the plugin token is forwarded to the auth service"
+  );
+  eq(core.stats().feishuEnabled, true, "health reports that Feishu is configured");
+}
+
+console.log("\n--- Feishu: a read-only role gets a read token ---");
+{
+  const auth = fakeAuthService({ operations: ["race-ops.repo_read"] });
+  const minted = [];
+  const { core } = makeCore({
+    authUrl: "https://auth.example",
+    fetchImpl: auth.impl,
+    mintInstallationToken: async (opts = {}) => {
+      minted.push(opts);
+      return { token: "ghs_feishu_read", expiresAt: NOW + 3_600_000, permissions: opts.permissions };
+    },
+  });
+
+  const issued = await core.issueInstallationTokenForFeishu("fs-plugin-token");
+  eq(issued.scope, "read", "read-only is a read scope");
+  eq(minted[0].permissions?.contents, "read", "contents is read");
+  eq(minted[0].permissions?.pull_requests, "read", "pull_requests is read");
+}
+
+console.log("\n--- Feishu: refusals ---");
+{
+  const { core } = makeCore({ authUrl: "https://auth.example", fetchImpl: fakeAuthService().impl });
+  await rejectsWith(
+    () => core.issueInstallationTokenForFeishu("   "),
+    "feishu-token-required",
+    "an empty token is refused"
+  );
+}
+{
+  const { core } = makeCore({ fetchImpl: fakeAuthService().impl });
+  await rejectsWith(
+    () => core.issueInstallationTokenForFeishu("fs-plugin-token"),
+    "feishu-not-configured",
+    "a broker without an auth URL refuses the Feishu path"
+  );
+  eq(core.stats().feishuEnabled, false, "health reports Feishu as disabled");
+}
+{
+  const auth = fakeAuthService({ operations: ["race-ops.repo_status"] });
+  const minted = [];
+  const { core } = makeCore({
+    authUrl: "https://auth.example",
+    fetchImpl: auth.impl,
+    mintInstallationToken: async (opts = {}) => {
+      minted.push(opts);
+      return { token: "nope", expiresAt: NOW, permissions: {} };
+    },
+  });
+  await rejectsWith(
+    () => core.issueInstallationTokenForFeishu("fs-plugin-token"),
+    "feishu-no-access",
+    "a role without this repository's operations is refused"
+  );
+  eq(minted.length, 0, "no token is minted for a role with no access");
+}
+{
+  const auth = fakeAuthService({ meStatus: 401 });
+  const { core } = makeCore({ authUrl: "https://auth.example", fetchImpl: auth.impl });
+  await rejectsWith(
+    () => core.issueInstallationTokenForFeishu("expired"),
+    "feishu-auth-rejected",
+    "a rejected plugin token is refused"
+  );
+}
+{
+  const auth = fakeAuthService({ routesStatus: 500 });
+  const { core } = makeCore({ authUrl: "https://auth.example", fetchImpl: auth.impl });
+  await rejectsWith(
+    () => core.issueInstallationTokenForFeishu("fs-plugin-token"),
+    "feishu-check-failed",
+    "an auth-service outage is reported, not treated as a grant"
+  );
+}
+
 console.log("\n--- safeEqual ---");
 {
   eq(safeEqual("abc", "abc"), true, "equal strings match");

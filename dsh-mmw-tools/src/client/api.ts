@@ -11,18 +11,19 @@
 import { API } from "../shared/api-paths.js";
 
 export interface StatusView {
-  configured: boolean;
-  hasAccessToken: boolean;
-  hasRefreshToken: boolean;
-  accessTokenMasked: string;
-  refreshTokenMasked: string;
-  accessTokenExpiresAt: number;
-  refreshTokenExpiresAt: number;
-  scope: string;
-  login: string;
-  tokenUpdatedAt: string;
-  configPath: string;
-  status: "no_token" | "device_pending" | "authorized" | "reauth_needed";
+  phase: "signed_out" | "authorizing" | "signed_in" | "expired";
+  /** Which credential is active; `feishu` means no GitHub account is involved. */
+  mode: "feishu" | "github" | "none";
+  session: { login: string; expiresAt: number; secondsRemaining: number };
+  repoAccess: { state: "ready" | "unavailable"; reason: string };
+  binding: {
+    owner: string;
+    name: string;
+    baseBranch: string;
+    allowlistPaths: string[];
+  };
+  brokerUrl: string;
+  sessionPath: string;
 }
 
 export interface OauthStartResult {

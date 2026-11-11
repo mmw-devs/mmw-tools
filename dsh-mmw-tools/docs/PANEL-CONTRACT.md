@@ -1,8 +1,8 @@
 # Panel contract — the plugin's user-visible state machine
 
-Status: agreed 2026-10-26. This is the acceptance standard for the panel
-and tool surface. If an implementation disagrees with this document, the
-document wins.
+Status: agreed 2026-10-26; amended 2026-11-11 for the Feishu credential path.
+This is the acceptance standard for the panel and tool surface. If an
+implementation disagrees with this document, the document wins.
 
 The reason this exists: the panel accumulated controls from two auth
 models (personal Device Flow, then broker) and was never redesigned. The
@@ -15,58 +15,68 @@ symptoms traces back to the missing statement below.
 
 ## 1. What the plugin is for
 
-A member of `mmw-devs`, on their own machine, points the DSH agent at
+A member of `mmw-devs`, or a Feishu member whose role covers this
+repository, on their own machine, points the DSH agent at
 `public/data.json` of `mmw-devs/ffxiv-race-ops` so it can make one change
-and open a draft PR for a human to review. No auto-merge. No
-multi-editor collaboration.
+and open a draft PR for a human to review. The Feishu path needs no
+GitHub account. No auto-merge. No multi-editor collaboration.
 
-## 2. Two credentials, and why conflating them caused the confusion
+## 2. Three credentials, and why conflating them caused the confusion
 
 | Credential | Proves | Lifetime | Visible to the user |
 |---|---|---|---|
-| **session** | this plugin instance is acting for <login> | 12 h | **yes** — it decides whether the plugin works |
+| **GitHub session** | this plugin instance is acting for <login> | 12 h | **yes** — it decides whether the plugin works |
+| **Feishu plugin token** | this plugin instance is acting for a Feishu member with a role | token TTL | **yes** — it also decides whether the plugin works |
 | **repo access** (App installation token) | git may push a branch and open a PR | 1 h | **no**, only "ready / not ready" |
 
-The session cannot write to a repository. The installation token is
-derived from it, on demand, and stays in memory plus a 0600 file that the
-MCP child reads. "Signed in" and "can write" are therefore different
-questions and must be reported separately.
+The session and the Feishu token cannot write to a repository. The
+installation token is derived from either of them, on demand, and stays
+in memory plus a 0600 file that the MCP child reads. "Signed in" and
+"can write" are therefore different questions and must be reported
+separately; "signed in" now has a `mode` (`github` or `feishu`).
 
 ## 3. States — exactly four
 
 ```
  ① signed_out
-      │  [登录 GitHub] → open broker login URL in the browser
+      │  [登录 GitHub（可选）] → open broker login URL in the browser
+      │  (or the separate 飞书授权 section completes)
       ▼
- ② authorizing                    (browser round trip in progress, ≤5 min)
-      │  broker reports authorized
+ ② authorizing                    (GitHub browser round trip, ≤5 min)
+      │  broker reports authorized, or Feishu login completes
       ▼
- ③ signed_in                      (session valid; repoAccess ∈ {ready, unavailable})
-      │  session expires
+ ③ signed_in                      (mode ∈ {github, feishu}; repoAccess ∈ {ready, unavailable})
+      │  credential expires
       ▼
  ④ expired  ──→ behaves as ① for actions, but says why
 ```
 
 The predicates are exact:
 
-- `①/④`: no session record, or `expiresAt <= now`.
-- `②`: a sign-in was started by this process and has not been resolved.
-- `③`: a session record exists and `expiresAt > now`.
+- `①`: no valid GitHub session and no valid Feishu plugin token.
+- `②`: a GitHub sign-in was started by this process and has not been resolved.
+- `③`: a valid GitHub session OR a valid Feishu plugin token exists.
+- `④`: a GitHub session existed and expired, and there is no valid Feishu token.
 
 There is no fifth state. In particular, "the installation token file is
 missing" is **not** a state — it is `repoAccess = unavailable` inside ③.
+The Feishu panel has its own substates, but it does not add a phase to
+this state machine.
 
 ## 4. Actions — at most two on screen at any time
 
 | Action | ① | ② | ③ | ④ |
 |---|---|---|---|---|
-| 登录 GitHub | ✅ | — | — | ✅ |
+| 登录 GitHub（可选） | ✅ | — | — | ✅ |
 | 取消 | — | ✅ | — | — |
-| 重新获取仓库权限 | — | — | only if `repoAccess ≠ ready` | — |
-| 退出登录 | — | ✅ | ✅ | — |
+| 重新获取仓库权限 | — | — | only if `repoAccess ≠ ready` and `mode ≠ feishu` | — |
+| 退出登录 | — | ✅ | ✅ (`mode = github` only) | — |
 
 Anything not marked ✅ must not be rendered. "Rendered but inert" is the
-specific failure this table exists to prevent.
+specific failure this table exists to prevent. In `mode = feishu` the
+panel renders no actions at all: the Feishu section owns its own login
+and logout, and the GitHub credential does not exist to refresh or
+revoke.
 
 ## 5. Three things the plugin does by itself
 
@@ -84,7 +94,8 @@ specific failure this table exists to prevent.
 ```
 ① / ④   MMW Tools
         未登录 · <原因如「会话已过期」>
-        [ 登录 GitHub ]
+        优先在下方「飞书授权」登录；GitHub 账号不是必需的。
+        [ 登录 GitHub（可选） ]
 
 ②       MMW Tools
         等待浏览器授权 · 剩余 4:37
@@ -95,6 +106,11 @@ specific failure this table exists to prevent.
         已登录 · weunimix · 会话剩余 11h 32m
         仓库权限：就绪
         [ 退出登录 ]
+
+③ feishu MMW Tools
+        已登录（飞书）· 张三 · 令牌剩余 9h 12m
+        仓库权限：就绪
+        (no actions; 飞书授权 section shows its own logout)
 
 ③ unavail MMW Tools
         已登录 · weunimix · 会话剩余 11h 32m
@@ -122,6 +138,7 @@ The route and `mmw_tools_status` return one shape:
 ```json
 {
   "phase": "signed_out" | "authorizing" | "signed_in" | "expired",
+  "mode": "none" | "github" | "feishu",
   "session": { "login": "weunimix", "expiresAt": 0, "secondsRemaining": 0 },
   "repoAccess": { "state": "ready" | "unavailable", "reason": "" },
   "binding": { "owner": "mmw-devs", "name": "ffxiv-race-ops",
@@ -130,6 +147,10 @@ The route and `mmw_tools_status` return one shape:
   "sessionPath": "…"
 }
 ```
+
+`session.login` and `session.expiresAt` describe whichever credential is
+active: the GitHub login/session for `mode = github`, the Feishu display
+name/plugin-token expiry for `mode = feishu`.
 
 Explicitly **not** in this payload: `accessTokenMasked`,
 `accessTokenExpiresAt`, `refreshTokenExpiresAt`, `scope`, `configured`.
@@ -146,14 +167,21 @@ These are the assertions the rewrite must satisfy — no others.
 2. Starting a sign-in moves to `authorizing`; the panel renders 取消 and a
    countdown, and no confirm button.
 3. Completing authorization without any further user action moves to
-   `signed_in` and shows the login.
+   `signed_in` and shows the login. A Feishu login with no GitHub session
+   does the same and reports `mode = feishu`.
 4. From ③, `repoAccess` is `ready` within one token exchange of entering
    the state.
-5. Revoking from ③ returns to ① and deletes both local files.
-6. A session past `expiresAt` reports `expired`, never `signed_in`.
+5. Revoking the GitHub session from ③ (`mode = github`) returns to ① and
+   deletes both local files. In `mode = feishu` the GitHub panel offers no
+   revoke; the Feishu section revokes its own credential.
+6. A session past `expiresAt` reports `expired`, never `signed_in` —
+   unless a valid Feishu credential also exists, in which case ③ holds
+   with `mode = feishu`.
 7. The panel never renders an action that this document does not permit
    in the current state.
 8. `mmw_tools_status` and `mmw_tools_run` are the only agent tools.
+9. In `mode = feishu`, `mmw_tools_status` and the route report
+   `mode = feishu`, and the GitHub panel renders no action buttons.
 
 ## 10. Removed by this contract
 

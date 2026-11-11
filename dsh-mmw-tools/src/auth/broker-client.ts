@@ -66,6 +66,10 @@ export interface InstallationTokenResult {
   expiresAt: number;
   repository: string;
   permissions: Record<string, string>;
+  /** Which credential produced the token; older brokers omit it. */
+  authMode?: "feishu" | "github";
+  /** Human-readable identity the broker resolved (Feishu name or GitHub login). */
+  login?: string;
 }
 
 function trimTrailingSlash(url: string): string {
@@ -122,11 +126,16 @@ export class BrokerClient {
     }
 
     if (res.status === 401 || res.status === 403) {
-      throw new BrokerError(
-        "session-rejected",
-        "the broker rejected this session; sign in again",
-        res.status
-      );
+      // The body distinguishes "your Feishu role was revoked" from "your
+      // GitHub session expired"; the generic line alone hides that.
+      let message = "the broker rejected this credential; sign in again";
+      try {
+        const body = (await res.json()) as { message?: unknown };
+        if (typeof body.message === "string" && body.message.length > 0) message = body.message;
+      } catch {
+        /* status-only */
+      }
+      throw new BrokerError("session-rejected", message, res.status);
     }
     if (res.status === 429) {
       throw new BrokerError("broker-bad-response", "the broker is rate limiting; retry shortly", 429);
@@ -210,7 +219,26 @@ export class BrokerClient {
       method: "POST",
       bearer: sessionToken,
     })) as Record<string, unknown>;
+    return this.parseInstallationToken(body);
+  }
 
+  /**
+   * The Feishu path: no GitHub login involved. The broker verifies the
+   * plugin token against the auth core and mints a token scoped to the
+   * member's operations.
+   */
+  async getInstallationTokenForFeishu(feishuToken: string): Promise<InstallationTokenResult> {
+    if (!feishuToken) {
+      throw new BrokerError("session-required", "no Feishu credential; sign in first");
+    }
+    const body = (await this.request("/installation-token", {
+      method: "POST",
+      headers: { "x-mmw-feishu-token": feishuToken },
+    })) as Record<string, unknown>;
+    return this.parseInstallationToken(body);
+  }
+
+  private parseInstallationToken(body: Record<string, unknown>): InstallationTokenResult {
     if (typeof body.token !== "string" || typeof body.expiresAt !== "number") {
       throw new BrokerError("broker-bad-response", "the broker's installation token reply is malformed");
     }
@@ -220,11 +248,14 @@ export class BrokerClient {
         if (typeof v === "string") permissions[k] = v;
       }
     }
+    const authMode = body.authMode === "feishu" || body.authMode === "github" ? body.authMode : undefined;
     return {
       token: body.token,
       expiresAt: body.expiresAt,
       repository: typeof body.repository === "string" ? body.repository : "",
       permissions,
+      ...(authMode ? { authMode } : {}),
+      ...(typeof body.login === "string" ? { login: body.login } : {}),
     };
   }
 

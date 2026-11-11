@@ -381,6 +381,7 @@ const STATUS_OUTPUT_SCHEMA = {
       properties: {
         status: { type: "string" as const, required: true as const },
         configured: { type: "boolean" as const, required: true as const },
+        mode: { type: "string" as const },
         login: { type: "string" as const },
         scope: { type: "string" as const },
         accessTokenMasked: { type: "string" as const },
@@ -458,15 +459,18 @@ function makeStatusTool(deps: {
 
       const authLines: string[] = [`Auth 状态: ${status}`];
       if (status === "authorized") {
+        authLines.push(
+          view.mode === "feishu" ? "登录方式: 飞书（无需 GitHub 账号）" : "登录方式: GitHub"
+        );
         authLines.push(`登录身份: ${view.login || "(unknown)"}`);
         authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
         authLines.push("仓库写入使用 broker 签发的 1 小时 App 令牌");
       } else if (status === "reauth_needed") {
-        authLines.push("⚠️ 会话已过期 — 请在面板里点「登录 GitHub」重新登录");
+        authLines.push("⚠️ 会话已过期 — 请在面板里重新登录（飞书或 GitHub）");
       } else if (status === "device_pending") {
         authLines.push("等待浏览器完成授权 — 面板会自动继续，无需操作");
       } else {
-        authLines.push("未登录 — 请在面板里点「登录 GitHub」");
+        authLines.push("未登录 — 请先在面板完成飞书登录；GitHub 登录也可用");
       }
 
       return {
@@ -479,7 +483,7 @@ function makeStatusTool(deps: {
           `MCP server entry: ${pathToConnect}\n` +
           `\n--- Auth ---\n${authLines.join("\n")}\n` +
           `\n--- AGENTS.md ---\n${driftLine}\n` +
-          `\n下一步：请用户在面板里完成 GitHub 登录（agent 不参与登录）。`,
+          `\n下一步：请用户在面板完成飞书登录（有 GitHub 账号也可用 GitHub 登录；agent 不参与登录）。`,
         pluginId: PLUGIN_ID,
         repoOwner: String(deps.repo.owner ?? ""),
         repoName: String(deps.repo.name ?? ""),
@@ -488,6 +492,7 @@ function makeStatusTool(deps: {
         auth: {
           status,
           configured: view.configured,
+          mode: view.mode,
           login: view.login,
           scope: view.scope,
           accessTokenMasked: view.accessTokenMasked,
@@ -899,6 +904,11 @@ export function apply(
   // One implementation: BrokerAuth replaces both the token store and the
   // Device Flow state machine. It is handed to the routes twice because
   // that surface still names the two halves `store` and `flow`.
+  //
+  // FeishuAuth comes first: BrokerAuth prefers a Feishu credential, which
+  // is what lets a member with no GitHub account get a repository token.
+  // The GitHub session stays as the fallback path.
+  const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
   const auth = new BrokerAuth({
     brokerUrl,
     installationTokenFile: installationTokenPath(),
@@ -906,10 +916,10 @@ export function apply(
     // decides which repository it edits. Passing the binding here lets the
     // two be compared instead of failing later as a bare 403.
     repository: `${binding.owner}/${binding.name}`,
+    feishu,
   });
   const store = auth;
   const flow = auth;
-  const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
   const gate = new PolicyGate({
     auth: feishu,
     enabled: feishuEnabled,

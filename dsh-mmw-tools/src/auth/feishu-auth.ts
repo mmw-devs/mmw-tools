@@ -368,6 +368,25 @@ export class FeishuAuth {
     return task;
   }
 
+  /**
+   * The plugin token to present to the broker. Refreshes first when inside the
+   * watchdog window; returns null when there is no usable session.
+   *
+   * The token is a bearer credential — callers must not log it.
+   */
+  async credential(): Promise<string | null> {
+    const record = await this.readRecord();
+    if (!record || record.expiresAt <= this.now()) return null;
+    try {
+      await this.refreshIfNeeded();
+    } catch {
+      // A failed rotation is not fatal while the current token is still valid.
+    }
+    const latest = await this.readRecord();
+    if (!latest || latest.expiresAt <= this.now()) return null;
+    return latest.pluginToken;
+  }
+
   async me(): Promise<FeishuMember> {
     const record = await this.readRecord();
     if (!record || record.expiresAt <= this.now()) {

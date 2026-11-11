@@ -83,6 +83,9 @@ export async function createInstallationToken(opts) {
     if (opts.repositories && opts.repositories.length > 0) {
         body.repositories = opts.repositories;
     }
+    if (opts.permissions && Object.keys(opts.permissions).length > 0) {
+        body.permissions = opts.permissions;
+    }
     let res;
     try {
         res = await doFetch(url, {

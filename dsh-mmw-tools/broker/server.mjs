@@ -49,6 +49,9 @@ function loadConfig() {
     allowMode: process.env.BROKER_ALLOW_MODE === "list" ? "list" : "org",
     allowList: (process.env.BROKER_ALLOWED_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     denyList: (process.env.BROKER_DENIED_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    // Optional. When present, a Feishu plugin token can mint a repository
+    // token without a GitHub login (docs/AUTH-BROKER.md).
+    authUrl: (process.env.MMW_TOOLS_AUTH_URL ?? "").trim().replace(/\/+$/, ""),
     privateKeyPem: readFileSync(envOrDie("GITHUB_APP_PRIVATE_KEY_PATH"), "utf8"),
   };
 }
@@ -266,9 +269,23 @@ export function createBrokerServer(core, opts = {}) {
       /* --- step 3: mint --- */
       if (pathname === "/installation-token" && req.method === "POST") {
         await readBody(req);
+        // A Feishu credential is explicit: when the header is present it is
+        // the only identity considered. This is the path for people without
+        // a GitHub account; the GitHub session path stays for everyone else.
+        const feishuHeader = req.headers["x-mmw-feishu-token"];
+        if (typeof feishuHeader === "string" && feishuHeader.length > 0) {
+          const issued = await core.issueInstallationTokenForFeishu(feishuHeader);
+          log("installation_token_issued", {
+            repository: issued.repository,
+            mode: "feishu",
+            scope: issued.scope,
+          });
+          sendJson(res, 200, issued);
+          return;
+        }
         const token = bearer(req);
         const issued = await core.issueInstallationToken(token);
-        log("installation_token_issued", { repository: issued.repository });
+        log("installation_token_issued", { repository: issued.repository, mode: "github" });
         sendJson(res, 200, issued);
         return;
       }
