@@ -96,6 +96,8 @@ function config() {
       timeoutSeconds: Number(process.env.GHOST_BOOTSTRAP_TIMEOUT ?? 300),
     },
     githubToken: readTokenFromStore() ?? process.env.GHOST_TOKEN ?? null,
+    brokerUrl: process.env.MMW_BROKER_URL ?? "",
+    writeAuthFile: process.env.MMW_WRITE_AUTH_FILE ?? "",
   };
 }
 

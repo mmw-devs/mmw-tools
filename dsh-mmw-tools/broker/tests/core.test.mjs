@@ -49,7 +49,12 @@ async function rejectsWith(fn, code, label) {
 /* ---------------- stubs ---------------- */
 
 function json(body, status = 200) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body };
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  };
 }
 
 /**
@@ -94,10 +99,10 @@ function makeCore(overrides = {}) {
     allowMode: "org",
     fetchImpl: gh.impl,
     now: () => NOW,
-    mintInstallationToken: async () => ({
+    mintInstallationToken: async (opts = {}) => ({
       token: "ghs_installation",
       expiresAt: NOW + 3_600_000,
-      permissions: { contents: "write", pull_requests: "write" },
+      permissions: opts.permissions ?? { contents: "write", pull_requests: "write" },
     }),
     ...overrides,
   });
@@ -368,7 +373,7 @@ console.log("\n--- installation tokens ---");
   const t = await core.issueInstallationToken(sessionToken);
   eq(t.token, "ghs_installation", "token returned");
   eq(t.repository, "mmw-devs/ffxiv-race-ops", "repository is pinned to the configured one");
-  eq(t.permissions.contents, "write", "permissions surfaced");
+  eq(t.permissions.contents, "read", "session tokens are read-only");
   eq(t.expiresAt, NOW + 3_600_000, "expiry comes from the mint");
 }
 {
@@ -519,7 +524,7 @@ function fakeAuthService({
   return { impl, calls };
 }
 
-console.log("\n--- Feishu: a write role mints a scoped token ---");
+console.log("\n--- Feishu: a write role still gets a read-only client token ---");
 {
   const auth = fakeAuthService();
   const minted = [];
@@ -528,18 +533,18 @@ console.log("\n--- Feishu: a write role mints a scoped token ---");
     fetchImpl: auth.impl,
     mintInstallationToken: async (opts = {}) => {
       minted.push(opts);
-      return { token: "ghs_feishu_write", expiresAt: NOW + 3_600_000, permissions: opts.permissions };
+      return { token: "ghs_feishu_read", expiresAt: NOW + 3_600_000, permissions: opts.permissions };
     },
   });
 
   const issued = await core.issueInstallationTokenForFeishu("fs-plugin-token");
-  eq(issued.token, "ghs_feishu_write", "the broker returns the minted token");
+  eq(issued.token, "ghs_feishu_read", "the broker returns the minted token");
   eq(issued.authMode, "feishu", "the reply names the Feishu path");
-  eq(issued.scope, "write", "edit plus PR permission is a write scope");
+  eq(issued.scope, "read", "client tokens never carry write");
   eq(issued.login, "张三", "the reply carries the Feishu identity");
   eq(minted.length, 1, "the mint is called exactly once");
-  eq(minted[0].permissions?.contents, "write", "contents is write");
-  eq(minted[0].permissions?.pull_requests, "write", "pull_requests is write");
+  eq(minted[0].permissions?.contents, "read", "contents is read");
+  eq(minted[0].permissions?.pull_requests, "read", "pull_requests is read");
   eq(auth.calls.length, 2, "the broker asks /v1/me and /v1/agent/routes");
   eq(
     auth.calls[0].init.headers.Authorization,
@@ -621,6 +626,340 @@ console.log("\n--- Feishu: refusals ---");
     "feishu-check-failed",
     "an auth-service outage is reported, not treated as a grant"
   );
+}
+
+/* ---------------- write proxy ---------------- */
+
+const BASE_SHA = "a".repeat(40);
+
+/**
+ * A fake GitHub for the write proxy. It answers the Git Data API, the
+ * contents API, and the pulls API; every call is recorded so idempotency
+ * can be asserted by call count.
+ */
+function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {}) {
+  const calls = [];
+  const state = {
+    head,
+    openPr,
+    merged: false,
+    pr: {
+      number: 11,
+      state: "open",
+      draft,
+      head: { ref: "content/feat", sha: head },
+      base: { ref: "main" },
+      mergeable_state: "clean",
+    },
+  };
+  const impl = async (url, init = {}) => {
+    const u = String(url);
+    const method = init.method ?? "GET";
+    calls.push({ url: u, method, init });
+    const p = new URL(u).pathname.replace("/repos/mmw-devs/ffxiv-race-ops", "");
+    if (method === "GET" && p.startsWith("/git/ref/heads/")) {
+      const ref = decodeURIComponent(p.slice("/git/ref/heads/".length));
+      if (ref === "content/feat" || ref === "main") return json({ object: { sha: state.head } });
+      return json({ message: "Not Found" }, 404);
+    }
+    if (method === "GET" && p.startsWith("/git/commits/")) {
+      return json({ sha: p.slice("/git/commits/".length), tree: { sha: "t0" } });
+    }
+    if (method === "GET" && p.startsWith("/contents/")) {
+      const path = decodeURIComponent(p.slice("/contents/".length).split("?")[0]);
+      if (path === "src/a.txt") {
+        return json({ type: "file", encoding: "base64", content: Buffer.from("hello world").toString("base64") });
+      }
+      return json({ message: "Not Found" }, 404);
+    }
+    if (method === "POST" && p === "/git/blobs") return json({ sha: "b1" });
+    if (method === "POST" && p === "/git/trees") return json({ sha: "t1" });
+    if (method === "POST" && p === "/git/commits") return json({ sha: "c1" });
+    if (method === "POST" && p === "/git/refs") return json({ ref: "refs/heads/content/feat" }, 201);
+    if (method === "PATCH" && p.startsWith("/git/refs/heads/")) return json({ object: { sha: "c1" } });
+    if (method === "GET" && p === "/pulls" || (method === "GET" && p.startsWith("/pulls?"))) {
+      return json(state.openPr ? [state.pr] : []);
+    }
+    if (method === "POST" && p === "/pulls") {
+      state.pr = { ...state.pr, draft: init.body?.draft !== false };
+      return json({ ...state.pr, html_url: "https://github.com/mmw-devs/ffxiv-race-ops/pull/11" }, 201);
+    }
+    if (method === "GET" && p === "/pulls/11") return json(state.pr);
+    if (method === "PATCH" && p === "/pulls/11") {
+      state.pr = { ...state.pr, draft: false };
+      return json(state.pr);
+    }
+    if (method === "PUT" && p === "/pulls/11/merge") {
+      state.merged = true;
+      return json({ merged: true, sha: "m1" });
+    }
+    return json({ message: `unexpected ${method} ${p}` }, 500);
+  };
+  return { impl, calls, state };
+}
+
+function makeWriteCore(overrides = {}) {
+  const gh = fakeWriteGithub();
+  const auth = fakeAuthService({
+    operations: [
+      "race-ops.repo_read",
+      "race-ops.repo_edit",
+      "race-ops.pr_create",
+      "race-ops.pr_merge",
+    ],
+  });
+  const minted = [];
+  const audits = [];
+  const clock = { now: NOW };
+  const core = new BrokerCore({
+    appId: 123456,
+    privateKeyPem: "unused",
+    installationId: 98765,
+    clientId: "Iv1.client",
+    clientSecret: "secret",
+    publicUrl: PUB,
+    owner: "mmw-devs",
+    repo: "ffxiv-race-ops",
+    org: "mmw-devs",
+    authUrl: "https://auth.example",
+    writeEnabled: true,
+    allowlistPaths: ["src/**"],
+    denylistPaths: ["AGENTS.md"],
+    baseBranch: "main",
+    branchPrefix: "content/",
+    fetchImpl: async (url, init) => {
+      const u = String(url);
+      if (u.startsWith("https://auth.example")) return auth.impl(url, init);
+      return gh.impl(url, init);
+    },
+    mintInstallationToken: async (opts = {}) => {
+      minted.push(opts);
+      return { token: "ghs_write", expiresAt: NOW + 3_600_000, permissions: opts.permissions };
+    },
+    audit: (event) => audits.push(event),
+    now: () => clock.now,
+    ...overrides,
+  });
+  return { core, gh, auth, minted, audits, clock };
+}
+
+console.log("\n--- write proxy: disabled and authorization ---");
+{
+  const { core } = makeCore({ writeEnabled: false });
+  await rejectsWith(
+    () => core.writeRepoEdit({ feishuToken: "fs", branch: "content/x", base_sha: BASE_SHA, message: "m", edits: [] }),
+    "write-disabled",
+    "a broker without the write flag refuses writes"
+  );
+}
+{
+  const { core } = makeWriteCore();
+  await rejectsWith(
+    () => core.writeRepoEdit({ branch: "content/x", base_sha: BASE_SHA, message: "m", edits: [] }),
+    "write-credential-required",
+    "no credential is refused"
+  );
+}
+{
+  const auth = fakeAuthService({ operations: ["race-ops.repo_read"] });
+  const { core } = makeWriteCore({ fetchImpl: auth.impl });
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        branch: "content/x",
+        base_sha: BASE_SHA,
+        message: "m",
+        edits: [{ path: "src/a.txt", mode: "insert", content: "x" }],
+      }),
+    "feishu-operation-denied",
+    "a Feishu role without repo_edit cannot write"
+  );
+}
+
+console.log("\n--- write proxy: repo_edit ---");
+{
+  const { core, gh, minted, audits } = makeWriteCore();
+  const res = await core.writeRepoEdit({
+    feishuToken: "fs-plugin-token",
+    branch: "content/feat",
+    base_sha: BASE_SHA,
+    message: "feat: change a line",
+    edits: [{ path: "src/a.txt", mode: "replace", find: "hello", replace: "hi" }],
+  });
+  eq(res.new_commit_sha, "c1", "the new commit is returned");
+  eq(res.base_sha, BASE_SHA, "the base is echoed");
+  eq(res.files_changed[0], "src/a.txt", "the changed file is listed");
+  eq(res.idempotent, false, "the first call is not idempotent");
+  eq(minted[0].permissions?.contents, "write", "the write token carries contents:write");
+  eq(minted[0].permissions?.pull_requests, "write", "the write token carries pull_requests:write");
+  eq(audits.at(-1)?.op, "repo_edit", "the write is audited");
+  truthy(gh.calls.some((c) => c.method === "POST" && c.url.endsWith("/git/commits")), "a commit is created");
+}
+{
+  const { core } = makeWriteCore();
+  const args = {
+    feishuToken: "fs",
+    branch: "content/feat",
+    base_sha: BASE_SHA,
+    message: "m",
+    edits: [{ path: "src/a.txt", mode: "insert", content: "!" }],
+    idempotencyKey: "same-request",
+  };
+  const first = await core.writeRepoEdit(args);
+  const second = await core.writeRepoEdit(args);
+  eq(second.idempotent, true, "a repeated request is marked idempotent");
+  eq(second.new_commit_sha, first.new_commit_sha, "the cached commit is returned");
+}
+{
+  const { core } = makeWriteCore();
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        branch: "content/feat",
+        base_sha: "b".repeat(40),
+        message: "m",
+        edits: [{ path: "src/a.txt", mode: "insert", content: "!" }],
+      }),
+    "base-sha-mismatch",
+    "a stale base SHA is a conflict, not an overwrite"
+  );
+}
+{
+  const { core } = makeWriteCore({ allowlistPaths: ["src/**", "AGENTS.md"] });
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        branch: "content/feat",
+        base_sha: BASE_SHA,
+        message: "m",
+        edits: [{ path: "AGENTS.md", mode: "insert", content: "!" }],
+      }),
+    "path-denied",
+    "the denylist wins over the allowlist"
+  );
+}
+{
+  const { core } = makeWriteCore();
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        branch: "content/feat",
+        base_sha: BASE_SHA,
+        message: "m",
+        edits: [{ path: "docs/readme.md", mode: "insert", content: "!" }],
+      }),
+    "path-not-allowed",
+    "a path outside the allowlist is refused"
+  );
+}
+{
+  const { core } = makeWriteCore();
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        branch: "feature/x",
+        base_sha: BASE_SHA,
+        message: "m",
+        edits: [{ path: "src/a.txt", mode: "insert", content: "!" }],
+      }),
+    "branch-prefix",
+    "writes must use the content/ prefix"
+  );
+}
+
+console.log("\n--- write proxy: pr_create ---");
+{
+  const { core, gh } = makeWriteCore();
+  gh.state.openPr = false;
+  const res = await core.writePrCreate({
+    feishuToken: "fs",
+    head: "content/feat",
+    base: "main",
+    title: "feat: x",
+    body: "body",
+    draft: true,
+  });
+  eq(res.number, 11, "the PR number is returned");
+  eq(res.created, true, "a new PR is created");
+  eq(res.draft, true, "draft is preserved");
+}
+
+console.log("\n--- write proxy: pr_merge approval ---");
+{
+  const { core, gh, audits } = makeWriteCore();
+  const approval = await core.approvePrMerge({
+    feishuToken: "fs",
+    pr_number: 11,
+    merge_method: "squash",
+    commit_title: "feat: x (#11)",
+  });
+  truthy(approval.approval_id, "an approval id is issued");
+  eq(approval.head_sha, BASE_SHA, "the approval binds the current head");
+  eq(audits.at(-1)?.op, "pr_merge_approval", "the approval is audited");
+
+  const merged = await core.writePrMerge({
+    feishuToken: "fs",
+    approval_id: approval.approval_id,
+    pr_number: 11,
+    head_sha: approval.head_sha,
+    merge_method: "squash",
+  });
+  eq(merged.merged, true, "the PR is merged");
+  eq(merged.sha, "m1", "the merge commit is returned");
+  truthy(gh.state.merged, "GitHub received the merge call");
+
+  const mergeCalls = () => gh.calls.filter((c) => c.method === "PUT" && c.url.endsWith("/merge")).length;
+  eq(mergeCalls(), 1, "GitHub received exactly one merge call");
+
+  const replay = await core.writePrMerge({
+    feishuToken: "fs",
+    approval_id: approval.approval_id,
+    pr_number: 11,
+  });
+  eq(replay.idempotent, true, "a replay returns the cached merge");
+  eq(replay.sha, "m1", "the replay does not merge twice");
+  eq(mergeCalls(), 1, "the approval is not replayed against GitHub");
+}
+{
+  const { core, gh } = makeWriteCore();
+  const approval = await core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" });
+  gh.state.pr = { ...gh.state.pr, head: { ref: "content/feat", sha: "d".repeat(40) } };
+  await rejectsWith(
+    () =>
+      core.writePrMerge({
+        feishuToken: "fs",
+        approval_id: approval.approval_id,
+        pr_number: 11,
+      }),
+    "approval-stale",
+    "a moved head invalidates the approval"
+  );
+}
+{
+  const { core, clock } = makeWriteCore();
+  const approval = await core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" });
+  clock.now += 6 * 60 * 1000;
+  await rejectsWith(
+    () =>
+      core.writePrMerge({
+        feishuToken: "fs",
+        approval_id: approval.approval_id,
+        pr_number: 11,
+      }),
+    "approval-expired",
+    "an old approval is refused"
+  );
+}
+{
+  const { core, gh } = makeWriteCore({ draft: true });
+  const approval = await core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" });
+  truthy(approval.approval_id, "a draft PR can be approved");
+  eq(gh.state.pr.draft, false, "approval marks the draft ready");
 }
 
 console.log("\n--- safeEqual ---");

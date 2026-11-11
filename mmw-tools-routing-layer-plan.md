@@ -1,6 +1,6 @@
 # 功能路由与授权层设计
 
-> Status: **living design**（v6，2026-11-11）
+> Status: **living design**（v7，2026-11-12）
 > 定位：解释授权层**为什么**长成现在这样、边界在哪里、哪些能力还没有做。
 > 事实来源：工具/角色/操作以 [`contracts/tools.json`](contracts/tools.json) 与
 > [`contracts/roles.json`](contracts/roles.json) 为准；人类可读的当前矩阵见
@@ -63,11 +63,13 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 - 角色变更只有一个写入口；
 - 插件被篡改也不能凭空造出授权（它仍需要 auth core 签发的 token 和路由表）；
 - 插件 gate **不是安全边界**：它防误操作和误配置。真正的边界有两层：broker
-  在接受飞书 plugin token 时会重新调用 auth core 的路由表，并按
-  `race-ops.*` operation 决定签发 read 还是 write token；再往外是 GitHub App
-  权限、branch protection 和 CI。任何“客户端授权”改动都必须同时说明服务端对应物。
+  在接受飞书 plugin token 时会重新调用 auth core 的路由表；客户端 token 始终
+  只读，`repo_edit`/`pr_create`/`pr_merge` 每次调用都要在 broker 侧重新校验
+  operation，写 token 只留在 broker 内存。再往外是 GitHub App 权限、
+  branch protection 和 CI。任何“客户端授权”改动都必须同时说明服务端对应物。
 - 2026-11-11 之前 broker 只认 GitHub session，所以飞书 gate 的判断无法约束
-  直接调用 broker 的进程；现在飞书 token 也必须在 broker 侧通过同一张路由表。
+  直接调用 broker 的进程；2026-11-12 起飞书 token 与 GitHub session 的写操作
+  都在 broker 侧按 operation 授权。
 
 ### 2.4 读可以短暂陈旧，写必须 fail closed
 
@@ -87,7 +89,8 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 2. 未知的本插件工具一律拒绝（fail closed）。
 3. 没有可用 token 时，`mmw_tools_status` 仍可用，其余拒绝并提示登录。
 4. 不在路由表 `allowedOperations` 中的操作拒绝；父工具 allowed 不代表操作 allowed。
-5. `pr_merge` 这类高危写操作在放行前还有宿主确认。
+5. `pr_merge` 这类高危写操作在放行前还有宿主确认与 broker 的一次性 approval
+   （绑定 PR、head SHA，5 分钟、单次使用）。
 
 “先拒绝、再询问”保证确认框不会成为绕过策略的入口。
 
@@ -98,9 +101,10 @@ DSH agent
   → workspace guard（工作区边界，防误改）
   → Feishu gate（token、路由表、operation 级判定）
   → MCP transport（stdio，独立子进程）
-  → race-ops tool
-  → GitHub broker（GitHub 允许名单或飞书路由表校验；按 operation 收窄 token）/ git
-  → 审计（auth core events + 插件本地记录）
+  → race-ops tool（读走本地 git；写请求转发到 broker）
+  → GitHub broker（读 token 只读；写操作逐次校验 operation，GitHub session
+    另过允许名单；按 operation 使用内存中的 write token）/ git
+  → 审计（auth core events + 插件本地记录 + broker 写审计）
 ```
 
 workspace guard 与 gate 是两道独立的闸：前者限制“能碰哪个目录”，后者限制“能调用
@@ -112,7 +116,7 @@ workspace guard 与 gate 是两道独立的闸：前者限制“能碰哪个目�
 |---|---|---|
 | 插件 gate | 正常路径下不发起未授权调用；误配置早失败 | 被篡改的插件、直接调用 broker 的进程 |
 | auth core | 身份、角色、路由表、撤销 | 已签发 token 在过期前的滥用 |
-| GitHub broker | 只使用被授予的 App 权限；签发短期凭证；校验 GitHub 允许名单或飞书路由表，并按 operation 收窄 token | 权限本身是否过大；已签发 write token 可直接调 GitHub API |
+| GitHub broker | 客户端只拿只读 token；写操作逐次校验 operation；校验 GitHub 允许名单或飞书路由表；write token 不出 broker 内存；merge 需要一次性 approval | 权限本身是否过大；本地进程可自行调用 approval 接口；broker 内存或宿主机被攻破 |
 | branch protection | 目标分支的合并规则 | 其他分支、其他仓库 |
 | CI | 契约/构建/测试通过才可合并 | 运行时行为 |
 
@@ -123,7 +127,8 @@ PR 不算安全修复。
 
 - **没有 token**：除状态工具外全部拒绝；不启动匿名降级。
 - **auth core 不可达**：拒绝，不使用上次缓存“续命”；读也不放行。
-- **角色被撤销**：下一次路由表刷新后，写操作在短 TTL 内被拒绝；在途调用不追杀。
+- **角色被撤销**：写操作每次调用都重查，下一次调用即拒绝；已发出的读 token
+  仍可用到过期（最多 1 小时）。在途调用不追杀。
 - **策略版本变化**：以最新拉取到的表为准；插件目前不做 revision 单调比较。
 - **MCP server 启动失败**：插件初始化失败，不注册半套工具。
 - **broker 会话过期**：写工具返回可诊断错误，由用户在设置面板重新登录。
@@ -146,11 +151,14 @@ PR 不算安全修复。
    不一致；当前靠 gate 在调用时拒绝。
 5. **无 rate limiting**：单仓库、单用户场景暂时可接受，多用户前必须补。
 6. **无多仓库**：repo binding 仍是单仓库；第二 feature 要等单仓库闭环稳定。
-7. **write token 仍是“一小时的写权限”**：飞书路径按 operation 选择了 read/write
-   并收窄了 permissions，但 write token 本身仍可直接调 GitHub API，包括合并 PR；
-   插件的 `pr_merge` 确认不是服务端边界。按 operation 逐次代理写尚未实现。
-8. **撤销飞书角色不是即时的**：broker 下一次 mint 时会重新查路由表，但已经发出的
-   installation token 仍可用到过期（最多 1 小时）。
+7. **approval 不绑定“人真的点了确认”**：一次性的 approval 绑定 member、PR、
+   head SHA，且 5 分钟过期；但能读 `0600` 写认证文件并直接发 HTTP 的本地进程
+   可以自调用 approval + merge。宿主对 `pr_merge` 的确认只是 UI 门，关闭这个
+   缺口需要 host-only 的 merge secret。
+8. **读写撤销延迟不同**：写操作每次调用都重查路由表，撤销立即生效；已经发出的
+   只读 installation token 仍可用到过期（最多 1 小时）。
+9. **写代理状态只在内存**：幂等结果与 approval 重启即丢；审计是单文件 JSONL，
+   不自动轮转。多实例前需要 SQLite 或外部存储。
 
 ## 7. 明确不做
 
@@ -171,7 +179,10 @@ PR 不算安全修复。
   交给 git 和旧版文档，不再在正文维护。
 - **v6（2026-11-11）**：broker 新增飞书 plugin token 入口，按 auth core 路由表
   决定 read/write 并收窄 installation token；GitHub 组织/白名单路径保留。
-  写权限仍有“write token 直接调 GitHub”的缺口，见 §6。
+- **v7（2026-11-12）**：读写分离落地。客户端 installation token 一律只读；
+  `repo_edit`/`pr_create`/`pr_merge` 改为 broker `/v1/write/*` 代理，逐次校验
+  operation，write token 不出 broker；merge 增加一次性 approval。
+  残留是“本地进程可自调用 approval”，见 §6。
 
 ## 9. 相关文档
 
