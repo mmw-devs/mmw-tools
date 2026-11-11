@@ -213,7 +213,9 @@ Three things keep it visible:
 When a Feishu credential is active, the GitHub panel reports
 `已登录（飞书）· <member>` and hides the GitHub-only refresh/logout controls;
 **退出飞书** in the Feishu panel ends that session. `mmw_tools_status` reports
-the active `mode` (`feishu`, `github`, or `none`).
+the active `mode` (`feishu`, `github`, or `none`), labels the one-hour
+installation token as `仓库令牌剩余`, and points at the Feishu panel for the
+7-day authorization expiry.
 
 The panels are plain React with inline styles; `lib/client.js` registers both
 sections through the DSH web `__ModuleLoader__` factory contract.

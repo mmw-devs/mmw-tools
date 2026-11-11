@@ -32,7 +32,7 @@ and it is what a contributor should run before every commit.
 | `tests/github-app.test.mjs` | installation-token flow and repository access |
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior |
-| `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback |
+| `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback, cache-hit write-auth refresh |
 | `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, merge approval, path allow/deny |
 | `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |

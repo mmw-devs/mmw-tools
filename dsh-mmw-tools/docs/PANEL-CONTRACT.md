@@ -103,20 +103,22 @@ revoke.
         [ 取消 ]
 
 ③ ready MMW Tools
-        已登录 · weunimix · 会话剩余 11h 32m
+        已登录 · weunimix · 会话剩余 11 小时 32 分钟
         仓库权限：就绪
         [ 退出登录 ]
 
 ③ feishu MMW Tools
-        已登录（飞书）· 张三 · 令牌剩余 9h 12m
+        已登录（飞书）· 张三 · 仓库令牌剩余 9 小时 12 分钟
         仓库权限：就绪
         (no actions; 飞书授权 section shows its own logout)
 
 ③ unavail MMW Tools
-        已登录 · weunimix · 会话剩余 11h 32m
+        已登录 · weunimix · 会话剩余 11 小时 32 分钟
         仓库权限：不可用 · <原因>
         [ 重新获取 ]  [ 退出登录 ]
 ```
+
+Feishu 模式下 `仓库令牌剩余` 指的是 broker 签发的 installation token（1 小时，自动续期）；飞书授权本身的有效期（默认 7 天）由「飞书授权」section 单独显示为「剩余 N 天 H 小时」。
 
 No `Connect GitHub`, no `我已完成授权`, no `刷新`, no empty status row.
 

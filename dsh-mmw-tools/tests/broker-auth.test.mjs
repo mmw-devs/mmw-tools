@@ -38,6 +38,7 @@ async function makeAuth({
   issuedRepository,
   feishu,
   session = true,
+  writeAuthFile,
   broker: brokerOverrides,
 } = {}) {
   const store = new SessionStore({ file: sessionFile });
@@ -66,6 +67,7 @@ async function makeAuth({
     installationTokenFile: tokenFile,
     repository,
     ...(feishu ? { feishu } : {}),
+    ...(writeAuthFile ? { writeAuthFile } : {}),
     store,
     broker,
     now: () => NOW,
@@ -239,6 +241,49 @@ console.log("\n--- no credential at all ---");
   eq(await auth.phase(), "signed_out", "phase reports signed_out");
   eq(await auth.resolvedStatus(), "no_token", "status reports no_token");
   eq((await auth.view()).mode, "none", "the view names no mode");
+}
+
+console.log("\n--- a cache hit still refreshes the write credential ---");
+{
+  let current = "fs-token-one";
+  let mints = 0;
+  const writeAuthFile = path.join(work, "write-auth.json");
+  if (existsSync(writeAuthFile)) rmSync(writeAuthFile);
+  const { auth } = await makeAuth({
+    repository: "mmw-devs/ffxiv-race-ops",
+    issuedRepository: "mmw-devs/ffxiv-race-ops",
+    session: false,
+    writeAuthFile,
+    feishu: { credential: async () => current },
+    broker: {
+      getInstallationTokenForFeishu: async () => {
+        mints++;
+        return {
+          token: "ghs_read_only",
+          expiresAt: NOW + 3600 * 1000,
+          repository: "mmw-devs/ffxiv-race-ops",
+          permissions: { contents: "read", pull_requests: "read" },
+          authMode: "feishu",
+        };
+      },
+    },
+  });
+
+  await auth.ensureInstallationToken(true);
+  eq(
+    JSON.parse(readFileSync(writeAuthFile, "utf8")).token,
+    "fs-token-one",
+    "the initial write credential is stored"
+  );
+
+  current = "fs-token-two";
+  await auth.ensureInstallationToken();
+  eq(
+    JSON.parse(readFileSync(writeAuthFile, "utf8")).token,
+    "fs-token-two",
+    "a re-login replaces the write credential even while the read token is cached"
+  );
+  eq(mints, 1, "the installation token itself was not minted again");
 }
 
 rmSync(work, { recursive: true, force: true });
