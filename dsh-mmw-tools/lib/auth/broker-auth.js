@@ -275,7 +275,7 @@ export class BrokerAuth {
     async mintInstallationToken(session, feishuToken) {
         if (feishuToken) {
             try {
-                return await this.broker.getInstallationTokenForFeishu(feishuToken);
+                return await this.broker.getInstallationTokenForFeishu(feishuToken, this.repository);
             }
             catch (err) {
                 // A stale Feishu token must not strand an otherwise valid GitHub
@@ -286,7 +286,7 @@ export class BrokerAuth {
             }
         }
         if (session)
-            return this.broker.getInstallationToken(session.sessionToken);
+            return this.broker.getInstallationToken(session.sessionToken, this.repository);
         throw new BrokerError("session-required", "no Feishu or GitHub credential; sign in first");
     }
     /** Watchdog hook: keep the child's credential fresh. */

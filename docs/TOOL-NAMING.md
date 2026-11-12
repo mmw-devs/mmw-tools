@@ -112,7 +112,8 @@ mcp__mmw-tools__select_repo
 - `mcp__mmw-tools__select_repo` 与会话级仓库绑定（`src/gate/repo-registry.ts`）；
 - 未选择时业务工具返回 `[mmw_route_denied]`；同会话改选另一个仓库同样拒绝；
 - 插件通过 `_meta.mmwRepo` 把选择传给 MCP 子进程，子进程按 `MMW_REPOS` 解析该仓库的工作目录、分支基线和令牌文件；
-- 每仓库独立的工作副本与只读令牌文件；写操作经 broker 按 `repo` 路由。
+- 每仓库独立的工作副本与只读令牌文件；写操作经 broker 按 `repo` 路由；
+- `select_repo` 在授权表之前按本地会话状态放行（授权表可能滞后），业务工具仍受 `allowedOperations` 约束；这一豁免不改变命名规则，名字仍必须是 `mcp__mmw-tools__select_repo`。
 
 仍未实现：
 

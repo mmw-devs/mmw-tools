@@ -184,7 +184,9 @@ session must call `mcp__mmw-tools__select_repo` before any business tool and
 cannot switch repositories afterwards. The plugin passes the chosen
 `owner/name` to the MCP child in `_meta.mmwRepo` and as `MMW_REPOS`; each
 repository gets its own working copy and installation-token file
-(`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`).
+(`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`). Broker token
+requests carry the selected repository as `?repo=`, so the minted token is
+scoped to that repository rather than the default one.
 
 | Field | Meaning |
 |---|---|
@@ -382,8 +384,8 @@ the plugin at all.
 
 | Tool | Purpose |
 |---|---|
-| `select_repo` | Bind this session to one registered repository. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused |
-| `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files |
+| `select_repo` | Bind this session to one registered repository. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection |
+| `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files; credentials in the remote URL are redacted |
 | `repo_clone` | Shallow clone of the base branch into `workingDir` |
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |
 | `repo_read` | Read one file (100 KiB default, 500 KiB hard cap, refuses binary) |

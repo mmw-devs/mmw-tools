@@ -12,6 +12,15 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * The remote URL can carry the installation token (`https://x-access-token:…@`).
+ * `repo_status` output is shown to the model and may end up in transcripts, so
+ * never echo the credential part.
+ */
+export function redactRemoteUrl(url: string): string {
+  return url.replace(/\/\/[^/@\s]+@/, "//");
+}
+
 export interface RepoStatusInput {
   // (none)
 }
@@ -79,7 +88,7 @@ export async function repoStatus(
         ["remote", "get-url", "origin"],
         { cwd: workingDir }
       );
-      remote = remoteR.stdout.trim() || null;
+      remote = redactRemoteUrl(remoteR.stdout.trim()) || null;
     } catch {
       // No remote configured — that's fine.
       remote = null;
@@ -87,6 +96,7 @@ export async function repoStatus(
 
     return {
       cloned: true,
+
       current_branch: branch,
       dirty: uncommitted.length > 0,
       last_commit_sha: head,

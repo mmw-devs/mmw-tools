@@ -25,14 +25,14 @@ and it is what a contributor should run before every commit.
 | `tests/client-bundle.test.mjs` | the `__ModuleLoader__` shape of `lib/client.js` |
 | `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
 | `tests/feishu-gate.test.mjs` | authorization tables, gate decisions (including `pr_merge` / `pr_close` asks), refusal-code prefixes, token rotation and refresh |
-| `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table |
+| `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, `select_repo` allowed while the route table lags, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table |
 | `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
 | `tests/audit.test.mjs` | deep redaction, rotation, write-failure handling |
 | `tests/github-app.test.mjs` | installation-token flow and repository access |
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
-| `tests/broker-client.test.mjs` | broker HTTP client behavior |
+| `tests/broker-client.test.mjs` | broker HTTP client behavior, including repo-scoped installation-token queries |
 | `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback, cache-hit write-auth refresh |
 | `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, path allow/deny |
 | `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge |
@@ -51,6 +51,7 @@ because they need the MCP build output.
 | `tests/guard.test.mjs` | preflight and merge guards invoked directly |
 | `tests/pr-preview.test.mjs` | preview URL extraction and check-state parsing |
 | `tests/contract-gate.test.mjs` | op-log command extraction (CRLF, multi-block, malformed JSON) and the `agentMerge` verdict: L2 allowed; L3, L1, unknown, missing and mixed cases refused |
+| `tests/repo-status.test.mjs` | remote URL credential redaction (`redactRemoteUrl`) |
 | `tests/tools-list-schema.test.mjs` | the advertised `tools/list` input schemas |
 
 ### `pnpm test:smoke`
