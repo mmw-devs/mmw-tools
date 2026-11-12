@@ -24,7 +24,7 @@ and it is what a contributor should run before every commit.
 | `tests/skills.test.mjs` | the skill catalog and `race-ops-ops` instructions |
 | `tests/client-bundle.test.mjs` | the `__ModuleLoader__` shape of `lib/client.js` |
 | `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
-| `tests/feishu-gate.test.mjs` | authorization tables, gate decisions, token rotation and refresh |
+| `tests/feishu-gate.test.mjs` | authorization tables, gate decisions (including `pr_merge` / `pr_close` asks), token rotation and refresh |
 | `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
@@ -33,8 +33,8 @@ and it is what a contributor should run before every commit.
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior |
 | `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback, cache-hit write-auth refresh |
-| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, merge approval, path allow/deny |
-| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing |
+| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, path allow/deny |
+| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |
 

@@ -1,8 +1,8 @@
 # dsh-mmw-tools
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge it.
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge or close it.
 
-Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived, **read-only** installation token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging happens through `pr_merge`, which asks the host and requires a one-time broker approval bound to the PR head SHA.
+Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived, **read-only** installation token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging and closing happen through `pr_merge` / `pr_close`, which ask the host and require a one-time broker approval bound to the PR head SHA.
 
 ```
 agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
@@ -11,6 +11,7 @@ agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the
        ──▶ pr_create ──▶ push content/* + open the PR
        ──▶ pr_preview ──▶ the preview URL the operator reviews
        ──▶ pr_merge ──▶ merge, after the operator confirms in the UI
+       ──▶ pr_close ──▶ close without merging, after the same confirmation
 ```
 
 ## Why
@@ -23,7 +24,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 - **Denylist beats allowlist** — a path matching both is refused.
 - **Branch prefix** — a commit lands on `content/*` or it does not land.
 - **Pre-flight** — `repo_edit` runs the configured command and rolls the working tree back if it fails.
-- **Merge is gated, not automatic.** `pr_merge` asks the operator to confirm in the UI before it runs, and `mergeStateStatus` — GitHub's own verdict — still decides whether merging is allowed.
+- **Merge and close are gated, not automatic.** `pr_merge` and `pr_close` ask the operator to confirm in the UI before they run; `mergeStateStatus` — GitHub's own verdict — still decides whether merging is allowed.
 
 ## What it does not do
 
@@ -41,7 +42,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
 | `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub (optional) | only needed when you sign in with GitHub: the account must pass the broker's allowlist — a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. A Feishu member whose roles include this repository's `repo_read` / `repo_edit` / `pr_create` operations does **not** need a GitHub account |
+| GitHub (optional) | only needed when you sign in with GitHub: the account must pass the broker's allowlist — a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. A Feishu member whose roles include this repository's `repo_read` / `repo_edit` / `pr_create` / `pr_close` operations does **not** need a GitHub account |
 | Network | `https://race-ops-broker.mmw-team.icu` and `https://mmw-tools.mmw-team.icu` reachable |
 
 No OAuth App, client id or client secret is needed on the operator's machine:
@@ -225,10 +226,11 @@ sections through the DSH web `__ModuleLoader__` factory contract.
 The tool catalog is tool-centric: each tool declares `roles` and
 `requiredPermissions`; there is no role → permission table. Operations may
 override the tool's roles, and `race-ops` uses that to expose a ladder: `viewer`
-reads, `editor` writes and opens PRs, `operator` / `admin` can also merge.
-`pr_merge` asks the host and requires a one-time broker approval bound to the PR
-head SHA. The host confirmation is a UI gate, not a security boundary: a local
-process that can read the write-auth file can call the approval endpoint itself.
+reads, `editor` writes, opens, and closes PRs, `operator` / `admin` can also
+merge. `pr_merge` and `pr_close` ask the host; `pr_merge` also requires a
+one-time broker approval bound to the PR head SHA. The host confirmation is a UI
+gate, not a security boundary: a local process that can read the write-auth file
+can call the approval endpoint itself.
 Before either merge path, `pr_merge` reads `contract/operations.json` at the PR
 head and refuses when the PR's op-log `command` belongs to a level with
 `agentMerge: false` (L1/L3 in `race-ops`) — the same contract `COMMANDS.md` is
@@ -244,7 +246,7 @@ At call time the plugin:
 3. allows the call only if `allowedOperations` contains the operation id; the
    tool-level `allowed` list is a v1 compatibility fallback;
 4. otherwise returns `mmw_route_denied`;
-5. for `pr_merge`, only after the policy check, asks the operator.
+5. for `pr_merge` and `pr_close`, only after the policy check, asks the operator.
 
 The plugin token is rotated automatically once it is inside its last day: a
 six-hour watchdog calls `POST /v1/session/refresh`, the auth core revokes the
@@ -262,13 +264,13 @@ plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it with
 
 | Route-table operations | Client token |
 |---|---|
-| any of `repo_read` / `repo_edit` / `pr_create` / `pr_merge` | `contents: read`, `pull_requests: read` |
+| any of `repo_read` / `repo_edit` / `pr_create` / `pr_close` / `pr_merge` | `contents: read`, `pull_requests: read` |
 | none | refused (`feishu-no-access`) |
 
 Writes are proxied per call, never minted for the client: `repo_edit`,
-`pr_create`, and `pr_merge` go to `POST /v1/write/*`, which re-checks the exact
-operation (and, for GitHub, the session plus allowlist) before using a write
-token that exists only in broker memory. The plugin stores the credential used
+`pr_create`, `pr_close`, and `pr_merge` go to `POST /v1/write/*`, which re-checks
+the exact operation (and, for GitHub, the session plus allowlist) before using a
+write token that exists only in broker memory. The plugin stores the credential used
 for those calls in `~/.dsh/dsh-mmw-tools-write-auth.json` (mode `0600`); the MCP
 child reads it and sends `X-MMW-Feishu-Token` or `Authorization: Bearer`. See
 `docs/AUTH-BROKER.md` §13 for the request shapes and the approval nonce.
@@ -368,11 +370,12 @@ the plugin at all.
 | `repo_search` | `git grep`, capped results, redacted snippets |
 | `repo_edit` | Validate → apply edits atomically → preflight → commit. With a broker write credential, the commit is created by the broker instead (no push) |
 | `pr_create` | Open a PR (draft by default; pass `draft: false` to open it ready). With a broker write credential, the broker pushes and opens it |
+| `pr_close` | Close a PR without merging it; the host asks first. Already closed or merged returns `already: true` |
 | `pr_preview` | Preview URLs from the hosting check, plus check states and draft/merge state; read-only, optionally waits for the deployment |
 | `pr_list` | List PRs (titles and bodies redacted) |
 | `pr_merge` | Mark a draft ready if needed, then merge. With a broker write credential, first fetch a one-time approval bound to the head SHA, then merge; the host still asks |
 
-When `MMW_BROKER_URL` and a readable write-auth file are present, these three
+When `MMW_BROKER_URL` and a readable write-auth file are present, these four
 write tools call the broker's `/v1/write/*` endpoints; otherwise they keep the
 local git/`gh` behavior for standalone use.
 
@@ -387,7 +390,8 @@ local git/`gh` behavior for standalone use.
 **Known trade-offs**, stated rather than hidden:
 
 - When not using the broker's write proxy, `repo_clone` and `pr_create` pass the token on the git command line, so it is briefly visible in the process list. It is never written to `.git/config`: `repo_clone` resets `origin` to the credential-free URL immediately after cloning, and `pr_create` pushes to an explicit URL without `-u`, because `-u <url>` would store that URL — token included — as `branch.<name>.remote`. A future version should use `GIT_ASKPASS` and drop the argv exposure too.
-- The broker approval nonce binds the member, PR, and head SHA, and is single-use. It does not prove a human clicked the host prompt: a local process that can read the write-auth file and send HTTP can request the approval and merge by itself. The host `pr_merge` confirmation is a UI gate, not the security boundary; closing this needs a host-held merge secret.
+- The broker approval nonce binds the member, PR, and head SHA, and is single-use. It does not prove a human clicked the host prompt: a local process that can read the write-auth file and send HTTP can request the approval and merge by itself. The host `pr_merge` / `pr_close` confirmation is a UI gate, not the security
+boundary; closing this needs a host-held secret.
 - `repo_edit` matches `find` byte-for-byte. On a Windows checkout with `core.autocrlf` the working tree holds CRLF, so a multi-line `find` written with LF will not match; the edit is refused with `find-not-found` rather than applied half-way. Read the file with `repo_read` first and reuse its exact bytes.
 - `preflight` and `bootstrap` commands run through the shell on Windows, because `npm` there is `npm.cmd` and `execFile` does not consult `PATHEXT`. Without this every npm-based pre-flight failed with `ENOENT` on the platform this plugin is mostly used on. The command string comes from your own plugin config, never from the agent.
 - `repo_edit`'s `patch` mode is not implemented; use `replace` or `insert`.

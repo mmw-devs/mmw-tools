@@ -64,8 +64,8 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 - 插件被篡改也不能凭空造出授权（它仍需要 auth core 签发的 token 和路由表）；
 - 插件 gate **不是安全边界**：它防误操作和误配置。真正的边界有两层：broker
   在接受飞书 plugin token 时会重新调用 auth core 的路由表；客户端 token 始终
-  只读，`repo_edit`/`pr_create`/`pr_merge` 每次调用都要在 broker 侧重新校验
-  operation，写 token 只留在 broker 内存。再往外是 GitHub App 权限、
+  只读，`repo_edit`/`pr_create`/`pr_close`/`pr_merge` 每次调用都要在 broker 侧
+  重新校验 operation，写 token 只留在 broker 内存。再往外是 GitHub App 权限、
   branch protection 和 CI。任何“客户端授权”改动都必须同时说明服务端对应物。
 - 2026-11-11 之前 broker 只认 GitHub session，所以飞书 gate 的判断无法约束
   直接调用 broker 的进程；2026-11-12 起飞书 token 与 GitHub session 的写操作
@@ -90,7 +90,9 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 3. 没有可用 token 时，`mmw_tools_status` 仍可用，其余拒绝并提示登录。
 4. 不在路由表 `allowedOperations` 中的操作拒绝；父工具 allowed 不代表操作 allowed。
 5. `pr_merge` 这类高危写操作在放行前还有宿主确认与 broker 的一次性 approval
-   （绑定 PR、head SHA，5 分钟、单次使用）。
+   （绑定 PR、head SHA，5 分钟、单次使用）；`pr_close` 同样要宿主确认，但
+   不需要 approval nonce（关闭不合并，且 broker 会拒绝非 `content/*` 或
+   错误 base 的 PR）。
 
 “先拒绝、再询问”保证确认框不会成为绕过策略的入口。
 
@@ -183,8 +185,9 @@ PR 不算安全修复。
 - **v6（2026-11-11）**：broker 新增飞书 plugin token 入口，按 auth core 路由表
   决定 read/write 并收窄 installation token；GitHub 组织/白名单路径保留。
 - **v7（2026-11-12）**：读写分离落地。客户端 installation token 一律只读；
-  `repo_edit`/`pr_create`/`pr_merge` 改为 broker `/v1/write/*` 代理，逐次校验
-  operation，write token 不出 broker；merge 增加一次性 approval。
+  `repo_edit`/`pr_create`/`pr_close`/`pr_merge` 改为 broker `/v1/write/*` 代理，
+  逐次校验 operation，write token 不出 broker；merge 增加一次性 approval，
+  close 只要求宿主确认（不合并、不删分支）。
   残留是“本地进程可自调用 approval”，见 §6。
 
 ## 9. 相关文档

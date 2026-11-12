@@ -1,6 +1,6 @@
 {
   "contractVersion": 2,
-  "catalogRevision": "sha256:a5864baf0e5baed4378a7723097c742990da894af1bc265b3b929312698f7226",
+  "catalogRevision": "sha256:39629e0cc8e15e27a4f496f678dd7395b800033790fb911ccd23252d3cb92f0e",
   "policyRevision": 42,
   "ttlSeconds": 60,
   "allowed": [

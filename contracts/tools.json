@@ -97,6 +97,17 @@
           ]
         },
         {
+          "id": "pr_close",
+          "publicName": "mcp__mmw-tools__pr_close",
+          "description": "关闭一个 content/* 分支的 PR（不合并）；宿主会在执行前确认。",
+          "risk": "write",
+          "roles": [
+            "editor",
+            "operator",
+            "admin"
+          ]
+        },
+        {
           "id": "pr_list",
           "publicName": "mcp__mmw-tools__pr_list",
           "description": "列出仓库里现有的 PR。",

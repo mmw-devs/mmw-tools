@@ -352,6 +352,7 @@ export function createBrokerServer(core, opts = {}) {
         let result;
         if (op === "repo_edit") result = await core.writeRepoEdit(args);
         else if (op === "pr_create") result = await core.writePrCreate(args);
+        else if (op === "pr_close") result = await core.writePrClose(args);
         else if (op === "pr_merge/approval") result = await core.approvePrMerge(args);
         else if (op === "pr_merge") result = await core.writePrMerge(args);
         else throw new BrokerRefused("not-found", "no such write endpoint", 404);
