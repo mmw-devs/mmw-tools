@@ -66,8 +66,9 @@ Status: historical
   `/v1/me` 返回 200，`/v1/agent/routes` 返回 `contractVersion: 2`、12 个
   operation 与当时的 `catalogRevision` 一致。无 token 与伪造 token 仍分别返回
   401 `mmw_auth_required` / `mmw_session_expired`。
-- 这次联调没有覆盖：viewer 账号的线上只读拒绝（需要第二个飞书账号）、
-  token refresh 与 logout 的线上路径。它们仍属 O2 的剩余验收项。
+- 反向用例已由维护者于 2026-11-12 在线验证：viewer 账号越权调用被
+  `mmw_route_denied` 拒绝。具体测试账号与逐条结果不在本仓库记录。
+- 仍未覆盖：token refresh 与 logout 的线上路径，仍属 O2 的剩余验收项。
 - 第 3 行“`catalogRevision` 漂移检测”仍未实现，留给 O3。合并后契约因新增
   `pr_close` 变为 13 个 operation，`catalogRevision` 为
   `sha256:39629e0c…`；上文的 12 与旧 revision 只描述快照当时。
