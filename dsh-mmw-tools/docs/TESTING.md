@@ -28,7 +28,8 @@ and it is what a contributor should run before every commit.
 | `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, `select_repo` allowed while the route table lags, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table, registry-cache overlay and round-trip, scoped grant table selection and cross-repository `[mmw_contract_mismatch]` |
 | `broker/tests/core.test.mjs` (policy section) | `.dsh-mmw-tools.yaml` parsing: quoted/bare/inline lists, preflight/bootstrap, `prDefaultDraft`, non-v1 and missing-`/` rejection |
 | `broker/tests/server.test.mjs` (policy section) | `GET /repo-policy?repo=` returns the parsed rules and forwards the Feishu token |
-| `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
+| `tests/workspace-guard.test.mjs` | workspace relevance, status/`select_repo` exemptions, `repo_clone` bootstrap, neutral refusals |
+| `tests/workspace-mode.test.mjs` | registry + `origin` remote + policy-file marker: managed/unmanaged/mismatch/bootstrap/unknown, scp/https remotes, `.git` file/worktree |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
 | `tests/audit.test.mjs` | deep redaction, rotation, write-failure handling |
@@ -36,7 +37,7 @@ and it is what a contributor should run before every commit.
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior, including repo-scoped installation-token queries |
 | `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback, cache-hit write-auth refresh |
-| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, path allow/deny |
+| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, base-branch contract gate, close ownership, path allow/deny |
 | `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |

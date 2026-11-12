@@ -656,15 +656,16 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
   GitHub 按钮降级为「登录 GitHub（可选）」。
 - MCP 的 `repo_edit` / `pr_create` / `pr_close` / `pr_merge` 在有写认证时走 broker；
   没有写认证时保留旧的本地 git / `gh` 路径，供独立使用与旧测试。
-- 测试：`broker/tests/core.test.mjs`、`broker/tests/server.test.mjs`、
-  `tests/broker-auth.test.mjs` 覆盖只读 token、写授权、幂等、approval、路径
-  allow/deny 与回退。
+- 测试：`broker/tests/core.test.mjs` 覆盖只读 token、写授权、幂等、approval、
+  路径 allow/deny、base 分支契约门与 close 归属；`broker/tests/server.test.mjs`
+  覆盖 HTTP 路由；`tests/broker-auth.test.mjs` 覆盖凭据回退。
 
 **上线步骤**
 
 1. `/opt/race-ops-broker/.env` 加
    `MMW_TOOLS_AUTH_URL=https://mmw-tools.mmw-team.icu`，并按 §13 配
-   `BROKER_WRITE_ENABLED=true` 与 allow/deny 列表。
+   `BROKER_WRITE_ENABLED=true`、allow/deny 列表与
+   `BROKER_OWNERSHIP_FILE=/opt/race-ops-broker/ownership.json`。
 2. `systemctl restart race-ops-broker`。
 3. `GET /health` 看到 `"feishuEnabled": true` 与 `"writeEnabled": true`。
 4. 飞书成员在插件里完成飞书登录，不需要 GitHub 账号。只读要 `viewer`；开 PR
@@ -674,7 +675,8 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 - 没有 host-only 的 merge secret。能读 0600 写认证文件、又能发 HTTP 的本地进程
   可以自行申请 approval 并合并；宿主的 `pr_merge` 确认只是 UI 门。
-- 没有按单个 PR/分支再收窄；写代理只校验分支前缀、base 分支与路径 allow/deny。
+- 没有按文件/PR 的 GitHub 侧细粒度；写 token 仍是仓库级 `contents/pull_requests:
+  write`。归属账本按 `<repo>#<branch>`，同一分支上的多个 PR 共享一个 owner。
 - 幂等与 approval 状态在 broker 内存里，重启即丢。approval 丢失只会让合并失败；
   幂等丢失时重试仍由 `pr_create` 的同 head 查询兜底。
 - 读 token 撤销最多延迟 1 小时（GitHub installation token 的固有 TTL）；写操作
@@ -755,19 +757,31 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 不重复调用 GitHub。只有 head 以所选仓库的分支前缀开头、base 等于该仓库的
 base 分支的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
 不会删除分支；成功返回 `{number, closed: true, already: false, head_sha, url}`。
-宿主在执行前仍会弹出一次确认。
+
+关闭还要求作者归属：broker 在 `repo_edit` 建分支、`pr_create` 首次创建 PR 时，
+把 `<repo>#<branch> → login` 记到 `BROKER_OWNERSHIP_FILE`（0600 JSON）。关闭时
+同分支作者可以关自己的 PR；GitHub 可信写者或飞书 `allowedOperations` 含
+`race-ops.pr_merge` 的 operator/admin 可以关任何 PR；其余人返回
+`pr-not-owned`（403）。没有归属记录时只有 operator/admin 能关。宿主在执行前
+仍会弹出一次确认；该确认是 UI 提醒，不是服务端归属判定的替代。
 
 ### `pr_merge`
 
 1. `POST /v1/write/pr_merge/approval` 传 `{repo?, pr_number, merge_method,
    commit_title}`。broker 读 PR，校验 open、base、分支前缀；draft 先
    `PATCH draft:false`；`mergeable_state` 必须为 `clean`（`unknown` 最多轮询
-   5 次 × 2 秒）。通过后生成 32 字节 `approval_id`，绑定 member、仓库、PR、
-   head SHA、method 与 title，5 分钟过期，仅一次有效。
+   5 次 × 2 秒）。随后读 **base 分支** 的 `contract/operations.json`：文件不存在
+   视为仓库不用契约，放行；PR head 的同一文件存在且内容不同则拒绝
+   `contract-changed`（409），解析失败 `contract-unreadable`（409）。PR 的
+   op-log `command` 若属于 `agentMerge: false` 的级别、未知、缺失，或该级别
+   任一 operation 不是 `agentMerge: true`，返回 `agent-merge-denied`（403）。
+   通过后生成 32 字节 `approval_id`，绑定 member、仓库、PR、head SHA、method
+   与 title，5 分钟过期，仅一次有效。
 2. 宿主向用户确认后，`POST /v1/write/pr_merge` 传 `{repo?, approval_id,
    pr_number, head_sha, merge_method, commit_title}`。broker 校验 approval
    未过期、成员、仓库与 PR 一致；重新读 PR，head SHA 必须仍等于 approval 里
-   的值（否则 `approval-stale`）；最后 `PUT /pulls/{n}/merge`。
+   的值（否则 `approval-stale`）；再次执行上面的契约检查（防止 approval 与
+   merge 之间契约被改）；最后 `PUT /pulls/{n}/merge`。
 3. approval 在发出 merge 请求前删除，重放不会二次合并。
 
 ### 幂等、审计与配置
@@ -780,8 +794,8 @@ base 分支的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
   commit message。
 - 相关环境变量：`BROKER_WRITE_ENABLED`、`BROKER_ALLOWLIST_PATHS`、
   `BROKER_DENYLIST_PATHS`、`BROKER_BASE_BRANCH`、`BROKER_BRANCH_PREFIX`、
-  `BROKER_AUDIT_LOG`。`/health` 报告 `writeEnabled`、`pendingApprovals` 与
-  `idempotencyEntries`。
+  `BROKER_AUDIT_LOG`、`BROKER_OWNERSHIP_FILE`。`/health` 报告 `writeEnabled`、
+  `pendingApprovals` 与 `idempotencyEntries`。
 
 ### 残留边界
 

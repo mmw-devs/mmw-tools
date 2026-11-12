@@ -102,6 +102,7 @@ function loadConfig() {
     denylistPaths: splitList(process.env.BROKER_DENYLIST_PATHS),
     baseBranch: process.env.BROKER_BASE_BRANCH ?? "main",
     branchPrefix: process.env.BROKER_BRANCH_PREFIX ?? "content/",
+    ownershipFile: (process.env.BROKER_OWNERSHIP_FILE ?? "").trim(),
     audit: makeAudit((process.env.BROKER_AUDIT_LOG ?? "").trim()),
     privateKeyPem: readFileSync(envOrDie("GITHUB_APP_PRIVATE_KEY_PATH"), "utf8"),
   };

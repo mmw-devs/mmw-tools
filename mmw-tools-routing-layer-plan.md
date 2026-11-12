@@ -111,17 +111,19 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 
 ```
 DSH agent
-  → workspace guard（工作区边界，防误改）
+  → workspace guard（管辖范围：注册表 + 工作区 Git remote + 规则标记，防误用）
   → Feishu gate（token、路由表、operation 级判定、会话仓库选择）
   → MCP transport（stdio，独立子进程；`_meta.mmwRepo` 选工作副本与仓库配置）
   → race-ops tool（读走本地 git；写请求转发到 broker）
-  → GitHub broker（读 token 只读；写操作逐次校验 operation，GitHub session
-    另过允许名单；按 operation 使用内存中的 write token）/ git
+  → GitHub broker（读 token 只读；写操作逐次校验 operation 与 base 分支契约；
+     GitHub session 另过允许名单；按 operation 使用内存中的 write token；
+     close 另查分支归属）
   → 审计（auth core events + 插件本地记录 + broker 写审计）
 ```
 
-workspace guard 与 gate 是两道独立的闸：前者限制“能碰哪个目录”，后者限制“能调用
-哪个操作”。任何一道失败都拒绝，不互相替代。
+workspace guard 与 gate 是两道独立的闸：前者限制“当前工作区是否归 mmw-tools
+管辖”，后者限制“能调用哪个操作”。任何一道失败都拒绝，不互相替代。guard 不是
+安全边界：它不阻止直接调用 broker，也不替用户选择别的工具。
 
 ## 4. 信任边界
 
@@ -129,7 +131,7 @@ workspace guard 与 gate 是两道独立的闸：前者限制“能碰哪个目�
 |---|---|---|
 | 插件 gate | 正常路径下不发起未授权调用；误配置早失败 | 被篡改的插件、直接调用 broker 的进程 |
 | auth core | 身份、角色、路由表、撤销 | 已签发 token 在过期前的滥用 |
-| GitHub broker | 客户端只拿只读 token；写操作逐次校验 operation；校验 GitHub 允许名单或飞书路由表；write token 不出 broker 内存；merge 需要一次性 approval | 权限本身是否过大；本地进程可自行调用 approval 接口；broker 内存或宿主机被攻破 |
+| GitHub broker | 客户端只拿只读 token；写操作逐次校验 operation；校验 GitHub 允许名单或飞书路由表；write token 不出 broker 内存；merge 需要一次性 approval，并从 base 分支校验契约；close 校验分支归属 | 权限本身是否过大；本地进程可自行调用 approval 接口；broker 内存或宿主机被攻破；归属账本丢失时只允许 operator/admin 关闭 |
 | branch protection | 目标分支的合并规则 | 其他分支、其他仓库 |
 | CI | 契约/构建/测试通过才可合并 | 运行时行为 |
 
@@ -184,6 +186,10 @@ PR 不算安全修复。
 10. **凭据刷新不是免检路径**：installation token 命中缓存时仍要重写
    `write-auth`；状态投影也必须先 mint 再读视图，否则重新登录后会显示或使用
    上一个身份的凭据。
+11. **工作区管辖不是安全边界**：guard 用注册表 + 工作区 `origin` remote +
+   `.dsh-mmw-tools.yaml` 标记判断相关性，只拒绝“不归它管”的调用，不阻止直接
+   调用 broker，也不替用户指定替代工具。没有 remote 的目录（导出包、非 git
+   副本）只能判为 `unmanaged`/`mismatch`，不能凭标记文件推断仓库身份。
 
 ## 7. 明确不做
 
@@ -235,6 +241,13 @@ PR 不算安全修复。
   draft 用它；文件缺失/非法/不可达一律 503 且不退回 profile。`select_repo`
   读取规则后覆盖内存 entry 与缓存，MCP 每次调用从缓存覆盖路径与 preflight。
   本次没有改变“本地进程可自调用 approval”的边界。
+- **v13（2026-11-13）**：工作区管辖与写边界补强。guard 从“路径 roots”改为
+  “注册表 + 工作区 `origin` remote + 规则标记”的 `managed`/`unmanaged`/
+  `mismatch`/`bootstrap`/`unknown` 模式；`select_repo` 在绑定前拒绝未管辖或
+  与工作区不一致的选择；`mmw_tools_status` 报告 `workspace`。broker 在
+  approval 与 merge 前从 base 分支校验 `contract/operations.json`，PR 改契约
+  直接拒绝；close 增加 `<repo>#<branch> → login` 归属账本，非作者且非
+  operator/admin 返回 `pr-not-owned`。工作区模式是相关性判断，不是安全边界。
 
 ## 9. 相关文档
 

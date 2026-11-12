@@ -81,11 +81,12 @@ are proxied by the broker (see `docs/AUTH-BROKER.md` §13).
 
 ### Which profile to install into
 
-A DSH **profile** is the unit of plugin scope — there is no per-workspace
-plugin scope. A plugin installed into a profile is loaded in **every**
+A DSH **profile** is the unit of plugin installation — there is no per-workspace
+plugin installation. A plugin installed into a profile is loaded in **every**
 workspace that profile hosts, and it is the plugin's tools that appear in
 those sessions. A profile may host several registered repositories, but each
-session binds to exactly one with `select_repo`; for a single-repository
+session binds to exactly one with `select_repo`, and the workspace guard decides
+per call whether the current workspace is one of them; for a single-repository
 deployment a dedicated profile is still the cleanest boundary.
 
 ```sh
@@ -265,15 +266,18 @@ sections through the DSH web `__ModuleLoader__` factory contract.
 The tool catalog is tool-centric: each tool declares `roles` and
 `requiredPermissions`; there is no role → permission table. Operations may
 override the tool's roles, and `race-ops` uses that to expose a ladder: `viewer`
-reads, `editor` writes, opens, and closes PRs, `operator` / `admin` can also
-merge. `pr_merge` and `pr_close` ask the host; `pr_merge` also requires a
-one-time broker approval bound to the PR head SHA. The host confirmation is a UI
-gate, not a security boundary: a local process that can read the write-auth file
-can call the approval endpoint itself.
-Before either merge path, `pr_merge` reads `contract/operations.json` at the PR
-head and refuses when the PR's op-log `command` belongs to a level with
-`agentMerge: false` (L1/L3 in `race-ops`) — the same contract `COMMANDS.md` is
-generated from. Repositories without that file are unaffected.
+reads, `editor` writes, opens, and closes its own PRs, `operator` / `admin` can
+also merge and close any PR. `pr_merge` and `pr_close` ask the host; `pr_merge`
+also requires a one-time broker approval bound to the PR head SHA. The host
+confirmation is a UI gate, not a security boundary: a local process that can
+read the write-auth file can call the approval endpoint itself.
+The broker reads `contract/operations.json` from the **base** branch before it
+issues an approval and again before it merges; a PR that changes that file is
+refused (`contract-changed`), and an op-log `command` on a level with
+`agentMerge: false` (L1/L3 in `race-ops`) is refused (`agent-merge-denied`).
+The same contract is generated from `COMMANDS.md`. Repositories without that
+file are unaffected. The legacy in-MCP merge path (used only when no broker
+write credential is present) still reads the contract at the PR head.
 `mmw-tools-status` is `always: true`.
 
 At call time the plugin:
@@ -349,50 +353,51 @@ only in a profile dedicated to this repository.
 | `feishu.authServiceUrl` | — | The auth core that owns roles and the route table. |
 | `feishu.gateScope` | `mmw-tools` | `mmw-tools` or `session` — see above. |
 
-### Scope of the tools: the workspace guard
+### Scope of the tools: workspace relevance
 
 A plugin is loaded per **profile**; a workspace is a **session** inside it. One
 profile hosts every workspace, so being installed is not the same as being
-relevant. The workspace guard closes that gap: a call is served only when the
-*calling session's* working directory is inside the bound repository's
-checkout.
+relevant. The workspace guard answers one question per call: *is this workspace
+one of the repositories mmw-tools is serving?* It answers from two independent
+facts:
 
-It reads that directory from the host's `workingDirectory` service —
-synchronously, with no filesystem I/O — through the `agent` carried by every
-`tools/pre-execute` execution. Because it is evaluated **per call**, a
-`cd` in or out of the repository takes effect immediately; a profile or a
-launch flag could never express that, which is why this is a runtime guard and
-not a second profile.
+- the auth-core **repository registry** — which repositories this deployment
+  serves; and
+- the calling worktree's **`origin` remote** — which repository this workspace
+  actually is.
 
-In a session opened anywhere else, the business tools answer:
+`.dsh-mmw-tools.yaml` at the workspace root is the **rule marker**, not the
+identity. It says this checkout opted in; the remote says which repository it
+is. A marker without a matching remote, or a registered repository without a
+marker, is a `mismatch`, never a silent guess. The guard reads the session's
+working directory from the host's `workingDirectory` service and the remote
+from the worktree, per call, so a `cd` in or out of a managed checkout takes
+effect immediately.
 
-```
-mmw-tools 只在绑定仓库的工作区可用（当前会话目录：…；允许：…）
-```
+| Mode | What the guard observed | What the session may do |
+|---|---|---|
+| `managed` | remote and marker both name a registered repository | Use the operations this plugin declares; the route table still decides each one |
+| `unmanaged` | no marker and no registered remote | Do not call the plugin's business tools. No replacement tool is prescribed |
+| `mismatch` | marker, remote, registry, or the selected repository disagree | Stop and let the user confirm the repository and rule file |
+| `bootstrap` | registered checkout whose root has no `.git` yet | `select_repo` and `repo_clone` only; business tools stay refused until it is a checkout |
+| `unknown` | the host cannot report a working directory | Refuse; never fail open |
 
-instead of an auth error or a repository error, and the host's own tools —
-`read`, `pwsh`, `glob`, … — are untouched, as always.
+This is a **relevance filter**, not a security boundary. The Feishu gate,
+`select_repo`, and the broker's own authorization still decide what a call may
+do. It also does not hide the tools from a session's schema list, and the MCP
+child process still starts with the plugin — only a dedicated profile gives you
+a session with no trace of the plugin at all.
 
-There are two deliberate exceptions:
-
-- `mmw_tools_status` is always callable. It is the diagnostic surface the agent
-  uses to explain why the repository tools are refused.
-- `mcp__mmw-tools__repo_clone` may run from outside the checkout **only while
-  the primary root has no `.git`**. This is the bootstrap path: the first
-  session creates the working copy. Once the checkout exists, the normal rule
-  applies, so an unrelated workspace cannot clone over a live repository.
+`mmw_tools_status` is always callable: it is the diagnostic surface that reports
+the current `workspace` mode and why the business tools are refused.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `workspaceGuard.enabled` | on | Set `false` only in a profile dedicated to this repository. |
-| `workspaceGuard.allowPaths` | `[]` | Extra roots, **added** to the checkout derived from `workingDir` / `~/.dsh/workspaces/<owner>/<name>`. The path is never duplicated in the config file. |
-| `workspaceGuard.onUnavailable` | `deny` | When the host exposes no working directory. `deny` refuses the business tools; `allow` is an explicit fail-open for a host you have verified. |
+| `workspaceGuard.enabled` | on | Set `false` only in a profile dedicated to one repository. |
 
-The guard is a relevance filter, not a security boundary: the Feishu gate and
-the repository sandbox still decide what a call may do. It also does not hide
-the tools from a session's schema list, and the MCP child process still starts
-with the plugin — only a dedicated profile gives you a session with no trace of
-the plugin at all.
+The legacy `workspaceGuard.allowPaths` and `workspaceGuard.onUnavailable` remain
+for hosts that only have the older path-based guard; the registry + remote
+decision above does not use them.
 
 ## Agent tools
 
@@ -415,10 +420,10 @@ the plugin at all.
 | `repo_search` | `git grep`, capped results, redacted snippets |
 | `repo_edit` | Validate → apply edits atomically → preflight → commit. With a broker write credential, the commit is created by the broker instead (no push) |
 | `pr_create` | Open a PR (draft by default; pass `draft: false` to open it ready). With a broker write credential, the broker pushes and opens it |
-| `pr_close` | Close a PR without merging it; the host asks first. Already closed or merged returns `already: true` |
+| `pr_close` | Close a PR without merging it. The branch owner may close their own PR; `operator` / `admin` may close any. The host asks first; already closed or merged returns `already: true` |
 | `pr_preview` | Preview URLs from the hosting check, plus check states and draft/merge state; read-only, optionally waits for the deployment |
 | `pr_list` | List PRs (titles and bodies redacted) |
-| `pr_merge` | Mark a draft ready if needed, then merge. With a broker write credential, first fetch a one-time approval bound to the head SHA, then merge; the host still asks |
+| `pr_merge` | Mark a draft ready if needed, then merge. With a broker write credential, first fetch a one-time approval bound to the head SHA, then merge; the broker refuses `agentMerge: false` levels and PRs that change the contract; the host still asks |
 
 When `MMW_BROKER_URL` and a readable write-auth file are present, these four
 write tools call the broker's `/v1/write/*` endpoints; otherwise they keep the
@@ -460,16 +465,17 @@ pnpm test:integration      # the MCP tool bodies against a real git repo
 | `tests/client-bundle.test.mjs` | `__ModuleLoader__` shape of `lib/client.js` | — |
 | `tests/bundle-apply.test.mjs` | `apply()` registration, routes, prompts, disposers, idempotence | — |
 | `tests/feishu-gate.test.mjs` | authorization table, gate decisions, token refresh | — |
-| `tests/workspace-guard.test.mjs` | checkout fence, status exemption, `repo_clone` bootstrap | — |
+| `tests/workspace-guard.test.mjs` | workspace relevance, status/`select_repo` exemptions, `repo_clone` bootstrap | — |
+| `tests/workspace-mode.test.mjs` | registry + `origin` remote + policy-file marker; managed/unmanaged/mismatch/bootstrap/unknown | — |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes | — |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation | — |
 | `tests/audit.test.mjs` | deep redaction, rotation, failure handling | — |
 | `tests/github-app.test.mjs` | installation-token flow and repository access | — |
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing | — |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior | — |
-| `tests/broker-auth.test.mjs` | broker auth handshake | — |
-| `broker/tests/core.test.mjs` | broker core state and policy | — |
-| `broker/tests/server.test.mjs` | broker HTTP surface | — |
+| `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credentials, cache-hit write-auth refresh | — |
+| `broker/tests/core.test.mjs` | broker core, read-only client tokens, base-branch contract gate, close ownership | — |
+| `broker/tests/server.test.mjs` | broker HTTP surface and `/v1/write/*` routing | — |
 | `mcp-server/tests/guard.test.mjs` | every cross-cutting guard | — |
 | `mcp-server/tests/tools-list-schema.test.mjs` | all MCP tools registered with usable schemas | — |
 | `mcp-server/tests/pr-preview.test.mjs` | PR preview URL and check extraction | — |

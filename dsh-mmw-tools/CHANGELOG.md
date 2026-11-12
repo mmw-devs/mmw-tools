@@ -4,6 +4,28 @@
 
 ### Added
 
+- **Tools are scoped by workspace relevance, not by a profile-wide switch.**
+  The guard now compares the session's working directory against three facts:
+  the auth-core repository registry, the checkout's `origin` remote, and the
+  repository's `.dsh-mmw-tools.yaml` rule marker. It reports
+  `managed`/`unmanaged`/`mismatch`/`bootstrap`/`unknown`, refuses neutral
+  without recommending another tool, and exposes the verdict as
+  `mmw_tools_status.workspace`. `select_repo` refuses an unmanaged workspace or
+  a repository that does not match the checkout. This is a relevance filter,
+  not a security boundary; see `README.md` and `docs/TOOL-NAMING.md`.
+- **The broker checks the merge contract at the base branch.** Before issuing
+  an approval and again before merging, the broker reads
+  `contract/operations.json` at the PR's **base** SHA. A PR that changes the
+  contract is `contract-changed`; a malformed file is `contract-unreadable`; an
+  unknown, missing, or `agentMerge:false` command is `agent-merge-denied`.
+  The in-MCP check remains for the legacy path but is no longer the only gate.
+- **Closing a PR checks branch ownership.** `repo_edit` records
+  `<repo>#<branch> → login` when it creates a branch, and `pr_create` records
+  it when it creates the first PR. `pr_close` allows the owner, or a GitHub
+  trusted writer / Feishu member whose allowed operations include
+  `race-ops.pr_merge`; everyone else gets `pr-not-owned`. With no record, only
+  the privileged path may close. The ledger is a 0600 JSON file
+  (`BROKER_OWNERSHIP_FILE`), and losing it only makes closing stricter.
 - **The repository registry behind `select_repo` is the auth core, not the
   profile file.** When Feishu is enabled, `select_repo` refreshes
   `GET /v1/agent/repos` before binding, refuses repositories that are not

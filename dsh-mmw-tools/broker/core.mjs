@@ -22,9 +22,12 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 const GITHUB_OAUTH = "https://github.com/login/oauth";
 const GITHUB_API = "https://api.github.com";
+const CONTRACT_PATH = "contract/operations.json";
 
 /** How long a browser has to finish a login after it is started. */
 const STATE_TTL_MS = 5 * 60 * 1000;
@@ -211,6 +214,65 @@ export function safeEqual(a, b) {
   return timingSafeEqual(ab, bb);
 }
 
+/**
+ * Extract every `command` declared in an op-log JSON block. Kept in the
+ * broker (not only the MCP server) so a direct broker call cannot skip it.
+ */
+export function extractCommands(message) {
+  const ids = [];
+  if (typeof message !== "string" || message.length === 0) return ids;
+  const fence =
+    /(?:^|\n)[ \t]*(`{3,}|~{3,})[ \t]*json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\1[ \t]*(?=\r?\n|$)/g;
+  let match;
+  while ((match = fence.exec(message)) !== null) {
+    let parsed;
+    try {
+      parsed = JSON.parse(match[2]);
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const command = parsed.command;
+    if (typeof command === "string" && command.trim() !== "") ids.push(command.trim());
+  }
+  return ids;
+}
+
+export function evaluateMergeContract(contract, commandIds) {
+  if (!Array.isArray(commandIds) || commandIds.length === 0) {
+    return {
+      allowed: false,
+      reason: "PR 提交信息里没有 op-log 的 command 字段，无法确认操作级别",
+    };
+  }
+  const levels = contract?.levels ?? {};
+  const index = new Map();
+  for (const domain of contract?.domains ?? []) {
+    for (const command of domain?.commands ?? []) {
+      if (typeof command?.id === "string" && typeof command?.level === "string") {
+        index.set(command.id, command.level);
+      }
+    }
+  }
+  for (const id of commandIds) {
+    const level = index.get(id);
+    if (!level) {
+      return { allowed: false, reason: `command ${JSON.stringify(id)} 不在 contract/operations.json 中` };
+    }
+    const definition = levels[level];
+    if (!definition || typeof definition.agentMerge !== "boolean") {
+      return { allowed: false, reason: `契约没有为级别 ${JSON.stringify(level)} 声明 agentMerge` };
+    }
+    if (definition.agentMerge !== true) {
+      return {
+        allowed: false,
+        reason: `command ${JSON.stringify(id)} 属于 ${level}，agentMerge=false —— 该级别只能由人工在 PR 平台合并`,
+      };
+    }
+  }
+  return { allowed: true, reason: "" };
+}
+
 export class BrokerCore {
   #sessions = new Map(); // state -> { pollSecret, status, createdAt, expiresAt, login, reason }
   #tokens = new Map(); // sha256(sessionToken) -> { login, expiresAt, createdAt }
@@ -220,6 +282,7 @@ export class BrokerCore {
   #idempotency = new Map(); // key -> { value, expiresAt }
   #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
   #repoPolicies = new Map(); // repo key -> { rules, sha, at }
+  #ownership = new Map(); // "<repo>#<branch>" -> login that created the branch
 
   constructor(opts) {
     const required = [
@@ -304,6 +367,26 @@ export class BrokerCore {
     this.maxEditBytes = opts.maxEditBytes ?? MAX_EDIT_BYTES;
     this.maxEditTotalBytes = opts.maxEditTotalBytes ?? MAX_EDIT_TOTAL_BYTES;
     this.audit = typeof opts.audit === "function" ? opts.audit : null;
+
+    // Branch ownership is persisted only when a path is configured. Without
+    // one it lives in this process, which means a restart falls back to the
+    // stricter "operator/admin only" close rule rather than forgetting who
+    // owned what.
+    this.ownershipFile = String(opts.ownershipFile ?? "").trim();
+    if (this.ownershipFile && existsSync(this.ownershipFile)) {
+      let parsed;
+      try {
+        parsed = JSON.parse(readFileSync(this.ownershipFile, "utf8"));
+      } catch {
+        throw new Error("broker ownership file is not valid JSON");
+      }
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("broker ownership file must be a JSON object");
+      }
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "string" && value !== "") this.#ownership.set(key, value);
+      }
+    }
   }
 
   get repository() {
@@ -999,7 +1082,7 @@ export class BrokerCore {
     const feishu = String(feishuToken ?? "").trim();
     if (feishu) {
       const who = await this.#requireFeishuOperation(feishu, operation);
-      return { login: who.login, kind: "feishu" };
+      return { login: who.login, kind: "feishu", operations: who.operations };
     }
     const session = String(sessionToken ?? "").trim();
     if (session) {
@@ -1093,6 +1176,71 @@ export class BrokerCore {
     }
     const encoding = data.encoding === "base64" ? "base64" : "utf8";
     return Buffer.from(data.content, encoding).toString("utf8");
+  }
+
+  #ownershipKey(rc, branch) {
+    return `${rc.key.toLowerCase()}#${branch}`;
+  }
+
+  #ownerOf(rc, branch) {
+    return this.#ownership.get(this.#ownershipKey(rc, branch)) ?? null;
+  }
+
+  #recordOwner(rc, branch, who) {
+    if (!who || typeof who.login !== "string" || who.login === "") return;
+    this.#ownership.set(this.#ownershipKey(rc, branch), who.login);
+    if (!this.ownershipFile) return;
+    try {
+      mkdirSync(path.dirname(this.ownershipFile), { recursive: true });
+      writeFileSync(this.ownershipFile, JSON.stringify(Object.fromEntries(this.#ownership), null, 2), {
+        mode: 0o600,
+      });
+    } catch {
+      // Losing the ledger only makes close stricter after a restart.
+    }
+  }
+
+  #isPrivileged(who) {
+    return (
+      who.kind === "github" ||
+      (Array.isArray(who.operations) && who.operations.includes(FEISHU_MERGE_OPERATION))
+    );
+  }
+
+  /**
+   * The contract gate must run on the broker, not only in the MCP child:
+   * a direct `/v1/write/pr_merge` call would otherwise skip it. The contract
+   * is read from the PR's base commit, so a PR cannot widen its own gate by
+   * editing `contract/operations.json` in the same change.
+   */
+  async #assertMergeContract(prNumber, pr, rc) {
+    const base = await this.#readContent(CONTRACT_PATH, pr.base.sha, rc.key);
+    if (base === null) return; // repository does not use the contract
+    const head = await this.#readContent(CONTRACT_PATH, pr.head.sha, rc.key);
+    if (head === null || head !== base) {
+      throw new BrokerRefused(
+        "contract-changed",
+        "PR 修改了 contract/operations.json；合并规则不能在同一个 PR 里被改写",
+        409
+      );
+    }
+    let contract;
+    try {
+      contract = JSON.parse(base);
+    } catch {
+      throw new BrokerRefused("contract-unreadable", "contract/operations.json is not valid JSON", 409);
+    }
+    const commits = await this.#api("GET", `/pulls/${prNumber}/commits?per_page=100`, {
+      repo: rc.key,
+    });
+    const messages = Array.isArray(commits)
+      ? commits.map((commit) => String(commit?.commit?.message ?? ""))
+      : [];
+    const commandIds = messages.flatMap((message) => extractCommands(message));
+    const verdict = evaluateMergeContract(contract, commandIds);
+    if (!verdict.allowed) {
+      throw new BrokerRefused("agent-merge-denied", verdict.reason, 403);
+    }
   }
 
   #applyEdit(original, edit) {
@@ -1272,6 +1420,7 @@ export class BrokerCore {
       idempotent: false,
     };
     this.#remember(idemKey, result);
+    this.#recordOwner(rc, branch, who);
     this.#audit({
       requestId,
       op: "repo_edit",
@@ -1356,6 +1505,7 @@ export class BrokerCore {
       idempotent: false,
     };
     this.#remember(idemKey, result);
+    if (created) this.#recordOwner(rc, head, who);
     this.#audit({
       requestId,
       op: "pr_create",
@@ -1421,6 +1571,15 @@ export class BrokerCore {
     }
     if (pr.base?.ref !== rc.baseBranch) {
       throw new BrokerRefused("base-not-allowed", `the PR does not target ${rc.baseBranch}`, 409);
+    }
+
+    const owner = this.#ownerOf(rc, pr.head.ref);
+    if (!this.#isPrivileged(who) && (!owner || owner.toLowerCase() !== who.login.toLowerCase())) {
+      throw new BrokerRefused(
+        "pr-not-owned",
+        "only the branch owner or an operator/admin may close this PR",
+        403
+      );
     }
 
     await this.#api("PATCH", `/pulls/${prNumber}`, { body: { state: "closed" }, repo: rc.key });
@@ -1497,6 +1656,7 @@ export class BrokerCore {
     }
 
     const pr = await this.#fetchMergeablePr(prNumber, rc);
+    await this.#assertMergeContract(prNumber, pr, rc);
     const approvalId = randomToken(32);
     const expiresAt = this.now() + APPROVAL_TTL_MS;
     this.#approvals.set(approvalId, {
@@ -1571,6 +1731,7 @@ export class BrokerCore {
         409
       );
     }
+    await this.#assertMergeContract(prNumber, pr, rc);
     if (pr.mergeable_state !== "clean") {
       throw new BrokerRefused(
         "pr-not-mergeable",
