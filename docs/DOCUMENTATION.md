@@ -56,7 +56,10 @@ behaviour”; when it ships, link the implementation from it.
 
 `--update` rewrites them; without it the command fails when either is stale.
 CI runs the check, so a contract change that forgets the generated files turns
-the build red.
+the build red. A generated document's `sources` list only its generation
+inputs; runtime code that reads the same data is documented by the living
+document that defines that behaviour, so a runtime change does not force a
+cosmetic diff in a generated snapshot.
 
 `AGENTS.md` links to `scripts/doc-map.json`; it does not copy the map into a
 second table. Do not add a generator for a fact that can be linked instead.

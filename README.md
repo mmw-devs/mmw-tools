@@ -137,7 +137,9 @@ node scripts/doc-impact.mjs --base origin/main --worktree
 ```
 
 CI runs the same check against the pull request base, so a source change whose
-document is untouched fails the build. It also rejects a map that omits a
+document is untouched fails the build. Generated documents list only their
+generation inputs as sources; runtime code that consumes them is covered by
+the living document that defines the behavior, not by the generated snapshot. It also rejects a map that omits a
 tracked markdown file or contains a source glob that matches nothing. With
 `--worktree`, an untracked new markdown that is not in the map is reported
 before it reaches CI. `AGENTS.md` links to the map instead of copying it, so
