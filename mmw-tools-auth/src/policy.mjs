@@ -107,8 +107,10 @@ export class Policy {
   }
 
   /** Authorization table returned by GET /v1/agent/routes. */
-  routeTable(member, policyRevision, ttlSeconds = 60) {
-    const memberRoles = this.memberRoles(member);
+  routeTable(member, policyRevision, ttlSeconds = 60, options = {}) {
+    const memberRoles = options.roles
+      ? new Set(options.roles.filter((role) => this.roles.has(role)))
+      : this.memberRoles(member);
     const allowed = [];
     const allowedOperations = [];
     const denied = [];
@@ -140,6 +142,7 @@ export class Policy {
       catalogRevision: this.catalogRevision,
       policyRevision,
       ttlSeconds,
+      ...(options.repo ? { repo: options.repo } : {}),
       allowed,
       allowedOperations,
       denied,

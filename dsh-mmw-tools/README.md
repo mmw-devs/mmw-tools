@@ -193,6 +193,11 @@ When Feishu is enabled, the auth core's repository registry
 (`GET /v1/agent/repos`, managed at **Admin → 仓库注册表**) is authoritative
 for repository coordinates and write rules. `select_repo` refreshes the
 registry before binding and refuses a repository that is not enabled there.
+It then reads that repository's grants (`GET /v1/agent/routes?repo=`) and
+refuses to bind if the member has no `select_repo` role there; business calls
+use the same repository-scoped table, so a member with no grant for the
+selected repository gets an empty operation table rather than the global role
+set. Grants are edited per member at **Admin → 成员 → 仓库授权**.
 Because DSH registers tools synchronously at load, the last successful
 refresh is cached at `~/.dsh/mmw-tools-repos.json` (0600) and overlaid on the
 profile at the next start; a repository added in the admin UI therefore
@@ -395,7 +400,7 @@ the plugin at all.
 
 | Tool | Purpose |
 |---|---|
-| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry itself is refreshed first and cached for the next plugin load |
+| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry is refreshed first, then the repository-scoped grants are read, and a member without a `select_repo` role there is refused. The registry answer is cached for the next plugin load |
 | `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files; credentials in the remote URL are redacted |
 | `repo_clone` | Shallow clone of the base branch into `workingDir` |
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |

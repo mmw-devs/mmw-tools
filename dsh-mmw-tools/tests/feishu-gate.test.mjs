@@ -66,12 +66,14 @@ const fetchImpl = async (url, init = {}) => {
       policyRevision: 7,
     });
   }
-  if (target.endsWith("/v1/agent/routes")) {
+  if (target.includes("/v1/agent/routes")) {
+    const repo = new URL(target).searchParams.get("repo");
     return json({
       contractVersion: 2,
       catalogRevision: "sha256:" + "a".repeat(64),
       policyRevision: 7,
       ttlSeconds: 60,
+      ...(repo ? { repo } : {}),
       allowed: ["mmw-tools-status", "race-ops"],
       allowedOperations: [
         "mmw-tools-status.status",
@@ -119,6 +121,14 @@ try {
   const callsBeforeCache = calls.length;
   await auth.routes();
   eq(calls.length, callsBeforeCache, "routes cache avoids a second fetch");
+
+  const scoped = await auth.routes(true, undefined, "mmw-devs/xivstrat-relay");
+  eq(scoped.repo, "mmw-devs/xivstrat-relay", "scoped routes carry the repository");
+  const callsBeforeScopedCache = calls.length;
+  await auth.routes(false, undefined, "mmw-devs/xivstrat-relay");
+  eq(calls.length, callsBeforeScopedCache, "scoped routes cache per repository");
+  await auth.routes(false, undefined, "mmw-devs/ffxiv-race-ops");
+  eq(calls.length, callsBeforeScopedCache + 1, "a different repository bypasses the cache");
 
   const refreshed = await auth.refreshIfNeeded();
   eq(refreshed, true, "token inside the refresh window is refreshed");

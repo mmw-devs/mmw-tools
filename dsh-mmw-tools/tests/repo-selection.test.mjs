@@ -94,6 +94,39 @@ const fakeAuth = { routes: async () => routes };
   eq(unknownSession.ok, false, "missing session id fails closed");
 }
 
+// The route table is requested for the selected repository, and a table for a
+// different repository is refused rather than silently granted.
+{
+  const repos = new RepoRegistry([entry("mmw-devs/xivstrat-relay")], "mmw-devs/xivstrat-relay");
+  eq(repos.select("session-scope", "mmw-devs/xivstrat-relay").ok, true, "bind the session");
+  let seenRepo;
+  const scoped = { ...routes, repo: "mmw-devs/xivstrat-relay", allowedOperations: ["race-ops.repo_read"] };
+  const gate = new PolicyGate({
+    auth: {
+      routes: async (_force, _maxAge, repo) => {
+        seenRepo = repo;
+        return scoped;
+      },
+    },
+    enabled: true,
+    repos,
+  });
+  eq((await gate.check("mcp__mmw-tools__repo_read", "session-scope")).ok, true, "scoped read passes");
+  eq(seenRepo, "mmw-devs/xivstrat-relay", "gate requests the selected repository");
+  const denied = await gate.check("mcp__mmw-tools__repo_edit", "session-scope");
+  eq(denied.ok, false, "operation absent from the repository table is denied");
+  truthy(denied.reason.startsWith("[mmw_route_denied]"), "scoped denial uses the route-denied prefix");
+
+  const wrongRepo = new PolicyGate({
+    auth: { routes: async () => ({ ...scoped, repo: "mmw-devs/ffxiv-race-ops" }) },
+    enabled: true,
+    repos,
+  });
+  const mismatch = await wrongRepo.check("mcp__mmw-tools__repo_read", "session-scope");
+  eq(mismatch.ok, false, "a table for another repository is refused");
+  truthy(mismatch.reason.startsWith("[mmw_contract_mismatch]"), "mismatch uses the contract-mismatch prefix");
+}
+
 // A deployed auth table may lag the plugin contract; select_repo must still
 // work so the session can bind a repository before any business call.
 {

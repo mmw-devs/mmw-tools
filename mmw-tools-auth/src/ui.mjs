@@ -73,6 +73,10 @@ button.secondary{background:#e9eef1;color:#23323d}button:disabled{opacity:.55;cu
 .member label{display:inline-flex;align-items:center;gap:4px;margin-right:8px}
 .member input[type=text]{min-width:240px;padding:7px;border:1px solid #b7c6cf;border-radius:6px;font:inherit}
 .member input[type=checkbox]{width:auto}
+.member details.grants{flex-basis:100%;border-top:1px dashed #dde4e8;padding-top:8px}
+.member details.grants summary{cursor:pointer;color:#17646b}
+.grant-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0}
+.grant-row .key{min-width:260px;font-weight:600;overflow-wrap:anywhere}
 .repo-row{border-top:1px solid #e3e8ec;padding:14px 0;display:grid;grid-template-columns:1.2fr 1fr 1fr 2fr 2fr auto;gap:8px;align-items:center}
 .repo-row:first-child{border-top:0}.repo-row input[type=text]{width:100%;padding:7px;border:1px solid #b7c6cf;border-radius:6px;font:inherit}
 .repo-row .key{font-weight:600;overflow-wrap:anywhere}.repo-form{display:flex;flex-wrap:wrap;gap:8px;padding-top:8px}
@@ -132,13 +136,14 @@ async function boot() {
   $("account").append(name, logout);
   if (me.isAdmin) {
     const roles = await api("/api/admin/roles");
-    await members(roles);
+    const repoData = await api("/api/admin/repos");
+    await members(roles, repoData.repos);
     await repos();
     await audit();
   }
 }
 
-async function members(roles) {
+async function members(roles, repoList) {
   const rows = await api("/api/admin/members");
   const box = $("member-list");
   box.replaceChildren();
@@ -167,18 +172,56 @@ async function members(roles) {
     enabledLabel.append(enabled, document.createTextNode("启用"));
     row.append(enabledLabel);
 
+    const grantBox = document.createElement("details");
+    grantBox.className = "grants";
+    const grantSummary = document.createElement("summary");
+    grantSummary.textContent = "仓库授权";
+    grantBox.append(grantSummary);
+    const grantInputs = {};
+    for (const repo of repoList) {
+      const line = document.createElement("div");
+      line.className = "grant-row";
+      const repoName = document.createElement("span");
+      repoName.className = "key";
+      repoName.textContent = repo.key;
+      line.append(repoName);
+      grantInputs[repo.key] = [];
+      for (const role of roles) {
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = (member.grants?.[repo.key] ?? []).includes(role.id);
+        grantInputs[repo.key].push({ id: role.id, input: checkbox });
+        label.append(checkbox, document.createTextNode(role.title || role.id));
+        line.append(label);
+      }
+      grantBox.append(line);
+    }
+    row.append(grantBox);
+
     const save = document.createElement("button");
     save.textContent = "保存";
     save.onclick = async () => {
       save.disabled = true;
       try {
-        const roles = Object.entries(inputs).filter(([, input]) => input.checked).map(([role]) => role);
+        const selectedRoles = Object.entries(inputs)
+          .filter(([, input]) => input.checked)
+          .map(([role]) => role);
+        const grants = repoList.map((repo) => ({
+          repo: repo.key,
+          roles: (grantInputs[repo.key] ?? []).filter(({ input }) => input.checked).map(({ id }) => id),
+        }));
         await api("/api/admin/members/" + member.id, {
           method: "PATCH",
-          body: JSON.stringify({ version: member.version, roles, enabled: enabled.checked }),
+          body: JSON.stringify({
+            version: member.version,
+            roles: selectedRoles,
+            enabled: enabled.checked,
+            grants,
+          }),
         });
         notice("已保存：" + member.name);
-        await members(roles);
+        await members(roles, repoList);
         await audit();
       } catch (error) {
         notice(error.message);
@@ -190,9 +233,13 @@ async function members(roles) {
 
     const effective = document.createElement("span");
     effective.className = "muted";
+    const grantText = Object.entries(member.grants ?? {})
+      .map(([repo, roles]) => repo + ": " + roles.join("/"))
+      .join("；");
     effective.textContent =
-      "角色：" + (member.roles.length ? member.roles.join(", ") : "(无)") +
-      (member.isAdmin ? " · 管理员" : "");
+      "全局角色：" + (member.roles.length ? member.roles.join(", ") : "(无)") +
+      (member.isAdmin ? " · 管理员" : "") +
+      (grantText ? " · 仓库：" + grantText : " · 无仓库授权");
     row.append(effective);
     box.append(row);
   }

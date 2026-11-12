@@ -239,7 +239,8 @@ export function createAuthServer({ auth, config }) {
 
       if (pathname === "/v1/agent/routes" && req.method === "GET") {
         const member = auth.verifyPluginToken(bearer(req));
-        return sendJson(res, 200, auth.routes(member));
+        const repo = url.searchParams.get("repo") ?? undefined;
+        return sendJson(res, 200, auth.routes(member, repo));
       }
 
       if (pathname === "/v1/agent/repos" && req.method === "GET") {

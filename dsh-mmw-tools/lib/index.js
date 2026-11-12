@@ -1056,6 +1056,16 @@ export function apply(ctx, config) {
                     if (!registered) {
                         throw new Error(`[mmw_route_denied] 仓库 ${known} 未在授权服务注册表中启用`);
                     }
+                    let grantTable;
+                    try {
+                        grantTable = await feishu.routes(true, undefined, known);
+                    }
+                    catch (err) {
+                        throw new Error(`[mmw_policy_unavailable] 无法读取仓库授权：${err instanceof Error ? err.message : String(err)}`);
+                    }
+                    if (!grantTable.allowedOperations.includes("race-ops.select_repo")) {
+                        throw new Error(`[mmw_route_denied] 当前账号在仓库 ${known} 没有可用角色，请联系管理员授予 viewer 或更高角色`);
+                    }
                     const current = repos.keys().map((key) => repos.entry(key)).filter(Boolean);
                     const merged = mergeRepoCacheEntries(current, table.repos);
                     const nextDefault = table.defaultRepo && merged.some((entry) => entry.key === table.defaultRepo)
