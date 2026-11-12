@@ -50,7 +50,7 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 | 文档直接写了被改的事实（端点、字段、错误码、默认值、权限、命令） | 在同一个 change 内更新该段，并写 `Doc-Impact: <path> — 已更新：<事实>` |
 | 文档只链接到源，正文没有复制该事实 | 正文可以不动，写 `Doc-Impact: <path> — 无语义变更：<文档只链接，未复制该事实>` |
 | 文档已经不再拥有这条事实，事实迁到了代码或另一份文档 | 改 `scripts/doc-map.json` 的 `sources`/`defines`，不要把原文档改成假话；写清迁移去向 |
-| 新增了一个文档 | 在 `scripts/doc-map.json` 加条目：`status`、`defines`、`sources`；用 `--worktree` 确认不再报 “new markdown is not in scripts/doc-map.json” |
+| 新增了一个文档 | 在 `scripts/doc-map.json` 加条目：`status`、`defines`、`sources`；用 `--worktree` 确认不再报 “new markdown is not in scripts/doc-map.json”。如果入口文档（`README.md`、`docs/DOCUMENTATION.md`）的阅读指南确实需要收录它，就加一行；否则按“无语义变更”写清依据，不要为了过检查复制正文 |
 | 文档是 `generated` | 跑生成命令（契约用 `node scripts/check-contracts.mjs --update`），审查生成 diff，禁止手改 |
 | 文档是 `historical` | 不改写正文；需要时追加带日期的更正说明，并说明它不再是当前事实 |
 | 文档正文说“设计已定、尚未实现”，但 map 标成 `historical` | 改 map 的 `status` 为 `target design`；不要为了通过检查把正文改写成“已实现” |

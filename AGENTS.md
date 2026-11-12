@@ -7,6 +7,7 @@ Status: living
 - 文档权威顺序、状态标签与生成规则：见 [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)。
 - 文档影响映射：见 [`scripts/doc-map.json`](scripts/doc-map.json)。它是唯一索引，本文件只链接，不复制表。
 - 语义核对流程：见 [`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md)。判断“文档该不该改、改成什么”时先加载这个 skill。
+- 判断“文档声称与实现是否一致”时，可参考 [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md) 的判定口径与历史快照；它是 historical，不代表当前事实。
 
 ## 何时必须行动
 

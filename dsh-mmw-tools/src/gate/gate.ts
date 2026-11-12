@@ -5,6 +5,33 @@ import { TOOL_MAP, isMmwTool, type OperationRef } from "./tool-map.js";
 
 export type GateDecision = { ok: true } | { ok: false; reason: string };
 
+/**
+ * Agent-facing refusal codes. The contract (contracts/ERRORS.md) defines these
+ * as stable identifiers; the human-readable reason follows the code so the
+ * agent can branch on the prefix without parsing Chinese prose.
+ *
+ * `mmw_tool_unavailable` is a transport-level code: the gate never emits it,
+ * because a policy decision happens before the MCP child is started.
+ */
+export type GateErrorCode =
+  | "mmw_auth_required"
+  | "mmw_session_expired"
+  | "mmw_route_denied"
+  | "mmw_policy_unavailable"
+  | "mmw_contract_mismatch";
+
+function deny(code: GateErrorCode, message: string): GateDecision {
+  return { ok: false, reason: `[${code}] ${message}` };
+}
+
+function authErrorCode(err: FeishuAuthError): GateErrorCode {
+  if (err.code === "auth-required" || err.code === "mmw_auth_required") return "mmw_auth_required";
+  if (err.code === "mmw_session_expired") return "mmw_session_expired";
+  // Network failures, 5xx, malformed responses, and a missing/expired table:
+  // the policy layer has no answer, so the operation is denied as unavailable.
+  return "mmw_policy_unavailable";
+}
+
 export interface GateEvent {
   kind: "gate_decision";
   runId: string;
@@ -51,7 +78,7 @@ export class PolicyGate {
       // it, so let it through.
       if (!this.wide && !isMmwTool(publicName)) return { ok: true };
       return this.enabled
-        ? { ok: false, reason: `工具 ${publicName} 不在 MMW Tools 契约中，已拒绝` }
+        ? deny("mmw_contract_mismatch", `工具 ${publicName} 不在 MMW Tools 契约中，已拒绝`)
         : { ok: true };
     }
     if (!this.enabled || ref.always) return { ok: true };
@@ -64,9 +91,9 @@ export class PolicyGate {
       routes = await this.auth.routes(false, ref.risk === "write" ? 15_000 : undefined);
     } catch (err) {
       if (err instanceof FeishuAuthError) {
-        return { ok: false, reason: `飞书授权不可用：${err.message}` };
+        return deny(authErrorCode(err), `飞书授权不可用：${err.message}`);
       }
-      return { ok: false, reason: "飞书授权不可用，已拒绝调用" };
+      return deny("mmw_policy_unavailable", "飞书授权不可用，已拒绝调用");
     }
 
     if (routes.allowedOperations.includes(ref.operationId)) return { ok: true };
@@ -76,12 +103,11 @@ export class PolicyGate {
     if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId)) return { ok: true };
 
     const required = routes.denied.find((entry) => entry.toolId === ref.toolId)?.requiredRoles ?? [];
-    return {
-      ok: false,
-      reason:
-        `当前账号的角色不能消费 ${ref.toolId}` +
-        (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : ""),
-    };
+    return deny(
+      "mmw_route_denied",
+      `当前账号的角色不能消费 ${ref.toolId}` +
+        (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : "")
+    );
   }
 
   operation(publicName: string): OperationRef | undefined {

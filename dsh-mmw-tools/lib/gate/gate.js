@@ -1,6 +1,18 @@
 import { FeishuAuthError } from "../auth/feishu-auth.js";
 import { newRunId, runWithRunId } from "../util/run-context.js";
 import { TOOL_MAP, isMmwTool } from "./tool-map.js";
+function deny(code, message) {
+    return { ok: false, reason: `[${code}] ${message}` };
+}
+function authErrorCode(err) {
+    if (err.code === "auth-required" || err.code === "mmw_auth_required")
+        return "mmw_auth_required";
+    if (err.code === "mmw_session_expired")
+        return "mmw_session_expired";
+    // Network failures, 5xx, malformed responses, and a missing/expired table:
+    // the policy layer has no answer, so the operation is denied as unavailable.
+    return "mmw_policy_unavailable";
+}
 /**
  * Call-time enforcement. Model A authorizes the parent tool; the operation
  * id is still checked against allowedOperations first so an operation-level
@@ -36,7 +48,7 @@ export class PolicyGate {
             if (!this.wide && !isMmwTool(publicName))
                 return { ok: true };
             return this.enabled
-                ? { ok: false, reason: `工具 ${publicName} 不在 MMW Tools 契约中，已拒绝` }
+                ? deny("mmw_contract_mismatch", `工具 ${publicName} 不在 MMW Tools 契约中，已拒绝`)
                 : { ok: true };
         }
         if (!this.enabled || ref.always)
@@ -50,9 +62,9 @@ export class PolicyGate {
         }
         catch (err) {
             if (err instanceof FeishuAuthError) {
-                return { ok: false, reason: `飞书授权不可用：${err.message}` };
+                return deny(authErrorCode(err), `飞书授权不可用：${err.message}`);
             }
-            return { ok: false, reason: "飞书授权不可用，已拒绝调用" };
+            return deny("mmw_policy_unavailable", "飞书授权不可用，已拒绝调用");
         }
         if (routes.allowedOperations.includes(ref.operationId))
             return { ok: true };
@@ -62,11 +74,8 @@ export class PolicyGate {
         if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId))
             return { ok: true };
         const required = routes.denied.find((entry) => entry.toolId === ref.toolId)?.requiredRoles ?? [];
-        return {
-            ok: false,
-            reason: `当前账号的角色不能消费 ${ref.toolId}` +
-                (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : ""),
-        };
+        return deny("mmw_route_denied", `当前账号的角色不能消费 ${ref.toolId}` +
+            (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : ""));
     }
     operation(publicName) {
         return TOOL_MAP[publicName];

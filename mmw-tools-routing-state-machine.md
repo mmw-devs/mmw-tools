@@ -343,7 +343,7 @@ v2 的核心变化：
 | `RECEIVED` | `CALL` | — | 记录 toolId；不启动 MCP | `CHECK_AUTH` |
 | `CHECK_AUTH` | `VALID` | Auth ∈ {`AUTHENTICATED`, `REFRESHING`} | — | `CHECK_POLICY` |
 | `CHECK_AUTH` | `INVALID` | — | 返回 `mmw_auth_required` / `mmw_session_expired` | `DENIED` |
-| `CHECK_POLICY` | `ALLOWED` | `toolId ∈ allowed`；读工具在 `READY/STALE(grace)`；写工具在 `READY` 且新鲜 | 记录 `policyRevision` | `CHECK_TRANSPORT` |
+| `CHECK_POLICY` | `ALLOWED` | `operationId ∈ allowedOperations`（v2）；读工具在 `READY/STALE(grace)`；写工具在 `READY` 且新鲜 | 记录 `policyRevision` | `CHECK_TRANSPORT` |
 | `CHECK_POLICY` | `NEED_REFRESH` | 写工具表不新鲜；或读表过 TTL 且可刷新 | 同步刷新（≤2s）；成功后重试 | `CHECK_POLICY`（最多 1 次） |
 | `CHECK_POLICY` | `DENIED` | tool 不在 allowed / 无表 / grace 过期 | 返回 `mmw_route_denied` / `mmw_policy_unavailable` | `DENIED` |
 | `CHECK_TRANSPORT` | `READY` | — | — | `EXECUTING` |
@@ -354,8 +354,13 @@ v2 的核心变化：
 | `EXECUTING` | `CANCELLED` | 调用方取消 | 转发 abort signal | `FAILED` |
 | `EXECUTING` | `AUTH_REVOKED` | 执行中收到撤销 | 不杀在途；记录；新调用拒绝 | `SUCCEEDED` / `FAILED` |
 
-### 7.3 关键规则
+> 实现状态（2026-11-11）：`CHECK_POLICY` 的拒绝已经以 `[mmw_route_denied]` /
+> `[mmw_policy_unavailable]` 前缀返回；`CHECK_AUTH` 的两个码也已接通。
+> `CHECK_TRANSPORT` 的 `mmw_tool_unavailable` 仍是目标状态，传输层尚未包装；
+> `READY/STALE(grace)` 与同步刷新上限也尚未实现。已实现部分见
+> `dsh-mmw-tools/src/gate/gate.ts`，逐条差异见 `docs/CONFORMANCE.md`。
 
+### 7.3 关键规则
 - **检查顺序固定**：Auth → Policy → Transport。未登录/无权限不能启动 MCP。
 - **最多刷新一次**：`NEED_REFRESH` 只允许一次；刷新后仍不允许就拒绝。
 - **写工具 fail closed**：授权表不新鲜且刷新失败，直接拒绝；不允许用旧表写。
