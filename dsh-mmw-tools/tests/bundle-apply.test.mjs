@@ -283,19 +283,31 @@ console.log("\n--- Test 6: MCP spawn + tools re-publish ---");
 {
   const ctx = makeCtx();
   apply(ctx, TEST_CONFIG);
-  // The MCP spawn is async. Wait for it to attempt + log.
-  await new Promise((r) => setTimeout(r, 800));
-  const mcpNames = ctx.captured.toolDefs.filter((t) => t.name.startsWith("mcp__"));
-  if (mcpNames.length === 0) {
+  // The MCP spawn is async. `select_repo` is registered locally but also
+  // uses the mcp__mmw-tools__ prefix, so exclude it when counting the
+  // child's tools. Windows CI needs a generous cold-start window: node
+  // plus the MCP SDK can take well over one second there.
+  const isMcpTool = (t) => t.name.startsWith("mcp__") && t.name !== "mcp__mmw-tools__select_repo";
+  const mcpNames = () => ctx.captured.toolDefs.filter(isMcpTool);
+  const deadline = Date.now() + 10_000;
+  while (mcpNames().length === 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const registered = mcpNames();
+  if (registered.length === 0) {
     // In this sandbox, child_process.spawn fails (EPERM). The bundle
-    // catches the failure and logs to ctx.logger.error. We don't get a
-    // clean stderr surface here, but the absence of any MCP tool
-    // after a 800ms wait is a strong enough signal that spawn never
-    // produced a working child.
-    console.log("  SKIP  MCP spawn blocked by sandbox (no MCP tools after 800ms)");
-    pass++; // count as pass
+    // catches the failure and logs to ctx.logger.error. Anything else
+    // (crash, bad env, timeout) must fail the test rather than hide.
+    const errors = ctx.captured.logLines.error;
+    const spawnBlocked = errors.some((e) => /EPERM|EACCES|sandbox|spawn/i.test(e));
+    if (spawnBlocked) {
+      console.log("  SKIP  MCP spawn blocked by sandbox (no MCP tools after 10s)");
+      pass++; // count as pass
+    } else {
+      bad("MCP tools registered", `none after 10s; errors: ${errors.join(" | ") || "(none)"}`);
+    }
   } else {
-    truthy(true, `${mcpNames.length} MCP tools registered`);
+    truthy(true, `${registered.length} MCP tools registered`);
     const expected = [
       "mcp__mmw-tools__repo_status",
       "mcp__mmw-tools__repo_clone",
@@ -306,7 +318,7 @@ console.log("\n--- Test 6: MCP spawn + tools re-publish ---");
       "mcp__mmw-tools__pr_create",
       "mcp__mmw-tools__pr_list",
     ];
-    const names = new Set(mcpNames.map((t) => t.name));
+    const names = new Set(registered.map((t) => t.name));
     for (const e of expected) {
       truthy(names.has(e), `${e} registered`);
     }
