@@ -17,7 +17,7 @@ Device Flow is not deleted: it is re-scoped to *identity only* (see §3).
 
 three properties that matter:
 
-1. **写入身份是 bot**，不是使用者。PR 作者是 `race-ops-bot[bot]`。
+1. **写入身份是 bot**，不是使用者。PR 作者是 `mmw-tools-app[bot]`。
 2. **user 与 repo 权限解耦**。使用者登录只证明"他是谁"，不产生任何仓库权限。
 3. **撤销是单点的**。从允许名单移除某人，或卸载 App，立即生效；不需要
    逐个仓库改权限。
@@ -95,7 +95,7 @@ installation token，而 broker 每次都会重新检查该 session 仍然有效
 
 | 字段 | 值 | 备注 |
 |---|---|---|
-| Name | `race-ops-bot` | 会显示为 `race-ops-bot[bot]` |
+| Name | `mmw-tools-app` | 会显示为 `mmw-tools-app[bot]` |
 | Homepage URL | broker 的站址 | 必填，无实际作用 |
 | Callback URL | `https://<broker-host>/auth/github/callback` | **必须 HTTPS**，与 `BROKER_PUBLIC_URL` 一致 |
 | Request user authorization (OAuth) during installation | 关闭 | 授权由 broker 单独发起 |
