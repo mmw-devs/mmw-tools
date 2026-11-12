@@ -1,9 +1,11 @@
 # Operations Sync — AGENTS.md ↔ cordis.patch.yml
 
-> **TL;DR:** `ffxiv-race-ops/AGENTS.md` is the **authority** for
-> repository operation rules. `cordis.patch.yml` is a **read-time
-> cache**. The two must agree; this document spells out who keeps them
-> in sync and how.
+> **TL;DR:** `ffxiv-race-ops/AGENTS.md` is the human-readable
+> **authority** for repository operation rules. Since 2026-11-13 each
+> registered repo's root `.dsh-mmw-tools.yaml` is the machine-readable
+> runtime authority, read by the broker at selection/write time.
+> `cordis.patch.yml` remains a bootstrap/fallback copy. The copies must
+> agree; this document spells out who keeps them in sync and how.
 
 ---
 
@@ -19,15 +21,17 @@ rules that also live in `mmw-devs/ffxiv-race-ops/AGENTS.md`:
 | `branchPrefix` | "`content/*` 分支前缀" |
 | `preflight.cmd` | "本地校验：`npm run validate`" |
 
-This is a deliberate, temporary **SSOT violation**. The plugin reads
-these fields at runtime to enforce guards; without a mirror it would
-have to parse `AGENTS.md` (free-form Markdown), which is unsafe. The
-tradeoff is:
+This mirror was the v1 compromise (2026-11-10): the plugin reads these
+fields at runtime to enforce guards, because parsing free-form
+`AGENTS.md` is unsafe. On 2026-11-13 the machine-readable YAML rule
+file landed, so the mirror is now **bootstrap/fallback**, not the
+authority. The tradeoff is:
 
 - ✅ Plugin runs without LLM-assisted parsing.
-- ✅ One human-readable, machine-checkable config file.
-- ⚠️ When `AGENTS.md` changes, `cordis.patch.yml` does **not** update
-  automatically. A mismatch logs a warning at `mmw_tools_run` startup.
+- ✅ Rules live next to the repo they describe.
+- ⚠️ When `AGENTS.md` changes, the YAML and `cordis.patch.yml` do
+  **not** update automatically. A mismatch logs a warning at
+  `mmw_tools_run` startup.
 
 ---
 
@@ -35,8 +39,9 @@ tradeoff is:
 
 | Change type | Owner | Action |
 |---|---|---|
-| `ffxiv-race-ops/AGENTS.md` rules change (e.g. "now `public/teams.json` is also editable") | The team that owns the ops repo (`mmw-devs` maintainers of `ffxiv-race-ops`) | Open a PR against `mmw-tools` updating the matching field in `cordis.patch.yml`. The plugin author cannot auto-detect the change. |
-| `cordis.patch.yml` mirror diverges from `AGENTS.md` | Plugin maintainer (`mmw-tools` repo) | Either bring `cordis.patch.yml` back in line, or revert the `AGENTS.md` change. The runtime warning will tell you which is stale. |
+| `ffxiv-race-ops/AGENTS.md` rules change (e.g. "now `public/teams.json` is also editable") | The team that owns the ops repo (`mmw-devs` maintainers of `ffxiv-race-ops`) | Update the repo's `.dsh-mmw-tools.yaml`. For A (ops repo) the editable source is `mmw-devs/ffxiv-race-stats` `agent-src/.dsh-mmw-tools.yaml`; `sync-agent-src` copies it to the ops repo root. No `mmw-tools` PR is needed. |
+| YAML rule file missing or invalid | Broker / plugin maintainer | Selection fails closed with `[mmw_policy_unavailable]`; fix the YAML, do not relax the loader. |
+| `cordis.patch.yml` mirror diverges from `AGENTS.md` | Plugin maintainer (`mmw-tools` repo) | YAML wins at runtime; bring the mirror back in line only as a fallback for offline/status. |
 | Runtime warning "AGENTS.md drift detected" | Whoever is running `mmw_tools_run` | Stop pushing PRs until the mirror is updated. The plugin will still let you push (warning only), but doing so may violate `AGENTS.md`. |
 
 ---
@@ -65,36 +70,50 @@ pre-flight requirement.
 
 ---
 
-## Long-term plan (v2+)
+## Machine-readable rule file (implemented 2026-11-13)
 
-This v1 approach is the **least-bad option for a single-customer
-plugin**. The full SSOT fix is in v2 and requires cooperation from the
-`ffxiv-race-ops` maintainers:
+Each registered repo has a root `.dsh-mmw-tools.yaml`:
 
-1. Add a **machine-readable** rule file to `ffxiv-race-ops`, e.g.
-   `.dsh-mmw-tools.yaml`:
-   ```yaml
-   version: 1
-   allowlist: [public/data.json]
-   denylist: [.github/workflows/**, schema/**, scripts/**, AGENTS.md, .pi/**]
-   branchPrefix: content/
-   preflight: npm run validate
-   prDefaultDraft: true
-   ```
-2. The plugin fetches this YAML at `mmw_tools_run` startup and uses it
-   as the **runtime authority** — `cordis.patch.yml` only stores the
-   YAML's path (default `.dsh-mmw-tools.yaml`).
-3. `cordis.patch.yml` no longer holds any rule fields; it only stores
-   OAuth config and the repo coordinates.
+```yaml
+version: 1
+allowlistPaths: [public/data.json]
+denylistPaths: [.github/workflows/**, schema/**, scripts/**, AGENTS.md, .pi/**]
+branchPrefix: content/
+preflight:
+  cmd: npm run validate
+  timeoutSeconds: 60
+bootstrap:
+  cmd: ""
+  whenMissing: node_modules
+  timeoutSeconds: 300
+prDefaultDraft: true
+```
 
-This is the **proper SSOT fix**. It requires:
+Runtime behavior:
 
-- One file added to `ffxiv-race-ops` (`.dsh-mmw-tools.yaml`).
-- A coordinating PR that updates `cordis.patch.yml` in `mmw-tools` to
-  drop the rule fields.
-- Probably some renaming for clarity.
+1. The **broker** fetches the YAML from the repo's base branch via the
+   GitHub Contents API when a session selects a repo and when a write
+   path needs the rules. It validates the file and caches it briefly
+   (60s).
+2. Missing/invalid/unreachable YAML fails closed:
+   `repo-policy-missing` / `repo-policy-invalid` /
+   `repo-policy-unavailable`; `select_repo` surfaces
+   `[mmw_policy_unavailable]` and does not fall back to profile rules.
+3. The plugin writes the merged result into
+   `~/.dsh/mmw-tools-repos.json`; the MCP server reads that cache so
+   preflight/bootstrap/allow/deny match the file.
+4. The profile `repos`/`repoBinding` block still supplies
+   `workingDir`, `tokenFile`, `repoUrl`, and serves as the bootstrap
+   default before the first selection. It is no longer the authority
+   for rule fields.
 
-Until that lands, **this document is the maintenance contract**.
+Remaining cleanup:
+
+- Drop rule fields from `cordis.patch.yml` once the plugin can
+  bootstrap from the registry cache alone.
+- Add drift detection/status for "profile mirror ≠ YAML" (the AGENTS
+  fingerprint warning is still the only drift signal).
+- `contracts/` remains repo-agnostic; no per-repo contract files.
 
 ---
 
