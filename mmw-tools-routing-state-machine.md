@@ -18,6 +18,10 @@
 > 2026-11-12 补记：状态投影（`mmw_tools_status` / 面板）必须先 mint 当前仓库令牌
 > 再读视图；installation token 缓存命中时也要重写 `write-auth`，否则重新登录后
 > 的写操作会继续沿用旧身份的凭据。
+> 2026-11-13 补记：Policy 现在带仓库维度。`select_repo` 在绑定前刷新注册表并读
+> `GET /v1/agent/routes?repo=`；业务调用必须已有会话仓库，且只使用该仓库的
+> grants 派生的表。无授予为空表，不回退全局角色；跨仓库响应按
+> `[mmw_contract_mismatch]` 拒绝。
 
 ---
 
@@ -121,6 +125,12 @@ v2 的核心变化：
 8. `mmw_status` 永远可用，不依赖 Auth/Policy/Transport。
 9. 退出登录/过期不清空工具注册表；只让调用被拒。
 10. 写工具在授权表不新鲜（超过 `writeFreshUntil`）时必须同步刷新；刷新失败直接拒绝。
+11. **仓库是 Policy 的一部分**：业务调用必须已有会话仓库；路由表按
+    `?repo=` 取，只由该成员在该仓库的 grants 派生。无 grants 返回空
+    `allowedOperations`，不得回退到全局角色。授权表响应的 `repo` 与会话仓库
+    不一致时，按 `[mmw_contract_mismatch]` 拒绝。`select_repo` 本身在取表前
+    按本地会话状态放行，但仍需服务端返回该仓库的 `select_repo` operation
+    才允许绑定。
 
 ---
 

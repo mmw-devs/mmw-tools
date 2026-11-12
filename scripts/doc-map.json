@@ -60,8 +60,7 @@
       "generatedBy": "node scripts/check-contracts.mjs --update",
       "sources": [
         "contracts/tools.json",
-        "contracts/roles.json",
-        "mmw-tools-auth/src/policy.mjs"
+        "contracts/roles.json"
       ]
     },
     {

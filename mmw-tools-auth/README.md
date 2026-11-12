@@ -1,7 +1,8 @@
 # mmw-tools-auth
 
-飞书 H5 鉴权核心：成员、角色、仓库注册表、插件 token，以及 `GET /v1/agent/routes` 授权表。
-DSH 插件是消费者；它静态注册全部工具，并在每次调用时按这里下发的 `allowed` 集合放行或拒绝。
+飞书 H5 鉴权核心：成员、角色、仓库注册表、按仓库授权（grants）、插件 token，以及
+`GET /v1/agent/routes?repo=<owner/name>` 授权表。DSH 插件是消费者；它静态注册全部工具，
+并在每次调用时按所选仓库下发的 `allowedOperations` 放行或拒绝。
 
 > 状态：Phase 1 MVP 已部署到 `https://mmw-tools.mmw-team.icu`；公网 `/health` 正常。
 > 首位管理员已配置，bootstrap token 已移除；真实飞书登录已于 2026-11-11 验证通过
@@ -171,11 +172,11 @@ node scripts/check-contracts.mjs
 | `GET` | `/v1/me` | 插件身份、角色与策略版本 |
 | `POST` | `/v1/session/refresh` | 轮换插件 token |
 | `POST` | `/v1/session/logout` | 撤销当前插件 token |
-| `GET` | `/v1/agent/routes` | 授权表（allowed / denied / 版本 / TTL） |
+| `GET` | `/v1/agent/routes?repo=` | 所选仓库的授权表；无 `repo` 时返回全局兼容表 |
 | `GET` | `/v1/agent/repos` | 已启用的仓库注册表与默认仓库 |
 | `POST` | `/v1/agent/events` | 执行侧审计事件 |
 | `GET` | `/` | 管理 UI |
-| `/api/admin/*` | 管理接口 | 角色、成员、仓库注册表、审计；写请求需 CSRF |
+| `/api/admin/*` | 管理接口 | 角色、成员、按仓库授权、仓库注册表、审计；写请求需 CSRF |
 
 ## 状态与安全
 
@@ -184,6 +185,7 @@ node scripts/check-contracts.mjs
 - 管理 UI 的写请求校验 `Origin` + `X-CSRF-Token`；cookie 为 `HttpOnly; SameSite=Lax`。
 - 停用成员会删除其全部 plugin token 和浏览器 session。
 - 仓库注册表只接受管理员写入；插件只能读取已启用项。`owner/name` 统一小写，默认仓库在首个仓库启用时自动产生。
+- 仓库授权 `(member, repo, role)` 与全局角色分开：业务 operation 只认所选仓库的 grants；没有授予时返回空表，不回退到全局角色。管理员在成员页按仓库勾选角色。
 - 不能停用或降级最后一位有效管理员。
 - 审计只记录 actor/action/target/时间；不记录 token、Feishu code、文件内容。
 
@@ -207,9 +209,9 @@ node tests/run.mjs
 
 ## 已知限制
 
-- 真实飞书 OAuth 联调和浏览器手测尚未完成。
+- 真实飞书 OAuth 已验证（2026-11-11，浏览器 + 插件）；viewer 越权有维护者验证记录，token refresh/logout 的在线用例仍未覆盖，见 `../docs/CONFORMANCE.md` 的更正。
 - SQLite 单进程；不支持多实例共享同一个库。
-- 管理 UI 目前只编辑角色，不编辑工具目录；目录以 `contracts/` 为准。
+- 管理 UI 编辑角色、按仓库授权和仓库注册表，不编辑工具目录；目录以 `contracts/` 为准。
 - 没有 per-call 授权接口；插件缓存授权表，缓存上限由 `ttlSeconds` 和操作风险决定。
 - systemd/nginx 目前是脚本 + 手工步骤（见 `deploy/`）。`deploy/install-ops.sh`
   安装每日 SQLite 快照、健康检查定时器和 journald 容量上限；快照默认只留在本机，

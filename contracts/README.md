@@ -88,8 +88,12 @@ segment. See [`docs/TOOL-NAMING.md`](../docs/TOOL-NAMING.md).
 - `allowedOperations`: operation full IDs (`toolId.operationId`) the member may
   call; the gate checks this first.
 - `denied`: tools the member cannot consume, with `requiredRoles`.
+- With `GET /v1/agent/routes?repo=owner/name`, the table is derived only from
+  that member's grants for the selected repository (auth core owns the
+  `(member, repo, role)` table). No grant produces an empty operation list; it
+  does not fall back to global member roles.
 - `catalogRevision`: SHA-256 of `tools.json`.
-- `policyRevision`: increments when member roles change.
+- `policyRevision`: increments when member roles or repository grants change.
 - `ttlSeconds`: 60.
 
 ## Verify

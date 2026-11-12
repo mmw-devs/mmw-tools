@@ -20,6 +20,13 @@
   as `_meta.mmwRepo` and `MMW_REPOS`; each repository gets its own working copy,
   base branch, path lists, and installation-token file. Repository names never
   enter tool names; see `docs/TOOL-NAMING.md`.
+- **Authorization is now per repository.** `GET /v1/agent/routes?repo=` derives
+  the operation table only from the member's `(member, repo, role)` grants; no
+  grant returns an empty table instead of falling back to global roles.
+  `select_repo` reads that table before binding and refuses a repository where
+  the member lacks `select_repo`; business calls fetch the same scoped table,
+  and a mismatch between the table's `repo` and the session's repository is
+  `[mmw_contract_mismatch]`. Grants are edited per member in the admin UI.
 - **The broker can mint read tokens for more than one repository.**
   `BROKER_REPOS` registers extra `owner/name` entries (each may override
   `baseBranch`, `branchPrefix`, and the path lists), and

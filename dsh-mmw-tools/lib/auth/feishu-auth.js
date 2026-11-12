@@ -33,7 +33,7 @@ export class FeishuAuth {
     fetchImpl;
     now;
     pending = null;
-    routesCache = null;
+    routesCache = new Map();
     refreshing = null;
     constructor(opts) {
         this.authServiceUrl = opts.authServiceUrl.replace(/\/+$/, "");
@@ -73,7 +73,7 @@ export class FeishuAuth {
         }
     }
     async clear() {
-        this.routesCache = null;
+        this.routesCache.clear();
         try {
             await unlink(this.file);
         }
@@ -200,7 +200,7 @@ export class FeishuAuth {
                 savedAt: this.now(),
             });
             this.pending = null;
-            this.routesCache = null;
+            this.routesCache.clear();
             return {
                 status: "authorized",
                 member: normalizedMember,
@@ -264,7 +264,7 @@ export class FeishuAuth {
             expiresAt: body.expiresAt,
             savedAt: this.now(),
         });
-        this.routesCache = null;
+        this.routesCache.clear();
         return this.view();
     }
     /**
@@ -326,18 +326,22 @@ export class FeishuAuth {
         await this.saveRecord({ ...record, member, roles: member.roles, savedAt: this.now() });
         return member;
     }
-    async routes(force = false, maxAgeMs) {
+    async routes(force = false, maxAgeMs, repo) {
         const record = await this.readRecord();
         if (!record || record.expiresAt <= this.now()) {
             throw new FeishuAuthError("auth-required", "请先使用飞书登录");
         }
-        const cached = this.routesCache;
+        const cacheKey = repo ?? "";
+        const cached = this.routesCache.get(cacheKey);
         const cacheLimit = Math.min(cached ? cached.data.ttlSeconds * 1000 : 0, maxAgeMs ?? Infinity);
         if (!force && cached && this.now() - cached.at < cacheLimit) {
             return cached.data;
         }
         try {
-            const body = await this.request("/v1/agent/routes", {
+            const path = repo
+                ? `/v1/agent/routes?repo=${encodeURIComponent(repo)}`
+                : "/v1/agent/routes";
+            const body = await this.request(path, {
                 headers: { authorization: `Bearer ${record.pluginToken}` },
             });
             if (!Array.isArray(body.allowed) || !Array.isArray(body.allowedOperations)) {
@@ -348,6 +352,7 @@ export class FeishuAuth {
                 catalogRevision: String(body.catalogRevision ?? ""),
                 policyRevision: Number(body.policyRevision ?? 0),
                 ttlSeconds: Number(body.ttlSeconds ?? 60),
+                ...(repo ? { repo: String(body.repo ?? repo) } : {}),
                 allowed: body.allowed.map(String),
                 allowedOperations: body.allowedOperations.map(String),
                 denied: Array.isArray(body.denied) ? body.denied : [],
@@ -355,12 +360,11 @@ export class FeishuAuth {
             // policyRevision only moves forward on the auth core. A lower value is a
             // stale or replayed response; adopting it could re-grant a revoked
             // operation. Keep the newer table and restart its freshness window.
-            const previous = this.routesCache;
-            if (previous && data.policyRevision < previous.data.policyRevision) {
-                this.routesCache = { data: previous.data, at: this.now() };
-                return previous.data;
+            if (cached && data.policyRevision < cached.data.policyRevision) {
+                this.routesCache.set(cacheKey, { data: cached.data, at: this.now() });
+                return cached.data;
             }
-            this.routesCache = { data, at: this.now() };
+            this.routesCache.set(cacheKey, { data, at: this.now() });
             return data;
         }
         catch (err) {

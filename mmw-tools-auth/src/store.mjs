@@ -105,6 +105,15 @@ export class Store {
         created_at      TEXT NOT NULL,
         updated_at      TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS grants (
+        member_id  TEXT NOT NULL,
+        repo_key   TEXT NOT NULL,
+        role       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (member_id, repo_key, role)
+      );
+      CREATE INDEX IF NOT EXISTS grants_member ON grants(member_id);
     `);
   }
 
@@ -353,6 +362,31 @@ export class Store {
 
   deleteConfig(key) {
     this.db.prepare("DELETE FROM config WHERE key = ?").run(key);
+  }
+
+  /* ---------------- grants ---------------- */
+
+  grantsForMember(memberId) {
+    return this.db
+      .prepare("SELECT repo_key, role FROM grants WHERE member_id = ? ORDER BY repo_key, role")
+      .all(memberId)
+      .map((row) => ({ repoKey: row.repo_key, role: row.role }));
+  }
+
+  allGrants() {
+    return this.db
+      .prepare("SELECT member_id, repo_key, role FROM grants ORDER BY member_id, repo_key, role")
+      .all()
+      .map((row) => ({ memberId: row.member_id, repoKey: row.repo_key, role: row.role }));
+  }
+
+  /** Must be called inside an existing transaction. */
+  setGrantsForMember(memberId, repoKey, roles, at = new Date().toISOString()) {
+    this.db.prepare("DELETE FROM grants WHERE member_id = ? AND repo_key = ?").run(memberId, repoKey);
+    const insert = this.db.prepare(
+      "INSERT INTO grants (member_id, repo_key, role, created_at) VALUES (?, ?, ?, ?)"
+    );
+    for (const role of roles) insert.run(memberId, repoKey, role, at);
   }
 
   getPolicyRevision() {

@@ -67,18 +67,25 @@ export class PolicyGate {
         if (ref.operationId === "race-ops.select_repo") {
             return this.repoDecision(ref, sessionId);
         }
+        const repoKey = sessionId && this.repos ? this.repos.selectedBy(sessionId) : undefined;
+        if (this.repos && !repoKey) {
+            return deny("mmw_route_denied", '本会话尚未选择仓库；请先调用 mcp__mmw-tools__select_repo，参数 repo 为 "owner/name"');
+        }
         let routes;
         try {
             // Write operations must not ride on a cached table older than 15s:
             // a revoked role should lose write access quickly, while a read may
             // use the normal 60s cache.
-            routes = await this.auth.routes(false, ref.risk === "write" ? 15_000 : undefined);
+            routes = await this.auth.routes(false, ref.risk === "write" ? 15_000 : undefined, repoKey);
         }
         catch (err) {
             if (err instanceof FeishuAuthError) {
                 return deny(authErrorCode(err), `飞书授权不可用：${err.message}`);
             }
             return deny("mmw_policy_unavailable", "飞书授权不可用，已拒绝调用");
+        }
+        if (repoKey && routes.repo && routes.repo.toLowerCase() !== repoKey.toLowerCase()) {
+            return deny("mmw_contract_mismatch", `授权表仓库 ${routes.repo} 与会话仓库 ${repoKey} 不一致，已拒绝`);
         }
         if (routes.allowedOperations.includes(ref.operationId)) {
             return this.repoDecision(ref, sessionId);

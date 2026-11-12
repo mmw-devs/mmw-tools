@@ -415,9 +415,15 @@ export class Auth {
   }
 
   memberView(member) {
+    const grants = {};
+    for (const { repoKey, role } of this.store.grantsForMember(member.id)) {
+      (grants[repoKey] ??= []).push(role);
+    }
+    for (const roles of Object.values(grants)) roles.sort();
     return {
       ...this.publicMember(member),
       lastLoginAt: member.lastLoginAt,
+      grants,
     };
   }
 
@@ -545,6 +551,28 @@ export class Auth {
       }
     }
 
+    let grantsByRepo;
+    if (input.grants !== undefined) {
+      if (!Array.isArray(input.grants)) {
+        throw new AppError(400, "mmw_member_invalid", "仓库授权参数无效");
+      }
+      grantsByRepo = new Map();
+      for (const grant of input.grants) {
+        if (!grant || typeof grant.repo !== "string" || !Array.isArray(grant.roles)) {
+          throw new AppError(400, "mmw_member_invalid", "仓库授权参数无效");
+        }
+        const repo = this.store.getRepo(grant.repo.trim().toLowerCase());
+        if (!repo) throw new AppError(400, "mmw_repo_invalid", `未知仓库：${grant.repo}`);
+        const grantRoles = [...new Set(grant.roles)];
+        for (const role of grantRoles) {
+          if (!this.policy.roles.has(role)) {
+            throw new AppError(400, "mmw_member_invalid", `未知角色：${role}`);
+          }
+        }
+        grantsByRepo.set(repo.key, grantRoles);
+      }
+    }
+
     const updated = this.store.transaction(() => {
       const member = this.store.getMember(id);
       if (!member) throw new AppError(404, "mmw_member_not_found", "成员不存在");
@@ -573,6 +601,11 @@ export class Auth {
         updatedAt: at,
       };
       this.store.putMember(next);
+      if (grantsByRepo) {
+        for (const [repoKey, repoRoles] of grantsByRepo) {
+          this.store.setGrantsForMember(next.id, repoKey, repoRoles, at);
+        }
+      }
       if (!next.enabled) {
         this.store.deleteTokensForMember(next.id);
         this.store.deleteSessionsForMember(next.id);
@@ -580,7 +613,11 @@ export class Auth {
       const revision = this.store.incrementPolicyRevision();
       this.store.appendAudit(actor.id, "member-update", next.id, {
         before: { roles: member.roles, enabled: member.enabled },
-        after: { roles: next.roles, enabled: next.enabled },
+        after: {
+          roles: next.roles,
+          enabled: next.enabled,
+          ...(grantsByRepo ? { grants: Object.fromEntries(grantsByRepo) } : {}),
+        },
         revision,
       });
       return next;
@@ -602,8 +639,19 @@ export class Auth {
     };
   }
 
-  routes(member) {
-    return this.policy.routeTable(member, this.policyRevision(), 60);
+  routes(member, repoKey) {
+    if (!repoKey) {
+      return this.policy.routeTable(member, this.policyRevision(), 60);
+    }
+    const repo = this.store.getRepo(repoKey);
+    if (!repo || !repo.enabled) {
+      throw new AppError(404, "mmw_repo_unknown", "仓库未注册或已停用");
+    }
+    const roles = this.store
+      .grantsForMember(member.id)
+      .filter((grant) => grant.repoKey === repo.key)
+      .map((grant) => grant.role);
+    return this.policy.routeTable(member, this.policyRevision(), 60, { repo: repo.key, roles });
   }
 
   recordEvents(member, events) {
