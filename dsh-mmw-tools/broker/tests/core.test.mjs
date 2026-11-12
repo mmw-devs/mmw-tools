@@ -685,6 +685,7 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
       return json({ ...state.pr, html_url: "https://github.com/mmw-devs/ffxiv-race-ops/pull/11" }, 201);
     }
     if (method === "GET" && p === "/pulls/11") return json(state.pr);
+    if (method === "GET" && /^\/pulls\/\d+$/.test(p)) return json({ message: "Not Found" }, 404);
     if (method === "PATCH" && p === "/pulls/11") {
       const patch = typeof init.body === "string" ? JSON.parse(init.body) : (init.body ?? {});
       if (patch.state === "closed") state.pr = { ...state.pr, state: "closed" };
@@ -901,6 +902,14 @@ console.log("\n--- write proxy: pr_close ---");
   eq(res.already, false, "the first close is not a no-op");
   eq(gh.state.pr.state, "closed", "GitHub received the close");
   eq(audits.at(-1)?.op, "pr_close", "the close is audited");
+}
+{
+  const { core } = makeWriteCore();
+  await rejectsWith(
+    () => core.writePrClose({ feishuToken: "fs", pr_number: 99 }),
+    "pr-not-found",
+    "a missing PR is a 404, not a write failure"
+  );
 }
 {
   const { core } = makeWriteCore();
