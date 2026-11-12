@@ -112,6 +112,35 @@ await withServer({}, async ({ base }) => {
   truthy(!JSON.stringify(body).includes("shhh-client-secret"), "the client secret is not exposed");
 });
 
+console.log("\n--- repo policy over HTTP ---");
+await withServer({}, async ({ base, core }) => {
+  let seenToken = null;
+  core.repoPolicy = async (repoKey, options) => {
+    seenToken = options.feishuToken;
+    return {
+      repository: repoKey,
+      path: ".dsh-mmw-tools.yaml",
+      sha: "policy-sha",
+      rules: {
+        allowlistPaths: ["src/data/**"],
+        denylistPaths: ["AGENTS.md"],
+        branchPrefix: "content/",
+        preflight: { cmd: "pnpm build", timeoutSeconds: 300 },
+        bootstrap: { cmd: "", whenMissing: "node_modules", timeoutSeconds: 600 },
+        prDefaultDraft: true,
+      },
+    };
+  };
+  const res = await fetch(base + "/repo-policy?repo=mmw-devs/xivstrat-relay", {
+    headers: { "x-mmw-feishu-token": "feishu-token" },
+  });
+  eq(res.status, 200, "repo policy status");
+  const body = await res.json();
+  eq(body.repository, "mmw-devs/xivstrat-relay", "policy names the repository");
+  eq(body.rules.branchPrefix, "content/", "policy rules are returned");
+  eq(seenToken, "feishu-token", "the Feishu token reaches the core");
+});
+
 console.log("\n--- unknown endpoint ---");
 await withServer({}, async ({ base }) => {
   const res = await get(base, "/nope");

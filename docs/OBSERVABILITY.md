@@ -35,13 +35,18 @@ A **run id** is created when the gate is about to decide a call to an
    Before binding, `select_repo` also refreshes the auth-core repository
    registry (`GET /v1/agent/repos`), reads the member's grant for that
    repository (`GET /v1/agent/routes?repo=…`) and refuses a repository with no
-   grant. Business calls fetch the same repository-scoped table, so a denial
+   grant. It then reads the repository's own `.dsh-mmw-tools.yaml` through the
+   broker (`GET /repo-policy?repo=…`); a missing or invalid rule file fails the
+   selection closed instead of falling back to the profile copy. The broker
+   logs `repo_policy_read` with the repository and file sha, never the file
+   body. Business calls fetch the same repository-scoped table, so a denial
    reflects the selected repository's grants, not global roles. The last good
-   registry answer is written to `~/.dsh/mmw-tools-repos.json` (0600). That
-   cache holds repository coordinates and path rules, never a credential, and
-   it is not an audit sink; a failed refresh is reported in the tool error,
-   not appended as an event. The auth core records member-role and repository-
-   grant changes in its own audit table (`member-update`), not in this file.
+   registry answer, including the rule-file overlay, is written to
+   `~/.dsh/mmw-tools-repos.json` (0600). That cache holds repository
+   coordinates and path rules, never a credential, and it is not an audit
+   sink; a failed refresh is reported in the tool error, not appended as an
+   event. The auth core records member-role and repository-grant changes in
+   its own audit table (`member-update`), not in this file.
 
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not

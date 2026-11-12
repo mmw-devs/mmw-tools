@@ -12,6 +12,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { PLUGIN_DISPLAY_NAME, PLUGIN_VERSION } from "./const.js";
 import { repoStatus } from "./tools/repo-status.js";
 import { repoClone } from "./tools/repo-clone.js";
@@ -130,6 +132,30 @@ function parseRepoTable() {
     return table;
 }
 const REPO_TABLE = parseRepoTable();
+function cachedRepoRules(repoKey) {
+    const file = process.env.DSH_MMW_TOOLS_REPOS_CACHE ??
+        path.join(homedir(), ".dsh", "mmw-tools-repos.json");
+    try {
+        const parsed = JSON.parse(readFileSync(file, "utf8"));
+        if (!Array.isArray(parsed.repos))
+            return null;
+        const entry = parsed.repos.find((item) => String(item.key ?? "").toLowerCase() === repoKey);
+        return entry ?? null;
+    }
+    catch {
+        return null;
+    }
+}
+function cachedCommand(value, fallback) {
+    if (!value || typeof value.cmd !== "string")
+        return fallback;
+    return {
+        cmd: value.cmd,
+        timeoutSeconds: typeof value.timeoutSeconds === "number" && value.timeoutSeconds > 0
+            ? value.timeoutSeconds
+            : fallback.timeoutSeconds,
+    };
+}
 /** Resolve the selected repository; unknown names are refused, not defaulted. */
 function configFor(repoKey) {
     const base = config();
@@ -139,6 +165,7 @@ function configFor(repoKey) {
     if (!entry) {
         throw new GithubRefusedError("mmw_route_denied", `未知仓库 ${repoKey}；可用仓库：${[...REPO_TABLE.keys()].join(", ") || "（未配置）"}`);
     }
+    const cached = cachedRepoRules(repoKey);
     return {
         ...base,
         repo: entry.key,
@@ -147,11 +174,16 @@ function configFor(repoKey) {
         repoOwner: entry.owner,
         repoName: entry.name,
         baseBranch: entry.baseBranch,
-        branchPrefix: entry.branchPrefix,
-        allowlistPaths: entry.allowlistPaths,
-        denylistPaths: entry.denylistPaths,
-        preflight: entry.preflight,
-        bootstrap: entry.bootstrap,
+        branchPrefix: cached?.branchPrefix ?? entry.branchPrefix,
+        allowlistPaths: cached?.allowlistPaths ?? entry.allowlistPaths,
+        denylistPaths: cached?.denylistPaths ?? entry.denylistPaths,
+        preflight: cachedCommand(cached?.preflight, entry.preflight),
+        bootstrap: {
+            ...cachedCommand(cached?.bootstrap, entry.bootstrap),
+            whenMissing: typeof cached?.bootstrap?.whenMissing === "string"
+                ? cached.bootstrap.whenMissing
+                : entry.bootstrap.whenMissing,
+        },
         githubToken: readTokenFromStore(entry.tokenFile) ?? base.githubToken,
     };
 }

@@ -388,11 +388,17 @@ v2 的核心变化：
 > `~/.dsh/mmw-tools-repos.json`。启动阶段无法等待网络，因此先读该缓存来注册
 > 工具与 `MMW_REPOS`，`select_repo` 再以服务端为准覆盖；未启用飞书的 profile
 > 只读本地 `repos`。
+>
+> 2026-11-13 规则文件：`select_repo` 绑定前还经 broker 读取仓库根目录的
+> `.dsh-mmw-tools.yaml`（`GET /repo-policy?repo=`）。文件缺失、非法或不可达时
+> 返回 `[mmw_policy_unavailable]` 并保持未绑定；读到的 allow/deny、branchPrefix、
+> preflight/bootstrap 覆盖内存 entry 与缓存，MCP 每次调用再读缓存覆盖。
 
 ### 7.3 关键规则
 - **检查顺序**：业务工具 Auth → Policy → Repo → Transport；`select_repo` 是
   Auth → Repo（不查授权表，避免表滞后阻塞选仓）。未登录/无权限/未选仓库不能启动 MCP。
 - **仓库显式选择**：业务工具要求会话已 `select_repo`；未选择不落默认仓库。同一会话不可改选；`select_repo` 本身豁免仓库检查。
+- **规则文件 fail closed**：仓库路径/分支规则以 base 分支的 `.dsh-mmw-tools.yaml` 为准；读取失败不得退回 profile 副本，也不得放行写操作。
 - **最多刷新一次**：`NEED_REFRESH` 只允许一次；刷新后仍不允许就拒绝。
 - **写工具 fail closed**：授权表不新鲜且刷新失败，直接拒绝；不允许用旧表写。
 - **读工具 grace**：核心不可达时，读工具在 grace 内可用旧表；超过 grace 拒绝。

@@ -261,7 +261,9 @@ with older brokers).
 
 1. `GET /v1/me` with `Authorization: Bearer <pluginToken>`; a string `id` is
    required.
-2. `GET /v1/agent/routes`; read `allowedOperations`.
+2. `GET /v1/agent/routes?repo=<owner/name>`; read that repository's
+   `allowedOperations` (grants are per repository; no grant yields an empty
+   table, not the global role set).
 3. Require at least one repository operation (`repo_read`, `repo_edit`,
    `pr_create`, `pr_close`, or `pr_merge`); none →
    `403 feishu-no-access` (no mint).
@@ -271,6 +273,20 @@ with older brokers).
 5. Failure codes: auth core 401/403 → `feishu-auth-rejected`; non-2xx / bad
    JSON → `feishu-check-failed` / `feishu-bad-response`; network → 
    `feishu-unreachable`; no `MMW_TOOLS_AUTH_URL` → `feishu-not-configured`.
+
+### `GET /repo-policy?repo=<owner/name>`
+
+```
+x-mmw-feishu-token: <pluginToken>
+```
+
+校验插件 token 与 repositories 注册表后，用只读 installation token 从该仓库
+base 分支读取 `.dsh-mmw-tools.yaml`，返回
+`{repository, path, sha, rules:{allowlistPaths, denylistPaths, branchPrefix,
+preflight, bootstrap, prDefaultDraft}}`。写路径（§13）与 `pr_create` 的默认
+draft 也用这份规则；文件缺失/非法/不可达分别是
+`repo-policy-missing` / `repo-policy-invalid` / `repo-policy-unavailable`
+（均 503，写操作失败关闭，不回退 profile 副本）。
 
 ### `POST /session/revoke`
 

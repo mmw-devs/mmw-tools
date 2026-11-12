@@ -26,6 +26,8 @@ and it is what a contributor should run before every commit.
 | `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
 | `tests/feishu-gate.test.mjs` | authorization tables, repository-scoped `?repo=` requests and per-repository cache, gate decisions (including `pr_merge` / `pr_close` asks), refusal-code prefixes, token rotation and refresh |
 | `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, `select_repo` allowed while the route table lags, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table, registry-cache overlay and round-trip, scoped grant table selection and cross-repository `[mmw_contract_mismatch]` |
+| `broker/tests/core.test.mjs` (policy section) | `.dsh-mmw-tools.yaml` parsing: quoted/bare/inline lists, preflight/bootstrap, `prDefaultDraft`, non-v1 and missing-`/` rejection |
+| `broker/tests/server.test.mjs` (policy section) | `GET /repo-policy?repo=` returns the parsed rules and forwards the Feishu token |
 | `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |

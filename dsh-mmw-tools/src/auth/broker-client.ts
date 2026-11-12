@@ -49,6 +49,36 @@ export interface StartedSession {
   expiresAt: number;
 }
 
+export interface PolicyCommand {
+  cmd: string;
+  timeoutSeconds: number;
+}
+
+export interface RepoPolicyRules {
+  allowlistPaths: string[];
+  denylistPaths: string[];
+  branchPrefix: string;
+  preflight: PolicyCommand;
+  bootstrap: PolicyCommand & { whenMissing: string };
+  prDefaultDraft: boolean;
+}
+
+export interface RepoPolicy {
+  repository: string;
+  path: string;
+  sha: string;
+  rules: RepoPolicyRules;
+}
+
+function parseCommand(value: unknown): PolicyCommand {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const timeout = Number(record.timeoutSeconds ?? 300);
+  return {
+    cmd: String(record.cmd ?? ""),
+    timeoutSeconds: Number.isInteger(timeout) && timeout > 0 ? timeout : 300,
+  };
+}
+
 export type SessionPoll =
   | { status: "pending" }
   | { status: "expired" }
@@ -242,6 +272,41 @@ export class BrokerClient {
       headers: { "x-mmw-feishu-token": feishuToken },
     })) as Record<string, unknown>;
     return this.parseInstallationToken(body);
+  }
+
+  /**
+   * Read `.dsh-mmw-tools.yaml` through the broker. The broker verifies the
+   * plugin token and fetches the file with its own installation token, so the
+   * plugin never talks to the GitHub contents API directly.
+   */
+  async getRepoPolicy(feishuToken: string, repository: string): Promise<RepoPolicy> {
+    if (!feishuToken) {
+      throw new BrokerError("session-required", "no Feishu credential; sign in first");
+    }
+    const body = (await this.request(
+      `/repo-policy?repo=${encodeURIComponent(repository)}`,
+      { headers: { "x-mmw-feishu-token": feishuToken } }
+    )) as Record<string, unknown>;
+    const rules = body.rules as Record<string, unknown> | undefined;
+    if (!rules || !Array.isArray(rules.allowlistPaths) || !Array.isArray(rules.denylistPaths)) {
+      throw new BrokerError("broker-bad-response", "the broker returned an invalid repository policy");
+    }
+    return {
+      repository: String(body.repository ?? repository),
+      path: String(body.path ?? ".dsh-mmw-tools.yaml"),
+      sha: String(body.sha ?? ""),
+      rules: {
+        allowlistPaths: rules.allowlistPaths.map(String),
+        denylistPaths: rules.denylistPaths.map(String),
+        branchPrefix: String(rules.branchPrefix ?? ""),
+        preflight: parseCommand(rules.preflight),
+        bootstrap: {
+          ...parseCommand(rules.bootstrap),
+          whenMissing: String((rules.bootstrap as Record<string, unknown> | undefined)?.whenMissing ?? ""),
+        },
+        prDefaultDraft: rules.prDefaultDraft !== false,
+      },
+    };
   }
 
   /**

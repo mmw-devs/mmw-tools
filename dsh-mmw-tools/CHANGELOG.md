@@ -27,6 +27,13 @@
   the member lacks `select_repo`; business calls fetch the same scoped table,
   and a mismatch between the table's `repo` and the session's repository is
   `[mmw_contract_mismatch]`. Grants are edited per member in the admin UI.
+- **Write rules now come from the repository itself.** `.dsh-mmw-tools.yaml`
+  at the base branch is read by the broker (`GET /repo-policy?repo=`) and
+  overlays `allowlistPaths`, `denylistPaths`, `branchPrefix`, `preflight` and
+  `bootstrap`; `pr_create` also uses its `prDefaultDraft`. A missing, invalid
+  or unreachable file is `[mmw_policy_unavailable]` and fails the write or the
+  `select_repo` closed instead of falling back to the profile copy. The parsed
+  rules are cached for the MCP child, which re-reads them per call.
 - **The broker can mint read tokens for more than one repository.**
   `BROKER_REPOS` registers extra `owner/name` entries (each may override
   `baseBranch`, `branchPrefix`, and the path lists), and

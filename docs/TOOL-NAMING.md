@@ -73,7 +73,8 @@ mcp__mmw-tools__select_repo
 也不能绕过刷新：管理端停用的仓库即使还在旧缓存里，也会在选择时被拒绝。
 按仓库授权同样不改变命名：`GET /v1/agent/routes?repo=` 只收窄 operation
 集合，`select_repo` 与业务操作的名字保持不变；没有 grants 的仓库返回空表，
-不会生成按角色或仓库区分的别名。
+不会生成按角色或仓库区分的别名。仓库根目录的 `.dsh-mmw-tools.yaml` 只决定
+路径、分支前缀和 preflight，也不参与命名；新增或修改规则文件不会造成工具名 diff。
 
 ## 4. 新增东西时
 

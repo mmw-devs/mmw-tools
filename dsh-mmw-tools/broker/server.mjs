@@ -323,6 +323,17 @@ export function createBrokerServer(core, opts = {}) {
         return;
       }
 
+      /* --- repository policy file --- */
+      if (pathname === "/repo-policy" && req.method === "GET") {
+        const repoKey = url.searchParams.get("repo") ?? undefined;
+        const policy = await core.repoPolicy(repoKey, {
+          feishuToken: headerValue(req, "x-mmw-feishu-token"),
+        });
+        log("repo_policy_read", { repository: policy.repository, sha: policy.sha });
+        sendJson(res, 200, policy);
+        return;
+      }
+
       /* --- step 3: mint --- */
       if (pathname === "/installation-token" && req.method === "POST") {
         await readBody(req);

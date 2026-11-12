@@ -268,6 +268,21 @@ export class BrokerAuth {
         return issued.token;
     }
     /**
+     * The repository's own rule file, read through the broker. Only the Feishu
+     * plugin token is presented: the broker mints the installation token and
+     * never hands it to this call.
+     */
+    async repoPolicy() {
+        const credential = this.feishu ? await this.feishu.credential() : null;
+        if (!credential) {
+            throw new BrokerError("session-required", "no Feishu credential; sign in first");
+        }
+        if (!this.repository) {
+            throw new BrokerError("repo-mismatch", "this plugin has no repository binding");
+        }
+        return this.broker.getRepoPolicy(credential, this.repository);
+    }
+    /**
      * One place that decides which credential to present. Keeping the fallback
      * here (rather than in each caller) is what makes "Feishu first, GitHub
      * second" true for the watchdog, the panel and the first tool call alike.

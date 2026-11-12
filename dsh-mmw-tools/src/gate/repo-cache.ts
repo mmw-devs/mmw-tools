@@ -19,6 +19,10 @@ export interface CachedRepo {
   branchPrefix: string;
   allowlistPaths: string[];
   denylistPaths: string[];
+  /** Present when the last select_repo also read `.dsh-mmw-tools.yaml`. */
+  preflight?: { cmd: string; timeoutSeconds: number };
+  bootstrap?: { cmd: string; whenMissing: string; timeoutSeconds: number };
+  prDefaultDraft?: boolean;
 }
 
 export interface RepoRegistryCache {
@@ -50,6 +54,15 @@ export function readRepoRegistryCache(file = repoRegistryCachePath()): RepoRegis
       const owner = String(raw?.owner ?? "").toLowerCase();
       const name = String(raw?.name ?? "").toLowerCase();
       if (!key || !owner || !name) continue;
+      const command = (value: unknown) => {
+        const record = value && typeof value === "object" ? (value as any) : {};
+        const timeout = Number(record.timeoutSeconds ?? 300);
+        return {
+          cmd: typeof record.cmd === "string" ? record.cmd : "",
+          timeoutSeconds: Number.isInteger(timeout) && timeout > 0 ? timeout : 300,
+        };
+      };
+      const bootstrapRecord = raw.bootstrap && typeof raw.bootstrap === "object" ? raw.bootstrap : {};
       repos.push({
         key,
         owner,
@@ -58,6 +71,11 @@ export function readRepoRegistryCache(file = repoRegistryCachePath()): RepoRegis
         branchPrefix: String(raw.branchPrefix ?? "content/"),
         allowlistPaths: strings(raw.allowlistPaths),
         denylistPaths: strings(raw.denylistPaths),
+        ...(raw.preflight ? { preflight: command(raw.preflight) } : {}),
+        ...(raw.bootstrap
+          ? { bootstrap: { ...command(raw.bootstrap), whenMissing: String(bootstrapRecord.whenMissing ?? "") } }
+          : {}),
+        ...(typeof raw.prDefaultDraft === "boolean" ? { prDefaultDraft: raw.prDefaultDraft } : {}),
       });
     }
     if (repos.length === 0) return null;

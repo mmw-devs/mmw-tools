@@ -33,6 +33,15 @@ export function readRepoRegistryCache(file = repoRegistryCachePath()) {
             const name = String(raw?.name ?? "").toLowerCase();
             if (!key || !owner || !name)
                 continue;
+            const command = (value) => {
+                const record = value && typeof value === "object" ? value : {};
+                const timeout = Number(record.timeoutSeconds ?? 300);
+                return {
+                    cmd: typeof record.cmd === "string" ? record.cmd : "",
+                    timeoutSeconds: Number.isInteger(timeout) && timeout > 0 ? timeout : 300,
+                };
+            };
+            const bootstrapRecord = raw.bootstrap && typeof raw.bootstrap === "object" ? raw.bootstrap : {};
             repos.push({
                 key,
                 owner,
@@ -41,6 +50,11 @@ export function readRepoRegistryCache(file = repoRegistryCachePath()) {
                 branchPrefix: String(raw.branchPrefix ?? "content/"),
                 allowlistPaths: strings(raw.allowlistPaths),
                 denylistPaths: strings(raw.denylistPaths),
+                ...(raw.preflight ? { preflight: command(raw.preflight) } : {}),
+                ...(raw.bootstrap
+                    ? { bootstrap: { ...command(raw.bootstrap), whenMissing: String(bootstrapRecord.whenMissing ?? "") } }
+                    : {}),
+                ...(typeof raw.prDefaultDraft === "boolean" ? { prDefaultDraft: raw.prDefaultDraft } : {}),
             });
         }
         if (repos.length === 0)

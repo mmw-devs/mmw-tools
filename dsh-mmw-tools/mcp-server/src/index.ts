@@ -16,6 +16,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import { PLUGIN_DISPLAY_NAME, PLUGIN_VERSION } from "./const.js";
 
 import { repoStatus } from "./tools/repo-status.js";
@@ -187,6 +189,50 @@ function parseRepoTable(): Map<string, RepoEnv> {
 
 const REPO_TABLE = parseRepoTable();
 
+/**
+ * The host's repo cache records the rules read from `.dsh-mmw-tools.yaml`
+ * on the last `select_repo`. The MCP child is long-lived, so it re-reads
+ * this file per call instead of relying on the environment captured at
+ * spawn time.
+ */
+interface CachedRepoRules {
+  branchPrefix?: string;
+  allowlistPaths?: string[];
+  denylistPaths?: string[];
+  preflight?: { cmd?: unknown; timeoutSeconds?: unknown };
+  bootstrap?: { cmd?: unknown; whenMissing?: unknown; timeoutSeconds?: unknown };
+}
+
+function cachedRepoRules(repoKey: string): CachedRepoRules | null {
+  const file =
+    process.env.DSH_MMW_TOOLS_REPOS_CACHE ??
+    path.join(homedir(), ".dsh", "mmw-tools-repos.json");
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { repos?: unknown };
+    if (!Array.isArray(parsed.repos)) return null;
+    const entry = (parsed.repos as CachedRepoRules[]).find(
+      (item) => String((item as any).key ?? "").toLowerCase() === repoKey
+    );
+    return entry ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function cachedCommand(
+  value: { cmd?: unknown; timeoutSeconds?: unknown } | undefined,
+  fallback: { cmd: string; timeoutSeconds: number }
+): { cmd: string; timeoutSeconds: number } {
+  if (!value || typeof value.cmd !== "string") return fallback;
+  return {
+    cmd: value.cmd,
+    timeoutSeconds:
+      typeof value.timeoutSeconds === "number" && value.timeoutSeconds > 0
+        ? value.timeoutSeconds
+        : fallback.timeoutSeconds,
+  };
+}
+
 /** Resolve the selected repository; unknown names are refused, not defaulted. */
 function configFor(repoKey?: string): McpConfig {
   const base = config();
@@ -198,6 +244,7 @@ function configFor(repoKey?: string): McpConfig {
       `未知仓库 ${repoKey}；可用仓库：${[...REPO_TABLE.keys()].join(", ") || "（未配置）"}`
     );
   }
+  const cached = cachedRepoRules(repoKey);
   return {
     ...base,
     repo: entry.key,
@@ -206,11 +253,17 @@ function configFor(repoKey?: string): McpConfig {
     repoOwner: entry.owner,
     repoName: entry.name,
     baseBranch: entry.baseBranch,
-    branchPrefix: entry.branchPrefix,
-    allowlistPaths: entry.allowlistPaths,
-    denylistPaths: entry.denylistPaths,
-    preflight: entry.preflight,
-    bootstrap: entry.bootstrap,
+    branchPrefix: cached?.branchPrefix ?? entry.branchPrefix,
+    allowlistPaths: cached?.allowlistPaths ?? entry.allowlistPaths,
+    denylistPaths: cached?.denylistPaths ?? entry.denylistPaths,
+    preflight: cachedCommand(cached?.preflight, entry.preflight),
+    bootstrap: {
+      ...cachedCommand(cached?.bootstrap, entry.bootstrap),
+      whenMissing:
+        typeof cached?.bootstrap?.whenMissing === "string"
+          ? cached.bootstrap.whenMissing
+          : entry.bootstrap.whenMissing,
+    },
     githubToken: readTokenFromStore(entry.tokenFile) ?? base.githubToken,
   };
 }

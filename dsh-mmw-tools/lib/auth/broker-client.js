@@ -23,6 +23,14 @@ export class BrokerError extends Error {
             this.status = status;
     }
 }
+function parseCommand(value) {
+    const record = value && typeof value === "object" ? value : {};
+    const timeout = Number(record.timeoutSeconds ?? 300);
+    return {
+        cmd: String(record.cmd ?? ""),
+        timeoutSeconds: Number.isInteger(timeout) && timeout > 0 ? timeout : 300,
+    };
+}
 function trimTrailingSlash(url) {
     return url.endsWith("/") ? url.slice(0, -1) : url;
 }
@@ -164,6 +172,37 @@ export class BrokerClient {
             headers: { "x-mmw-feishu-token": feishuToken },
         }));
         return this.parseInstallationToken(body);
+    }
+    /**
+     * Read `.dsh-mmw-tools.yaml` through the broker. The broker verifies the
+     * plugin token and fetches the file with its own installation token, so the
+     * plugin never talks to the GitHub contents API directly.
+     */
+    async getRepoPolicy(feishuToken, repository) {
+        if (!feishuToken) {
+            throw new BrokerError("session-required", "no Feishu credential; sign in first");
+        }
+        const body = (await this.request(`/repo-policy?repo=${encodeURIComponent(repository)}`, { headers: { "x-mmw-feishu-token": feishuToken } }));
+        const rules = body.rules;
+        if (!rules || !Array.isArray(rules.allowlistPaths) || !Array.isArray(rules.denylistPaths)) {
+            throw new BrokerError("broker-bad-response", "the broker returned an invalid repository policy");
+        }
+        return {
+            repository: String(body.repository ?? repository),
+            path: String(body.path ?? ".dsh-mmw-tools.yaml"),
+            sha: String(body.sha ?? ""),
+            rules: {
+                allowlistPaths: rules.allowlistPaths.map(String),
+                denylistPaths: rules.denylistPaths.map(String),
+                branchPrefix: String(rules.branchPrefix ?? ""),
+                preflight: parseCommand(rules.preflight),
+                bootstrap: {
+                    ...parseCommand(rules.bootstrap),
+                    whenMissing: String(rules.bootstrap?.whenMissing ?? ""),
+                },
+                prDefaultDraft: rules.prDefaultDraft !== false,
+            },
+        };
     }
     /**
      * A repository-scoped mint must name the repository in the query string:
