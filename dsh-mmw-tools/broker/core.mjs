@@ -1109,7 +1109,7 @@ export class BrokerCore {
     const cached = this.#recall(idemKey);
     if (cached) return { ...cached, idempotent: true };
 
-    const pr = await this.#api("GET", `/pulls/${prNumber}`);
+    const pr = await this.#api("GET", `/pulls/${prNumber}`, { allow404: true });
     if (!pr) {
       throw new BrokerRefused("pr-not-found", `PR #${prNumber} does not exist`, 404);
     }
