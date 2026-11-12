@@ -48,6 +48,7 @@ Status: living
 ## 硬规则
 
 - `contracts/tools.json` 和 `contracts/roles.json` 是契约唯一源。`contracts/REFERENCE.md` 与 `contracts/examples/` 是生成物，禁止手改。
+- 工具与 operation 的命名遵守 [`docs/TOOL-NAMING.md`](docs/TOOL-NAMING.md)：仓库不进名字，MCP `publicName` 必须以 `__<operation.id>` 结尾。
 - 叙事文档不复制易漂移事实（数量、端点表、角色矩阵、TTL、主机名、部署状态），而是链接到源。宁可写得模糊但保持为真，也不要精确但过期。
 - `historical` 文档是快照：只追加带日期的更正说明，不改写成“当前”。`target design` 文档必须写明哪些部分尚未实现。
 - tracked markdown 未登记、source glob 命中不到任何文件，都会让 CI 失败。不要通过删除映射、放宽 glob 或注释检查来绕过。

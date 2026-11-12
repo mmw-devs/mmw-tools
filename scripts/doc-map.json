@@ -277,8 +277,19 @@
     {
       "path": "docs/ADR-0001-MULTI-REPO.md",
       "status": "target design",
-      "defines": "多仓库注册表、工具别名与会话绑定的决策提案；未实现。",
+      "defines": "多仓库注册表与会话绑定的决策提案（2026-11-13 修订为显式选择、工具名不含仓库）；未实现。",
       "sources": []
+    },
+    {
+      "path": "docs/TOOL-NAMING.md",
+      "status": "target design",
+      "defines": "工具与 operation 的命名规则、仓库不进名字的约束，以及新增仓库/工具时的强制检查。",
+      "sources": [
+        "contracts/tools.json",
+        "scripts/check-contracts.mjs",
+        "dsh-mmw-tools/src/gate/**",
+        "dsh-mmw-tools/src/index.ts"
+      ]
     },
     {
       "path": "mmw-tools-auth/README.md",

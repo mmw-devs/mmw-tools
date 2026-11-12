@@ -21,6 +21,23 @@ Status: target design
 - **仓库规则仍由仓库自己拥有**：`.dsh-mmw-tools.yaml` 是运行时 authority，
   插件配置只留路径与仓库坐标。
 
+## 2026-11-13 修订（取代第 3、4 节）
+
+用户决定采用**显式选择**，不再为每个仓库注册别名：
+
+- 所有仓库共用一套工具名 `mcp__mmw-tools__<operation>`，仓库 slug 不出现在
+  工具名、operation ID 或 `publicName` 中；规则见
+  [`TOOL-NAMING.md`](TOOL-NAMING.md)。
+- 新增 `mcp__mmw-tools__select_repo`（契约 `race-ops.select_repo`）。一个会话
+  必须先选定仓库才能调用业务工具；未选择即拒绝，不自动落到默认仓库。
+- 选定后不可切换；同一会话再选其他仓库返回 `[mmw_route_denied]`。
+- 这样新增仓库不需要改工具清单、契约或 `TOOL_MAP`，只改注册表与授权。
+
+修订理由：按仓库展开的别名会让名字数量随仓库数线性增长；用户明确要求“先显式
+选”，并接受“每次会话多一步”的代价。
+
+以下第 3、4 节是原提案，保留作决策记录。
+
 ## 1. 约束与现状
 
 用户约束（2026-11-12 确认）：
@@ -49,7 +66,7 @@ Status: target design
 生成，不是手写配置，也不是第二份事实源。缓存缺失时只注册
 `mmw_tools_status`，业务工具不可用，status 里写明“注册表未同步”。
 
-## 3. 工具身份与命名
+## 3. 工具身份与命名（原提案，已被 2026-11-13 修订取代）
 
 每个启用的仓库注册一组别名：
 
@@ -69,7 +86,7 @@ race-ops__arena-ladder__repo_read
 - 别名数量随仓库线性增长，但每个仓库仍是独立的 MCP 子进程、独立工作区、
   独立 installation token；不共享 `roots`。
 
-## 4. 会话绑定
+## 4. 会话绑定（原提案，已被 2026-11-13 修订取代）
 
 `tools/pre-execute` 的 `exec.agent.id` 是 `SessionId`
 （`dsh-agent/lib/types/types.d.ts:11-13`），gate 今天只读 `exec.name`。绑定规则：

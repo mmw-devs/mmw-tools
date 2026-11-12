@@ -189,6 +189,23 @@ function validate(toolsDoc, rolesDoc) {
           fail(`${opLabel}.publicName: duplicate ${operation.publicName}`);
         }
         publicNames.add(operation.publicName);
+        if (operation.publicName.startsWith("mcp__")) {
+          // The model-facing MCP name is the server prefix plus exactly the
+          // operation id. This keeps repositories out of names: a new repo
+          // must not add a segment such as `mcp__mmw-tools__xivstrat-relay__repo_read`.
+          // See docs/TOOL-NAMING.md.
+          if (!operation.publicName.endsWith(`__${operation.id}`)) {
+            fail(
+              `${opLabel}.publicName: expected the MCP name to end with "__${operation.id}" ` +
+                `(repo-free naming; see docs/TOOL-NAMING.md)`
+            );
+          }
+        } else if (operation.publicName.includes("__")) {
+          fail(
+            `${opLabel}.publicName: local tool names must not contain "__" ` +
+              `(see docs/TOOL-NAMING.md)`
+          );
+        }
       }
       requireString(operation.description, `${opLabel}.description`, { max: 500 });
       if (operation.risk !== "read" && operation.risk !== "write") {
