@@ -68,6 +68,10 @@ To change the ladder: edit `tools.json`, run
 `node scripts/check-contracts.mjs --update`, review the generated route tables
 and `REFERENCE.md`, then run the auth and plugin tests.
 
+The check also enforces tool naming: an MCP `publicName` must end with
+`__<operation.id>`, so a repository or feature cannot be inserted as an extra
+segment. See [`docs/TOOL-NAMING.md`](../docs/TOOL-NAMING.md).
+
 ## Route table semantics
 
 `GET /v1/agent/routes` is an authorization table:
