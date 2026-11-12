@@ -92,7 +92,7 @@ export class BrokerCore {
   #tokens = new Map(); // sha256(sessionToken) -> { login, expiresAt, createdAt }
   #allowCache = new Map(); // login -> { allowed, checkedAt }
   #mintCache = new Map(); // repo key -> installation token reused for membership checks
-  #writeMintCache = null; // installation token used by the write proxy only
+  #writeMintCache = new Map(); // repo key -> installation token used by the write proxy only
   #idempotency = new Map(); // key -> { value, expiresAt }
   #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
 
@@ -716,20 +716,24 @@ export class BrokerCore {
    * process and never returned to a client. The client token from
    * `/installation-token` is read-only.
    */
-  async #writeToken() {
+  async #writeToken(rc = this.defaultRepo) {
     const now = this.now();
-    if (this.#writeMintCache && this.#writeMintCache.expiresAt - 60_000 > now) {
-      return this.#writeMintCache.token;
+    const key = rc.key.toLowerCase();
+    const cached = this.#writeMintCache.get(key);
+    if (cached && cached.expiresAt - 60_000 > now) {
+      return cached.token;
     }
-    const mint = this.mintInstallationToken ?? defaultMint(this);
-    const issued = await mint({ permissions: { contents: "write", pull_requests: "write" } });
-    this.#writeMintCache = { token: issued.token, expiresAt: issued.expiresAt };
+    const issued = await this.#mintFor(rc, {
+      permissions: { contents: "write", pull_requests: "write" },
+    });
+    this.#writeMintCache.set(key, { token: issued.token, expiresAt: issued.expiresAt });
     return issued.token;
   }
 
-  /** One GitHub API call with the broker's write token. */
-  async #api(method, pathname, { body, allow404 = false } = {}) {
-    const token = await this.#writeToken();
+  /** One GitHub API call with the broker's write token, scoped to one repo. */
+  async #api(method, pathname, { body, allow404 = false, repo } = {}) {
+    const rc = this.#repoConfig(repo);
+    const token = await this.#writeToken(rc);
     let res;
     try {
       const signal =
@@ -737,7 +741,7 @@ export class BrokerCore {
           ? AbortSignal.timeout(this.githubTimeoutMs)
           : undefined;
       res = await this.fetchImpl(
-        `${GITHUB_API}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}${pathname}`,
+        `${GITHUB_API}/repos/${encodeURIComponent(rc.owner)}/${encodeURIComponent(rc.name)}${pathname}`,
         {
           method,
           headers: {
@@ -805,25 +809,25 @@ export class BrokerCore {
     );
   }
 
-  #assertBranch(branch) {
-    if (typeof branch !== "string" || !branch.startsWith(this.branchPrefix)) {
+  #assertBranch(branch, rc = this.defaultRepo) {
+    if (typeof branch !== "string" || !branch.startsWith(rc.branchPrefix)) {
       throw new BrokerRefused(
         "branch-prefix",
-        `branch must start with ${this.branchPrefix}`,
+        `branch must start with ${rc.branchPrefix}`,
         400
       );
     }
-    if (branch === this.baseBranch || branch.includes("..") || branch.length > 200) {
+    if (branch === rc.baseBranch || branch.includes("..") || branch.length > 200) {
       throw new BrokerRefused("branch-invalid", "branch name is not allowed", 400);
     }
   }
 
-  #normalizePath(raw) {
+  #normalizePath(raw, rc = this.defaultRepo) {
     const normalized = normalizeRepoPath(raw);
-    if (!this.allowlistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+    if (!rc.allowlistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
       throw new BrokerRefused("path-not-allowed", `${normalized} is not in the write allowlist`, 403);
     }
-    if (this.denylistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+    if (rc.denylistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
       throw new BrokerRefused("path-denied", `${normalized} is on the write denylist`, 403);
     }
     return normalized;
@@ -868,11 +872,11 @@ export class BrokerCore {
       : randomToken(8);
   }
 
-  async #readContent(pathname, ref) {
+  async #readContent(pathname, ref, repo) {
     const data = await this.#api(
       "GET",
       `/contents/${encodePath(pathname)}?ref=${encodeURIComponent(ref)}`,
-      { allow404: true }
+      { allow404: true, repo }
     );
     if (!data) return null;
     if (Array.isArray(data) || data.type !== "file" || typeof data.content !== "string") {
@@ -930,12 +934,13 @@ export class BrokerCore {
    */
   async writeRepoEdit(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_EDIT_OPERATION, args);
+    const rc = this.#repoConfig(args.repo);
     const branch = String(args.branch ?? "");
     const baseSha = String(args.baseSha ?? args.base_sha ?? "");
     const message = String(args.message ?? args.commit_message ?? "");
     const edits = Array.isArray(args.edits) ? args.edits : [];
 
-    this.#assertBranch(branch);
+    this.#assertBranch(branch, rc);
     if (!/^[0-9a-f]{40}$/i.test(baseSha)) {
       throw new BrokerRefused("base-sha-invalid", "base_sha must be a 40-character commit SHA", 400);
     }
@@ -951,7 +956,7 @@ export class BrokerCore {
       if (!raw || typeof raw !== "object") {
         throw new BrokerRefused("edit-invalid", "every edit must be an object", 400);
       }
-      const pathname = this.#normalizePath(raw.path);
+      const pathname = this.#normalizePath(raw.path, rc);
       if (seen.has(pathname)) {
         throw new BrokerRefused("edit-duplicate-path", `${pathname} appears twice`, 400);
       }
@@ -974,6 +979,7 @@ export class BrokerCore {
 
     const requestId = this.#requestId(args.requestId);
     const idemKey = this.#idempotencyKey("repo_edit", args.idempotencyKey, {
+      repo: rc.key,
       branch,
       baseSha,
       message,
@@ -983,12 +989,14 @@ export class BrokerCore {
     if (cached) return { ...cached, idempotent: true };
 
     const refPath = `/git/ref/heads/${encodeBranch(branch)}`;
-    const existing = await this.#api("GET", refPath, { allow404: true });
+    const existing = await this.#api("GET", refPath, { allow404: true, repo: rc.key });
     let base;
     if (existing) {
       base = existing?.object?.sha;
     } else {
-      const baseRef = await this.#api("GET", `/git/ref/heads/${encodeBranch(this.baseBranch)}`);
+      const baseRef = await this.#api("GET", `/git/ref/heads/${encodeBranch(rc.baseBranch)}`, {
+        repo: rc.key,
+      });
       base = baseRef?.object?.sha;
     }
     if (typeof base !== "string" || !/^[0-9a-f]{40}$/i.test(base)) {
@@ -1002,7 +1010,7 @@ export class BrokerCore {
       );
     }
 
-    const baseCommit = await this.#api("GET", `/git/commits/${base}`);
+    const baseCommit = await this.#api("GET", `/git/commits/${base}`, { repo: rc.key });
     const baseTree = baseCommit?.tree?.sha;
     if (typeof baseTree !== "string") {
       throw new BrokerRefused("base-commit-invalid", "could not read the base tree", 502);
@@ -1011,7 +1019,7 @@ export class BrokerCore {
     const tree = [];
     const filesChanged = [];
     for (const edit of normalized) {
-      const original = await this.#readContent(edit.path, base);
+      const original = await this.#readContent(edit.path, base, rc.key);
       const next = this.#applyEdit(original, edit);
       const bytes = Buffer.byteLength(next);
       if (bytes > this.maxEditBytes) {
@@ -1019,6 +1027,7 @@ export class BrokerCore {
       }
       const blob = await this.#api("POST", "/git/blobs", {
         body: { content: next, encoding: "utf-8" },
+        repo: rc.key,
       });
       tree.push({ path: edit.path, mode: "100644", type: "blob", sha: blob.sha });
       filesChanged.push(edit.path);
@@ -1026,18 +1035,22 @@ export class BrokerCore {
 
     const newTree = await this.#api("POST", "/git/trees", {
       body: { base_tree: baseTree, tree },
+      repo: rc.key,
     });
     const newCommit = await this.#api("POST", "/git/commits", {
       body: { message, tree: newTree.sha, parents: [base] },
+      repo: rc.key,
     });
 
     if (existing) {
       await this.#api("PATCH", `/git/refs/heads/${encodeBranch(branch)}`, {
         body: { sha: newCommit.sha, force: false },
+        repo: rc.key,
       });
     } else {
       await this.#api("POST", "/git/refs", {
         body: { ref: `refs/heads/${branch}`, sha: newCommit.sha },
+        repo: rc.key,
       });
     }
 
@@ -1054,6 +1067,7 @@ export class BrokerCore {
       op: "repo_edit",
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       branch,
       baseSha: base,
       commitSha: newCommit.sha,
@@ -1064,15 +1078,16 @@ export class BrokerCore {
 
   async writePrCreate(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_PR_OPERATION, args);
+    const rc = this.#repoConfig(args.repo);
     const head = String(args.head ?? args.head_branch ?? "");
-    const base = String(args.base ?? this.baseBranch);
+    const base = String(args.base ?? rc.baseBranch);
     const title = String(args.title ?? "");
     const body = String(args.body ?? "");
     const draft = args.draft !== false;
 
-    this.#assertBranch(head);
-    if (base !== this.baseBranch) {
-      throw new BrokerRefused("base-not-allowed", `PRs may only target ${this.baseBranch}`, 400);
+    this.#assertBranch(head, rc);
+    if (base !== rc.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `PRs may only target ${rc.baseBranch}`, 400);
     }
     if (title.trim() === "" || Buffer.byteLength(title) > 256) {
       throw new BrokerRefused("title-invalid", "title must be 1..256 characters", 400);
@@ -1083,6 +1098,7 @@ export class BrokerCore {
 
     const requestId = this.#requestId(args.requestId);
     const idemKey = this.#idempotencyKey("pr_create", args.idempotencyKey, {
+      repo: rc.key,
       head,
       base,
       title,
@@ -1092,7 +1108,10 @@ export class BrokerCore {
     const cached = this.#recall(idemKey);
     if (cached) return { ...cached, idempotent: true };
 
-    const ref = await this.#api("GET", `/git/ref/heads/${encodeBranch(head)}`, { allow404: true });
+    const ref = await this.#api("GET", `/git/ref/heads/${encodeBranch(head)}`, {
+      allow404: true,
+      repo: rc.key,
+    });
     if (!ref) {
       throw new BrokerRefused("branch-not-found", `branch ${head} does not exist on the remote`, 409);
     }
@@ -1100,9 +1119,9 @@ export class BrokerCore {
 
     const query =
       `?state=open` +
-      `&head=${encodeURIComponent(`${this.owner}:${head}`)}` +
+      `&head=${encodeURIComponent(`${rc.owner}:${head}`)}` +
       `&base=${encodeURIComponent(base)}`;
-    const open = await this.#api("GET", `/pulls${query}`);
+    const open = await this.#api("GET", `/pulls${query}`, { repo: rc.key });
     const existing = Array.isArray(open)
       ? open.find((pr) => pr?.head?.ref === head && pr?.base?.ref === base)
       : null;
@@ -1112,6 +1131,7 @@ export class BrokerCore {
     if (!pr) {
       pr = await this.#api("POST", "/pulls", {
         body: { title, body, head, base, draft },
+        repo: rc.key,
       });
       created = true;
     }
@@ -1130,6 +1150,7 @@ export class BrokerCore {
       op: "pr_create",
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       pr: pr.number,
       head,
       base,
@@ -1149,17 +1170,21 @@ export class BrokerCore {
    */
   async writePrClose(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_CLOSE_OPERATION, args);
+    const rc = this.#repoConfig(args.repo);
     const prNumber = Number(args.prNumber ?? args.pr_number);
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
       throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
     }
 
     const requestId = this.#requestId(args.requestId);
-    const idemKey = this.#idempotencyKey("pr_close", args.idempotencyKey, { prNumber });
+    const idemKey = this.#idempotencyKey("pr_close", args.idempotencyKey, {
+      repo: rc.key,
+      prNumber,
+    });
     const cached = this.#recall(idemKey);
     if (cached) return { ...cached, idempotent: true };
 
-    const pr = await this.#api("GET", `/pulls/${prNumber}`, { allow404: true });
+    const pr = await this.#api("GET", `/pulls/${prNumber}`, { allow404: true, repo: rc.key });
     if (!pr) {
       throw new BrokerRefused("pr-not-found", `PR #${prNumber} does not exist`, 404);
     }
@@ -1180,14 +1205,14 @@ export class BrokerCore {
       return result;
     }
 
-    if (!String(pr.head?.ref ?? "").startsWith(this.branchPrefix)) {
+    if (!String(pr.head?.ref ?? "").startsWith(rc.branchPrefix)) {
       throw new BrokerRefused("branch-prefix", "the PR head is not a content branch", 409);
     }
-    if (pr.base?.ref !== this.baseBranch) {
-      throw new BrokerRefused("base-not-allowed", `the PR does not target ${this.baseBranch}`, 409);
+    if (pr.base?.ref !== rc.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `the PR does not target ${rc.baseBranch}`, 409);
     }
 
-    await this.#api("PATCH", `/pulls/${prNumber}`, { body: { state: "closed" } });
+    await this.#api("PATCH", `/pulls/${prNumber}`, { body: { state: "closed" }, repo: rc.key });
 
     const result = {
       number: pr.number,
@@ -1204,33 +1229,34 @@ export class BrokerCore {
       op: "pr_close",
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       pr: prNumber,
       headSha: result.head_sha,
     });
     return result;
   }
 
-  async #fetchMergeablePr(prNumber) {
+  async #fetchMergeablePr(prNumber, rc = this.defaultRepo) {
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
       throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
     }
-    let pr = await this.#api("GET", `/pulls/${prNumber}`);
+    let pr = await this.#api("GET", `/pulls/${prNumber}`, { repo: rc.key });
     if (!pr || pr.state !== "open") {
       throw new BrokerRefused("pr-not-open", `PR #${prNumber} is not open`, 409);
     }
     if (pr.draft) {
-      await this.#api("PATCH", `/pulls/${prNumber}`, { body: { draft: false } });
-      pr = await this.#api("GET", `/pulls/${prNumber}`);
+      await this.#api("PATCH", `/pulls/${prNumber}`, { body: { draft: false }, repo: rc.key });
+      pr = await this.#api("GET", `/pulls/${prNumber}`, { repo: rc.key });
     }
-    if (!String(pr.head?.ref ?? "").startsWith(this.branchPrefix)) {
+    if (!String(pr.head?.ref ?? "").startsWith(rc.branchPrefix)) {
       throw new BrokerRefused("branch-prefix", "the PR head is not a content branch", 409);
     }
-    if (pr.base?.ref !== this.baseBranch) {
-      throw new BrokerRefused("base-not-allowed", `the PR does not target ${this.baseBranch}`, 409);
+    if (pr.base?.ref !== rc.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `the PR does not target ${rc.baseBranch}`, 409);
     }
     for (let i = 0; i < 5 && pr.mergeable_state === "unknown"; i++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      pr = await this.#api("GET", `/pulls/${prNumber}`);
+      pr = await this.#api("GET", `/pulls/${prNumber}`, { repo: rc.key });
     }
     if (pr.mergeable_state !== "clean") {
       throw new BrokerRefused(
@@ -1248,6 +1274,7 @@ export class BrokerCore {
    */
   async approvePrMerge(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_MERGE_OPERATION, args);
+    const rc = this.#repoConfig(args.repo);
     const prNumber = Number(args.prNumber ?? args.pr_number);
     const mergeMethod = String(args.mergeMethod ?? args.merge_method ?? "squash");
     if (!["merge", "squash", "rebase"].includes(mergeMethod)) {
@@ -1258,12 +1285,13 @@ export class BrokerCore {
       throw new BrokerRefused("commit-title-too-long", "commit_title is too long", 400);
     }
 
-    const pr = await this.#fetchMergeablePr(prNumber);
+    const pr = await this.#fetchMergeablePr(prNumber, rc);
     const approvalId = randomToken(32);
     const expiresAt = this.now() + APPROVAL_TTL_MS;
     this.#approvals.set(approvalId, {
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       pr: prNumber,
       headSha: pr.head.sha,
       method: mergeMethod,
@@ -1275,6 +1303,7 @@ export class BrokerCore {
       op: "pr_merge_approval",
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       pr: prNumber,
       headSha: pr.head.sha,
       method: mergeMethod,
@@ -1289,10 +1318,12 @@ export class BrokerCore {
 
   async writePrMerge(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_MERGE_OPERATION, args);
+    const rc = this.#repoConfig(args.repo);
     const prNumber = Number(args.prNumber ?? args.pr_number);
     const approvalId = String(args.approvalId ?? args.approval_id ?? "");
     const requestId = this.#requestId(args.requestId);
     const idemKey = this.#idempotencyKey("pr_merge", args.idempotencyKey, {
+      repo: rc.key,
       prNumber,
       approvalId,
     });
@@ -1313,8 +1344,11 @@ export class BrokerCore {
     if (approval.pr !== prNumber) {
       throw new BrokerRefused("approval-pr-mismatch", "this approval is for another PR", 403);
     }
+    if (approval.repo !== rc.key) {
+      throw new BrokerRefused("approval-repo-mismatch", "this approval is for another repository", 403);
+    }
 
-    let pr = await this.#api("GET", `/pulls/${prNumber}`);
+    let pr = await this.#api("GET", `/pulls/${prNumber}`, { repo: rc.key });
     if (!pr || pr.state !== "open") {
       throw new BrokerRefused("pr-not-open", `PR #${prNumber} is not open`, 409);
     }
@@ -1341,6 +1375,7 @@ export class BrokerCore {
         merge_method: approval.method,
         ...(approval.title ? { commit_title: approval.title } : {}),
       },
+      repo: rc.key,
     });
     if (!merged || merged.merged !== true) {
       throw new BrokerRefused(
@@ -1364,6 +1399,7 @@ export class BrokerCore {
       op: "pr_merge",
       member: who.login,
       kind: who.kind,
+      repo: rc.key,
       pr: prNumber,
       headSha: approval.headSha,
       sha: merged.sha,

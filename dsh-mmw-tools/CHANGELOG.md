@@ -8,9 +8,12 @@
   `BROKER_REPOS` registers extra `owner/name` entries (each may override
   `baseBranch`, `branchPrefix`, and the path lists), and
   `POST /installation-token?repo=` selects one. An unknown repository is
-  refused with `403 repo-denied` instead of falling back to the default. This
-  is the first multi-repository slice; the write proxy still operates on the
-  default repository only.
+  refused with `403 repo-denied` instead of falling back to the default. The
+  same registry now also routes write-proxy calls: every `/v1/write/*` body may
+  carry `repo: "owner/name"`, and the branch prefix, base branch, path lists,
+  write-token cache, idempotency key, audit record, and merge approval are all
+  scoped to the selected repository. Unknown repositories are refused before
+  any GitHub call.
 - **`pr_merge` honours the repository's operations contract.** Before either the
   broker or the local `gh` path, it reads `contract/operations.json` at the PR
   head and refuses when any op-log `command` in the PR's commits belongs to a
