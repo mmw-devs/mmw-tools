@@ -27,6 +27,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { isMmwTool } from "./tool-map.js";
+import type { WorkspaceMode } from "./workspace-mode.js";
 
 export type WorkspaceVerdict = { ok: true } | { ok: false; reason: string };
 
@@ -49,6 +50,13 @@ const STATUS_TOOL = "mmw_tools_status";
  */
 const BOOTSTRAP_TOOL = "mcp__mmw-tools__repo_clone";
 
+/**
+ * Selecting a repository is how a bootstrap workspace becomes managed, so it
+ * must be callable before the mode is `managed`. The tool itself still refuses
+ * workspaces it cannot claim.
+ */
+const SELECT_REPO_TOOL = "mcp__mmw-tools__select_repo";
+
 export interface WorkspaceGuardOptions {
   /** Absolute directories whose sessions may use the plugin's tools. */
   roots: string[];
@@ -57,6 +65,13 @@ export interface WorkspaceGuardOptions {
   /** Default "deny" — see {@link UnavailablePolicy}. */
   onUnavailable?: UnavailablePolicy;
   logger: { warn: (m: string) => void };
+  /**
+   * Session-level mode, resolved from the repository registry and the
+   * checkout's Git origin. When supplied this replaces the path-only check:
+   * a directory is not "managed" merely because it sits under a configured
+   * root.
+   */
+  modeOf?: (exec: unknown) => WorkspaceMode | undefined;
   /**
    * Test seam: return the calling session's working directory, or undefined
    * when it cannot be determined.
@@ -198,6 +213,31 @@ function makeWorkingDirectoryReader(
 }
 
 /**
+ * Read the session directory without logging. Used by status/select_repo,
+ * which need the same path the guard sees but must work outside a managed
+ * workspace.
+ */
+export function readSessionWorkingDirectory(
+  ctx: unknown,
+  exec: unknown
+): string | undefined {
+  const agent = (exec as { agent?: { ctx?: unknown; session?: unknown } } | undefined)?.agent;
+  const session = agent?.session;
+  if (session === undefined || session === null) return undefined;
+  const service =
+    lookupService(agent?.ctx, "workingDirectory") ?? lookupService(ctx, "workingDirectory");
+  if (service === undefined) return undefined;
+  const reader = service as { get?: (session: unknown) => unknown };
+  if (typeof reader.get !== "function") return undefined;
+  try {
+    const value = reader.get(session);
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Install the guard as a `tools/pre-execute` waterfall listener.
  *
  * Only the plugin's own tools are inspected; every other tool in the session
@@ -223,10 +263,55 @@ export function installWorkspaceGuard(ctx: unknown, opts: WorkspaceGuardOptions)
       async (exec: unknown, next: () => Promise<unknown>): Promise<unknown> => {
         const name = (exec as { name?: unknown } | undefined)?.name;
         if (typeof name !== "string" || !isMmwTool(name)) return next();
-        // Status is a diagnostic surface, not a repository operation. It must
-        // remain callable from a wrong workspace so the agent can explain why
-        // the repository tools are refused.
-        if (name === STATUS_TOOL) return next();
+        // Status is a diagnostic surface, and select_repo is how a bootstrap
+        // workspace becomes managed. Both must remain callable from a
+        // workspace that is not managed yet.
+        if (name === STATUS_TOOL || name === SELECT_REPO_TOOL) return next();
+
+        if (opts.modeOf) {
+          let mode: WorkspaceMode | undefined;
+          try {
+            mode = opts.modeOf(exec);
+          } catch (err) {
+            opts.logger.warn(
+              `mmw-tools: workspace mode check failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+            return {
+              kind: "deny",
+              reason: "[mmw_route_denied] 无法确定当前工作区的 mmw-tools 状态，已拒绝调用。",
+            };
+          }
+          if (mode === "managed") return next();
+          if (mode === "bootstrap") {
+            if (name === BOOTSTRAP_TOOL) return next();
+            return {
+              kind: "deny",
+              reason: "[mmw_route_denied] 目标仓库尚未初始化；请先选择仓库并完成 checkout。",
+            };
+          }
+          if (mode === "unmanaged") {
+            return {
+              kind: "deny",
+              reason: "[mmw_route_denied] 本工作区不归 mmw-tools 管理，已拒绝调用。",
+            };
+          }
+          if (mode === "mismatch") {
+            return {
+              kind: "deny",
+              reason:
+                "[mmw_route_denied] 当前工作区与 mmw-tools 的仓库配置不一致，已拒绝调用。请让用户确认仓库与规则文件。",
+            };
+          }
+          if (mode === "unknown") {
+            return {
+              kind: "deny",
+              reason: "[mmw_route_denied] 无法确定当前会话的工作目录，已拒绝调用。",
+            };
+          }
+        }
+
         const cwd = cwdOf(exec);
         if (isBootstrapCall(name, cwd, opts.roots)) return next();
         const verdict = shouldAllowWorkspace(cwd, opts.roots, onUnavailable);

@@ -1,6 +1,6 @@
 # 工具命名规范
 
-Status: living — 命名规则由 `scripts/check-contracts.mjs` 强制；`select_repo`、会话锁定、`_meta` 传仓库与按仓库授权（`GET /v1/agent/routes?repo=`）已落地（2026-11-13）。剩余缺口见第 6 节。
+Status: living — 命名规则由 `scripts/check-contracts.mjs` 强制；`select_repo`、会话锁定、`_meta` 传仓库与按仓库授权（`GET /v1/agent/routes?repo=`）已落地（2026-11-13）。工作区管辖（注册表 + `origin` remote + 规则标记）也只影响调用是否允许，不改变任何工具名；剩余缺口见第 6 节。
 
 这份文档定义本插件暴露给模型的工具名、契约里的 operation 名，以及新增仓库/工具时必须遵守的规则。命名不是风格问题：注册表、授权、审计和模型看到的工具列表都以这些名字为键，改名等同于换身份。
 
@@ -30,6 +30,7 @@ mcp__mmw-tools__repo_status
 mcp__mmw-tools__repo_read
 mcp__mmw-tools__repo_edit
 mcp__mmw-tools__pr_create
+mcp__mmw-tools__pr_close
 mcp__mmw-tools__pr_merge
 ```
 
@@ -123,10 +124,12 @@ mcp__mmw-tools__select_repo
 - 插件通过 `_meta.mmwRepo` 把选择传给 MCP 子进程，子进程按 `MMW_REPOS` 解析该仓库的工作目录、分支基线和令牌文件；
 - 每仓库独立的工作副本与只读令牌文件；写操作经 broker 按 `repo` 路由；
 - `select_repo` 在授权表之前按本地会话状态放行（授权表可能滞后），业务工具仍受 `allowedOperations` 约束；这一豁免不改变命名规则，名字仍必须是 `mcp__mmw-tools__select_repo`；
-- 按仓库授权：`GET /v1/agent/routes?repo=` 只按该仓库 grants 派生操作集合，无授予返回空表；选择与业务操作的名字都不变。
+- 按仓库授权：`GET /v1/agent/routes?repo=` 只按该仓库 grants 派生操作集合，无授予返回空表；选择与业务操作的名字都不变；
+- 工作区管辖：注册表 + 工作区 `origin` remote + `.dsh-mmw-tools.yaml` 标记决定调用是否允许（`managed`/`unmanaged`/`mismatch`/`bootstrap`/`unknown`），只影响拒绝原因与状态输出，不新增或改名任何工具；
+- broker 从 **base 分支**读取 `.dsh-mmw-tools.yaml` 与 `contract/operations.json`，close 另查分支归属；这些是服务端写边界，不参与命名。
 
 仍未实现：
 
-- `.dsh-mmw-tools.yaml` 作为运行时规则 authority。
+- 规则文件漂移检测与状态展示（`ADR-0001-MULTI-REPO.md` 的剩余项）。
 
 实现顺序与验收见 [`ADR-0001-MULTI-REPO.md`](ADR-0001-MULTI-REPO.md)。

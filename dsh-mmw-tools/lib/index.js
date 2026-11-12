@@ -39,7 +39,8 @@ import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { RepoRegistry, repoKey } from "./gate/repo-registry.js";
 import { readRepoRegistryCache, writeRepoRegistryCache, } from "./gate/repo-cache.js";
-import { installWorkspaceGuard } from "./gate/workspace-guard.js";
+import { installWorkspaceGuard, readSessionWorkingDirectory, } from "./gate/workspace-guard.js";
+import { resolveWorkspaceMode, } from "./gate/workspace-mode.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
 import { currentRunId, newRunId } from "./util/run-context.js";
@@ -451,6 +452,17 @@ const STATUS_OUTPUT_SCHEMA = {
             },
             required: true,
         },
+        workspace: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                mode: { type: "string", required: true },
+                root: { type: "string", required: true },
+                repo: { type: "string", required: true },
+                marker: { type: "boolean", required: true },
+                reason: { type: "string", required: true },
+            },
+        },
         agentsMdDrift: {
             type: "object",
             additionalProperties: false,
@@ -500,8 +512,20 @@ function makeStatusTool(deps) {
                 return [{ type: "text", text: String(value.message ?? "") }];
             },
         },
-        async execute() {
+        async execute(_args, exec) {
             const brokerLine = deps.brokerUrl;
+            const workspace = deps.workspace?.(exec);
+            const workspaceLine = workspace
+                ? workspace.mode === "managed"
+                    ? `工作区: managed（${workspace.repo ?? "?"}）— 本工作区纳入 mmw-tools，它声明的仓库操作走插件。`
+                    : workspace.mode === "bootstrap"
+                        ? `工作区: bootstrap（${workspace.repo ?? "?"}）— ${workspace.reason}`
+                        : workspace.mode === "unmanaged"
+                            ? "工作区: unmanaged — 本工作区不归 mmw-tools 管理。"
+                            : workspace.mode === "mismatch"
+                                ? `工作区: mismatch — ${workspace.reason}。请让用户确认仓库与规则文件。`
+                                : `工作区: unknown — ${workspace.reason}。`
+                : "工作区: 未检查";
             // Mint/refresh the repository credential before reading the view: a
             // Feishu login only becomes visible through the issued token, so a
             // view-first order would report the stale GitHub session instead.
@@ -546,6 +570,7 @@ function makeStatusTool(deps) {
                     `Repo binding: ${String(deps.repo.owner ?? "?")}/${String(deps.repo.name ?? "?")} (${String(deps.repo.baseBranch ?? "main")})\n` +
                     `Allowed paths: ${Array.isArray(deps.repo.allowlistPaths) ? deps.repo.allowlistPaths.join(", ") : "(空)"}\n` +
                     `MCP server entry: ${pathToConnect}\n` +
+                    `\n--- Workspace ---\n${workspaceLine}\n` +
                     `\n--- Auth ---\n${authLines.join("\n")}\n` +
                     `\n--- AGENTS.md ---\n${driftLine}\n` +
                     `\n下一步：${nextStep}`,
@@ -565,6 +590,17 @@ function makeStatusTool(deps) {
                     refreshTokenExpiresAt: view.refreshTokenExpiresAt,
                     tokenUpdatedAt: view.tokenUpdatedAt,
                 },
+                ...(workspace
+                    ? {
+                        workspace: {
+                            mode: workspace.mode,
+                            root: workspace.root,
+                            repo: workspace.repo ?? "",
+                            marker: workspace.marker !== null,
+                            reason: workspace.reason,
+                        },
+                    }
+                    : {}),
                 agentsMdDrift: deps.agentsMdDrift ?? {
                     ok: false,
                     unavailable: true,
@@ -844,6 +880,24 @@ export function apply(ctx, config) {
         : undefined;
     const repos = new RepoRegistry(repoEntries, defaultRepoKeyFromCache ?? repoKey(binding.owner, binding.name));
     const defaultRepoKey = repos.defaultKey;
+    /**
+     * The session's workspace mode. The registry and the checkout's Git origin
+     * are the authority; `.dsh-mmw-tools.yaml` only has to exist before writes
+     * (the broker validates its contents from the base branch).
+     */
+    const workspaceOf = (exec) => {
+        const sessionId = exec?.agent?.id;
+        const selected = sessionId ? repos.selectedBy(sessionId) : undefined;
+        const registry = repos
+            .keys()
+            .map((key) => ({ key, workingDir: repos.entry(key)?.workingDir ?? "" }))
+            .filter((entry) => entry.workingDir.length > 0);
+        return resolveWorkspaceMode({
+            cwd: readSessionWorkingDirectory(ctx, exec),
+            registry,
+            selected,
+        });
+    };
     // Construct audit + redacting loggers once, share across tools.
     const audit = createAuditLogger({
         file: auditPath(),
@@ -935,6 +989,7 @@ export function apply(ctx, config) {
         roots: workspaceRoots,
         enabled: guardConfig?.enabled !== false,
         onUnavailable: unavailablePolicy,
+        modeOf: (exec) => workspaceOf(exec).mode,
         logger,
     }), "mmw-tools: workspace guard");
     // Feishu policy + pr_merge confirmation. This is installed at apply level
@@ -995,7 +1050,7 @@ export function apply(ctx, config) {
     }, "mmw-tools: agents-md drift");
     // 1. Register the status tool.
     ctx.effect(() => {
-        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, store, flow }));
+        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, store, flow, workspace: workspaceOf }));
     }, "mmw-tools: status tool");
     // 1b. Repository selection. The name lives in the MCP namespace because it
     // is part of the contract the model sees, but it is handled here: the MCP
@@ -1099,6 +1154,23 @@ export function apply(ctx, config) {
                         repos: merged,
                     });
                 }
+                const requestedKey = repos.normalize(requested);
+                const workspace = workspaceOf(exec);
+                if (workspace.mode === "unmanaged") {
+                    throw new Error("[mmw_route_denied] 本工作区不归 mmw-tools 管理，不能在这里选择仓库。");
+                }
+                if (workspace.mode === "mismatch") {
+                    throw new Error(`[mmw_route_denied] 当前工作区与 mmw-tools 的仓库配置不一致：${workspace.reason}。请让用户确认，不要自行切换通道。`);
+                }
+                if (workspace.mode === "unknown") {
+                    throw new Error("[mmw_route_denied] 无法确定当前会话的工作目录，不能选择仓库。");
+                }
+                if (requestedKey &&
+                    workspace.repo &&
+                    workspace.repo !== requestedKey &&
+                    (workspace.mode === "managed" || workspace.mode === "bootstrap")) {
+                    throw new Error(`[mmw_route_denied] 当前工作区属于 ${workspace.repo}，本会话不能选择 ${requestedKey}。`);
+                }
                 const selected = repos.select(sessionId, requested);
                 if (!selected.ok) {
                     throw new Error(`[mmw_route_denied] ${selected.reason}`);
@@ -1177,6 +1249,9 @@ export function apply(ctx, config) {
                 (feishuEnabled
                     ? "飞书门禁已启用：业务工具调用前必须完成飞书授权，mmw_tools_status 始终可用。"
                     : "飞书门禁未启用：当前只做 GitHub broker 鉴权。") +
+                "工作区规则：插件只在纳入 mmw-tools 的仓库工作区生效，它声明支持的仓库/PR 操作才走插件；" +
+                "未纳入的工作区不要调用插件工具，也不要假定用户必须改用某个具体工具。" +
+                "不确定当前工作区是否纳入时，先看 mmw_tools_status 的 workspace 字段。" +
                 `Loopback HTTP routes: ${paths}。`,
         }), () => logger.warn("mmw-tools: `systemPrompt` never became available; the agent announcement was not registered"));
     }, "mmw-tools: section");

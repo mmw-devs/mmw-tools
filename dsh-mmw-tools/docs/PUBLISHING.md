@@ -15,8 +15,8 @@ Two distribution channels. They differ in one important way: **whether the build
 - `mcp-server/dist/index.js` — the spawned MCP server
 
 Both `lib/` and `mcp-server/dist/` are listed in `.gitignore`, but that is
-not the same as absent: **the files are already tracked** (13 under `lib/`,
-11 under `mcp-server/dist/` at the time of writing), and gitignore never
+not the same as absent: **the files are already tracked** (run
+`git ls-files lib mcp-server/dist` for the current list), and gitignore never
 applies to tracked paths. So git install does work as the tree stands —
 0.8.1 was verified to ship `mcp-server/dist/guard.js` with the current
 limit.
@@ -86,6 +86,9 @@ pnpm build:all
 
 # 3. Verify.
 pnpm check
+#    `pnpm check` includes the workspace relevance suites and the broker
+#    base-branch contract/ownership cases, so a release that only passes
+#    the old tool tests is not enough.
 (cd mcp-server && pnpm test)
 
 # 4. Confirm the tarball contains what the manifest promises.

@@ -328,12 +328,17 @@ v2 的核心变化：
 ### 7.1 状态图
 
 ```
-   RECEIVED ──CALL──▶ CHECK_AUTH
-                         │
-          ┌──────────────┼──────────────┐
-          │ VALID        │ INVALID      │
-          ▼              ▼              │
-      CHECK_POLICY      DENIED ◀────────┘
+   RECEIVED ──CALL──▶ CHECK_WORKSPACE
+                          │
+             ┌────────────┼─────────────┐
+             │ MANAGED    │ NOT MANAGED │
+             ▼            ▼             │
+        CHECK_AUTH       DENIED ◀───────┘
+                          │
+          ┌───────────────┼───────────────┐
+          │ VALID         │ INVALID       │
+          ▼               ▼               │
+      CHECK_POLICY      DENIED ◀──────────┘
           │
      ┌────┼──────────────┬──────────────┐
      │ALLOWED              │NEED_REFRESH   │DENIED
@@ -351,7 +356,10 @@ v2 的核心变化：
 
 | From | 事件 | Guard | 动作 | To |
 |---|---|---|---|---|
-| `RECEIVED` | `CALL` | — | 记录 toolId；不启动 MCP | `CHECK_AUTH` |
+| `RECEIVED` | `CALL` | — | 记录 toolId；不启动 MCP | `CHECK_WORKSPACE` |
+| `CHECK_WORKSPACE` | `MANAGED` | 注册表 + 工作区 `origin` remote + `.dsh-mmw-tools.yaml` 三者一致；`mmw_tools_status` 始终豁免 | — | `CHECK_AUTH` |
+| `CHECK_WORKSPACE` | `BOOTSTRAP` | 注册仓库的 checkout 尚未 clone（根无 `.git`） | 只放行 `select_repo` / `repo_clone` | `CHECK_AUTH`（仅这两个工具） |
+| `CHECK_WORKSPACE` | `NOT_MANAGED` | `unmanaged` / `mismatch` / `unknown` | 返回中性的 `[mmw_route_denied]`；不推荐替代工具 | `DENIED` |
 | `CHECK_AUTH` | `VALID` | Auth ∈ {`AUTHENTICATED`, `REFRESHING`} | — | `CHECK_POLICY` |
 | `CHECK_AUTH` | `INVALID` | — | 返回 `mmw_auth_required` / `mmw_session_expired` | `DENIED` |
 | `CHECK_POLICY` | `ALLOWED` | `operationId ∈ allowedOperations`（v2），或 `select_repo`（在 Policy 之前按本地会话状态判定）；读工具在 `READY/STALE(grace)`；写工具在 `READY` 且新鲜 | 记录 `policyRevision` | `CHECK_REPO` |
@@ -395,9 +403,9 @@ v2 的核心变化：
 > preflight/bootstrap 覆盖内存 entry 与缓存，MCP 每次调用再读缓存覆盖。
 
 ### 7.3 关键规则
-- **检查顺序**：业务工具 Auth → Policy → Repo → Transport；`select_repo` 是
-  Auth → Repo（不查授权表，避免表滞后阻塞选仓）。未登录/无权限/未选仓库不能启动 MCP。
-- **仓库显式选择**：业务工具要求会话已 `select_repo`；未选择不落默认仓库。同一会话不可改选；`select_repo` 本身豁免仓库检查。
+- **检查顺序**：业务工具 Workspace → Auth → Policy → Repo → Transport；`select_repo` 是 Workspace → Auth → Repo（不查授权表，避免表滞后阻塞选仓）。未登录/无权限/未选仓库/工作区不归它管都不能启动 MCP。
+- **工作区是管辖范围，不是安全边界**：`managed` 只说明“这个仓库/PR 操作由 mmw-tools 承接”，不意味着禁止别的工具，也不替用户指定替代工具；`unmanaged`/`mismatch`/`unknown` 中性拒绝。`.dsh-mmw-tools.yaml` 是规则标记，仓库身份来自工作区 `origin` remote 与注册表。
+- **仓库显式选择**：业务工具要求会话已 `select_repo`；未选择不落默认仓库。同一会话不可改选；`select_repo` 本身豁免仓库检查，但仍受工作区管辖与“不能选择与当前工作区不一致的仓库”约束。
 - **规则文件 fail closed**：仓库路径/分支规则以 base 分支的 `.dsh-mmw-tools.yaml` 为准；读取失败不得退回 profile 副本，也不得放行写操作。
 - **最多刷新一次**：`NEED_REFRESH` 只允许一次；刷新后仍不允许就拒绝。
 - **写工具 fail closed**：授权表不新鲜且刷新失败，直接拒绝；不允许用旧表写。
@@ -406,7 +414,9 @@ v2 的核心变化：
 - **工具始终可见**：拒绝不会删除工具；`mmw_status` 解释原因。
 - **写操作确认**：`pr_merge` 与 `pr_close` 在 `CHECK_POLICY` 通过后由宿主要求
   确认；确认是 UI 门，不是状态机状态。`pr_merge` 还要求 broker 的一次性
-  approval，`pr_close` 不需要。
+  approval，并在 approval 与 merge 前从 base 校验 `contract/operations.json`；
+  `pr_close` 不需要 approval，但 broker 校验分支归属（作者本人或
+  operator/admin）。
 
 ---
 

@@ -13,12 +13,20 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CORE = path.resolve(__dirname, "..", "core.mjs");
-const { BrokerCore, BrokerRefused, safeEqual, parseRepoPolicy, validateRepoPolicy } = await import(
-  pathToFileURL(CORE).href
-);
+const {
+  BrokerCore,
+  BrokerRefused,
+  safeEqual,
+  parseRepoPolicy,
+  validateRepoPolicy,
+  extractCommands,
+  evaluateMergeContract,
+} = await import(pathToFileURL(CORE).href);
 
 let pass = 0;
 let fail = 0;
@@ -639,18 +647,28 @@ const BASE_SHA = "a".repeat(40);
  * contents API, and the pulls API; every call is recorded so idempotency
  * can be asserted by call count.
  */
-function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {}) {
+function fakeWriteGithub({
+  head = BASE_SHA,
+  openPr = true,
+  draft = false,
+  contract = null,
+  headContract = null,
+  commitMessage = "",
+} = {}) {
   const calls = [];
   const state = {
     head,
     openPr,
     merged: false,
+    contract,
+    headContract,
+    commitMessage,
     pr: {
       number: 11,
       state: "open",
       draft,
       head: { ref: "content/feat", sha: head },
-      base: { ref: "main" },
+      base: { ref: "main", sha: BASE_SHA },
       mergeable_state: "clean",
     },
   };
@@ -695,6 +713,18 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
       if (path === "src/a.txt") {
         return json({ type: "file", encoding: "base64", content: Buffer.from("hello world").toString("base64") });
       }
+      if (path === "contract/operations.json") {
+        const ref = new URL(u).searchParams.get("ref");
+        const content =
+          ref === state.head && state.headContract !== null ? state.headContract : state.contract;
+        if (content === null) return json({ message: "Not Found" }, 404);
+        return json({
+          type: "file",
+          encoding: "base64",
+          sha: `contract-${ref}`,
+          content: Buffer.from(content).toString("base64"),
+        });
+      }
       return json({ message: "Not Found" }, 404);
     }
     if (method === "POST" && p === "/git/blobs") return json({ sha: "b1" });
@@ -710,6 +740,9 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
       return json({ ...state.pr, html_url: "https://github.com/mmw-devs/ffxiv-race-ops/pull/11" }, 201);
     }
     if (method === "GET" && p === "/pulls/11") return json(state.pr);
+    if (method === "GET" && p.startsWith("/pulls/11/commits")) {
+      return json([{ commit: { message: state.commitMessage } }]);
+    }
     if (method === "GET" && /^\/pulls\/\d+$/.test(p)) return json({ message: "Not Found" }, 404);
     if (method === "PATCH" && p === "/pulls/11") {
       const patch = typeof init.body === "string" ? JSON.parse(init.body) : (init.body ?? {});
@@ -727,8 +760,14 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
 }
 
 function makeWriteCore(overrides = {}) {
-  const gh = fakeWriteGithub();
+  const gh = fakeWriteGithub({
+    ...(overrides.head ? { head: overrides.head } : {}),
+    contract: overrides.contract ?? null,
+    headContract: overrides.headContract ?? null,
+    commitMessage: overrides.commitMessage ?? "",
+  });
   const auth = fakeAuthService({
+    name: overrides.authName ?? "张三",
     operations: overrides.operations ?? [
       "race-ops.repo_read",
       "race-ops.repo_edit",
@@ -1042,6 +1081,114 @@ console.log("\n--- write proxy: pr_merge approval ---");
   const approval = await core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" });
   truthy(approval.approval_id, "a draft PR can be approved");
   eq(gh.state.pr.draft, false, "approval marks the draft ready");
+}
+
+console.log("\n--- write proxy: contract gate ---");
+const CONTRACT = JSON.stringify({
+  levels: {
+    L1: { agentMerge: false },
+    L2: { agentMerge: true },
+  },
+  domains: [{ commands: [{ id: "cmd.l1", level: "L1" }, { id: "cmd.l2", level: "L2" }] }],
+});
+const opLog = (command) => `\`\`\`json\n${JSON.stringify({ command })}\n\`\`\``;
+{
+  const { core } = makeWriteCore({
+    contract: CONTRACT,
+    headContract: CONTRACT,
+    commitMessage: opLog("cmd.l1"),
+  });
+  await rejectsWith(
+    () => core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" }),
+    "agent-merge-denied",
+    "an agentMerge:false command is refused at approval"
+  );
+}
+{
+  const { core } = makeWriteCore({
+    contract: CONTRACT,
+    headContract: CONTRACT,
+    commitMessage: opLog("cmd.l2"),
+  });
+  const approval = await core.approvePrMerge({
+    feishuToken: "fs",
+    pr_number: 11,
+    merge_method: "squash",
+  });
+  truthy(approval.approval_id, "an agentMerge:true command can be approved");
+}
+{
+  const { core } = makeWriteCore({
+    contract: CONTRACT,
+    headContract: CONTRACT.replace('"agentMerge":true', '"agentMerge":false'),
+    head: "b".repeat(40),
+    commitMessage: opLog("cmd.l2"),
+  });
+  await rejectsWith(
+    () => core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" }),
+    "contract-changed",
+    "a PR that changes the contract cannot merge itself"
+  );
+}
+{
+  const { core } = makeWriteCore({
+    contract: CONTRACT,
+    headContract: CONTRACT,
+    commitMessage: "no op-log here",
+  });
+  await rejectsWith(
+    () => core.approvePrMerge({ feishuToken: "fs", pr_number: 11, merge_method: "squash" }),
+    "agent-merge-denied",
+    "a PR without an op-log command is refused"
+  );
+}
+
+console.log("\n--- write proxy: close ownership ---");
+{
+  const dir = mkdtempSync(path.join(os.tmpdir(), "mmw-owners-"));
+  const ownershipFile = path.join(dir, "owners.json");
+  try {
+    const first = makeWriteCore({ ownershipFile });
+    await first.core.writeRepoEdit({
+      feishuToken: "fs",
+      branch: "content/feat",
+      base_sha: BASE_SHA,
+      message: "edit",
+      edits: [{ path: "src/a.txt", mode: "replace", find: "hello", replace: "hi" }],
+    });
+    const same = await first.core.writePrClose({ feishuToken: "fs", pr_number: 11 });
+    truthy(same.closed, "the branch owner can close their own PR");
+    eq(same.already, false, "the first close actually closed the PR");
+
+    const other = makeWriteCore({
+      ownershipFile,
+      authName: "李四",
+      operations: ["race-ops.pr_close"],
+    });
+    await rejectsWith(
+      () => other.core.writePrClose({ feishuToken: "fs", pr_number: 11 }),
+      "pr-not-owned",
+      "another editor cannot close a PR they do not own"
+    );
+
+    const privileged = makeWriteCore({
+      ownershipFile,
+      authName: "李四",
+      operations: ["race-ops.pr_close", "race-ops.pr_merge"],
+    });
+    const allowed = await privileged.core.writePrClose({ feishuToken: "fs", pr_number: 11 });
+    truthy(allowed.closed, "an operator can close someone else's PR");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+{
+  const { core } = makeWriteCore({ operations: ["race-ops.pr_close"] });
+  await rejectsWith(
+    () => core.writePrClose({ feishuToken: "fs", pr_number: 11 }),
+    "pr-not-owned",
+    "without an ownership record only an operator may close"
+  );
 }
 
 console.log("\n--- repo registry: mint for a second repository ---");
