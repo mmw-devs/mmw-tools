@@ -42,6 +42,9 @@
 
 ### Changed
 
+- **The GitHub App is now `mmw-tools-app`** (renamed from `race-ops-tool`).
+  App ID, installation ID, Client ID, and private key are unchanged; only the
+  bot identity (`mmw-tools-app[bot]`) and the app URL change.
 - **Client installation tokens are now read-only for both GitHub and Feishu.**
   A write role no longer receives `contents: write` / `pull_requests: write`;
   all writes go through `/v1/write/*`.
