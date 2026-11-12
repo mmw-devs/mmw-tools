@@ -656,10 +656,14 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
     const u = String(url);
     const method = init.method ?? "GET";
     calls.push({ url: u, method, init });
-    const p = new URL(u).pathname.replace("/repos/mmw-devs/ffxiv-race-ops", "");
+    const pathname = new URL(u).pathname;
+    const repoMatch = /^\/repos\/[^/]+\/[^/]+(\/.*)$/.exec(pathname);
+    const p = repoMatch ? repoMatch[1] : pathname;
     if (method === "GET" && p.startsWith("/git/ref/heads/")) {
       const ref = decodeURIComponent(p.slice("/git/ref/heads/".length));
-      if (ref === "content/feat" || ref === "main") return json({ object: { sha: state.head } });
+      if (ref === "content/feat" || ref === "main" || ref === "master") {
+        return json({ object: { sha: state.head } });
+      }
       return json({ message: "Not Found" }, 404);
     }
     if (method === "GET" && p.startsWith("/git/commits/")) {
@@ -1052,6 +1056,44 @@ console.log("\n--- repo registry: mint for a second repository ---");
     () => core.issueInstallationToken(res.sessionToken, "mmw-devs/not-configured"),
     "repo-denied",
     "an unknown repository is refused instead of falling back"
+  );
+}
+
+console.log("\n--- write proxy: repository selection ---");
+{
+  const { core, gh } = makeWriteCore({
+    repos: [{ owner: "mmw-devs", name: "xivstrat-relay", baseBranch: "master" }],
+  });
+  const res = await core.writeRepoEdit({
+    feishuToken: "fs",
+    repo: "mmw-devs/xivstrat-relay",
+    branch: "content/new",
+    base_sha: BASE_SHA,
+    message: "m",
+    edits: [{ path: "src/a.txt", mode: "insert", content: "x" }],
+  });
+  truthy(res.new_commit_sha, "a write to the second repository succeeds");
+  truthy(
+    gh.calls.some((c) => c.url.includes("/repos/mmw-devs/xivstrat-relay/git/")),
+    "the GitHub calls are scoped to the selected repository"
+  );
+  truthy(
+    gh.calls.some((c) => c.url.includes("/repos/mmw-devs/xivstrat-relay/git/ref/heads/master")),
+    "the second repository uses its own base branch (master)"
+  );
+
+  await rejectsWith(
+    () =>
+      core.writeRepoEdit({
+        feishuToken: "fs",
+        repo: "mmw-devs/not-configured",
+        branch: "content/feat",
+        base_sha: BASE_SHA,
+        message: "m",
+        edits: [{ path: "src/a.txt", mode: "insert", content: "x" }],
+      }),
+    "repo-denied",
+    "a write to an unknown repository is refused"
   );
 }
 

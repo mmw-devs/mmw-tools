@@ -670,6 +670,11 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 客户端不再持有 GitHub write token。`repo_edit`、`pr_create`、`pr_close`、
 `pr_merge` 由 broker 用内存里的 write token 代执行，broker 是唯一能写仓库的进程。
 
+所有写请求都可带可选的 `repo: "owner/name"`，从 `BROKER_REPOS` 注册表里选择
+目标仓库；省略时使用默认仓库。未注册的仓库返回 `403 repo-denied`，不会回退到
+默认仓库。分支前缀、base 分支、路径允许/拒绝名单与 write token 都按所选仓库
+解析。
+
 ### 端点
 
 | 方法与路径 | operation | 说明 |
@@ -691,7 +696,8 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 - `BROKER_WRITE_ENABLED` 不是 `true` 时所有 `/v1/write/*` 返回
   `write-disabled`（503）。没有凭据返回 `write-credential-required`（401）。
 - write token 由 broker 以 `contents: write` + `pull_requests: write` mint，
-  缓存 60 秒；它只存在于 broker 内存，响应里不出现。
+  缓存 60 秒；它只存在于 broker 内存，响应里不出现。缓存按目标仓库区分，
+  铸出的 token 只覆盖该仓库。
 
 ### `repo_edit`
 
@@ -721,30 +727,31 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 ### `pr_create`
 
-请求 `{head, base, title, body, draft}`。`head` 必须已存在且以分支前缀开头；
-`base` 必须等于 `BROKER_BASE_BRANCH`；`draft` 默认 `true`。broker 先查同 head
-的 open PR，有则复用，没有才创建。成功返回 `{number, url, head_sha, draft}`。
+请求 `{head, base, title, body, draft}`。`head` 必须已存在且以所选仓库的分支
+前缀开头；`base` 必须等于所选仓库的 base 分支；`draft` 默认 `true`。broker
+先查同 head 的 open PR，有则复用，没有才创建。成功返回
+`{number, url, head_sha, draft}`。
 
 ### `pr_close`
 
 请求 `{pr_number}`。broker 先 `GET /pulls/{n}`：不存在返回 `pr-not-found`（404）；
 已经不是 open（包括已合并）时直接返回 `{closed: true, already: true, merged}`，
-不重复调用 GitHub。只有 head 以 `BROKER_BRANCH_PREFIX` 开头、base 等于
-`BROKER_BASE_BRANCH` 的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
+不重复调用 GitHub。只有 head 以所选仓库的分支前缀开头、base 等于该仓库的
+base 分支的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
 不会删除分支；成功返回 `{number, closed: true, already: false, head_sha, url}`。
 宿主在执行前仍会弹出一次确认。
 
 ### `pr_merge`
 
-1. `POST /v1/write/pr_merge/approval` 传 `{pr_number, merge_method,
+1. `POST /v1/write/pr_merge/approval` 传 `{repo?, pr_number, merge_method,
    commit_title}`。broker 读 PR，校验 open、base、分支前缀；draft 先
    `PATCH draft:false`；`mergeable_state` 必须为 `clean`（`unknown` 最多轮询
-   5 次 × 2 秒）。通过后生成 32 字节 `approval_id`，绑定 member、PR、head SHA、
-   method 与 title，5 分钟过期，仅一次有效。
-2. 宿主向用户确认后，`POST /v1/write/pr_merge` 传 `{approval_id, pr_number,
-   head_sha, merge_method, commit_title}`。broker 校验 approval 未过期、成员与
-   PR 一致；重新读 PR，head SHA 必须仍等于 approval 里的值（否则
-   `approval-stale`）；最后 `PUT /pulls/{n}/merge`。
+   5 次 × 2 秒）。通过后生成 32 字节 `approval_id`，绑定 member、仓库、PR、
+   head SHA、method 与 title，5 分钟过期，仅一次有效。
+2. 宿主向用户确认后，`POST /v1/write/pr_merge` 传 `{repo?, approval_id,
+   pr_number, head_sha, merge_method, commit_title}`。broker 校验 approval
+   未过期、成员、仓库与 PR 一致；重新读 PR，head SHA 必须仍等于 approval 里
+   的值（否则 `approval-stale`）；最后 `PUT /pulls/{n}/merge`。
 3. approval 在发出 merge 请求前删除，重放不会二次合并。
 
 ### 幂等、审计与配置
