@@ -242,6 +242,11 @@ export function createAuthServer({ auth, config }) {
         return sendJson(res, 200, auth.routes(member));
       }
 
+      if (pathname === "/v1/agent/repos" && req.method === "GET") {
+        auth.verifyPluginToken(bearer(req));
+        return sendJson(res, 200, auth.agentRepos());
+      }
+
       if (pathname === "/v1/agent/events" && req.method === "POST") {
         const member = auth.verifyPluginToken(bearer(req));
         const body = await readJson(req);
@@ -277,6 +282,19 @@ export function createAuthServer({ auth, config }) {
         const current = auth.session(cookies(req).mmw_session);
         if (!current) throw new AppError(401, "mmw_auth_required", "请先登录");
         return sendJson(res, 200, auth.listMembers(current.member));
+      }
+
+      if (pathname === "/api/admin/repos" && req.method === "GET") {
+        const current = auth.session(cookies(req).mmw_session);
+        if (!current) throw new AppError(401, "mmw_auth_required", "请先登录");
+        return sendJson(res, 200, auth.listRepos(current.member));
+      }
+
+      if (pathname === "/api/admin/repos" && req.method === "PUT") {
+        const current = auth.session(cookies(req).mmw_session);
+        if (!current) throw new AppError(401, "mmw_auth_required", "请先登录");
+        requireCsrf(req, current.session, config);
+        return sendJson(res, 200, auth.upsertRepo(current.member, await readJson(req)));
       }
 
       const memberPath = /^\/api\/admin\/members\/([A-Za-z0-9_-]{1,128})$/.exec(pathname);

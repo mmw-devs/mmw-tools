@@ -23,6 +23,57 @@ function safeEqual(a, b) {
 
 const memberId = (tenant, openId) => sha256(`${tenant}:${openId}`);
 const iso = (ms) => new Date(ms).toISOString();
+const REPO_PART = /^[A-Za-z0-9_.-]{1,100}$/;
+const BRANCH = /^[A-Za-z0-9._/-]{1,200}$/;
+
+function repoText(value, field, { max = 200 } = {}) {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > max) {
+    throw new AppError(400, "mmw_repo_invalid", `${field} 无效`);
+  }
+  if (/[\u0000-\u001f]/.test(value)) {
+    throw new AppError(400, "mmw_repo_invalid", `${field} 含控制字符`);
+  }
+  return value.trim();
+}
+
+function repoPathList(value, field) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new AppError(400, "mmw_repo_invalid", `${field} 必须是路径数组`);
+  }
+  return value.map((item) => repoText(item, field, { max: 500 }));
+}
+
+function repoFields(input) {
+  if (!input || typeof input !== "object") {
+    throw new AppError(400, "mmw_repo_invalid", "仓库参数无效");
+  }
+  const owner = repoText(input.owner, "owner", { max: 100 });
+  const name = repoText(input.name, "name", { max: 100 });
+  if (!REPO_PART.test(owner) || !REPO_PART.test(name)) {
+    throw new AppError(400, "mmw_repo_invalid", "owner/name 只能包含字母、数字、点、下划线和短横线");
+  }
+  const baseBranch = repoText(input.baseBranch ?? "main", "baseBranch");
+  if (!BRANCH.test(baseBranch) || baseBranch.includes("..")) {
+    throw new AppError(400, "mmw_repo_invalid", "baseBranch 无效");
+  }
+  const branchPrefix = repoText(input.branchPrefix ?? "content/", "branchPrefix");
+  if (!BRANCH.test(branchPrefix) || branchPrefix.includes("..") || !branchPrefix.endsWith("/")) {
+    throw new AppError(400, "mmw_repo_invalid", "branchPrefix 必须以 / 结尾");
+  }
+  if (typeof (input.enabled ?? true) !== "boolean") {
+    throw new AppError(400, "mmw_repo_invalid", "enabled 必须是布尔值");
+  }
+  return {
+    key: `${owner.toLowerCase()}/${name.toLowerCase()}`,
+    owner: owner.toLowerCase(),
+    name: name.toLowerCase(),
+    baseBranch,
+    branchPrefix,
+    allowlistPaths: repoPathList(input.allowlistPaths ?? [], "allowlistPaths"),
+    denylistPaths: repoPathList(input.denylistPaths ?? [], "denylistPaths"),
+    enabled: input.enabled ?? true,
+  };
+}
 
 /**
  * Feishu identity, member/role management, plugin tokens, and the route table.
@@ -384,6 +435,93 @@ export class Auth {
   listRoles(actor) {
     this.requireAdmin(actor);
     return this.policy.roleList();
+  }
+
+  /* ---------------- repo registry ---------------- */
+
+  repoView(repo, defaultKey) {
+    return {
+      key: repo.key,
+      owner: repo.owner,
+      name: repo.name,
+      baseBranch: repo.baseBranch,
+      branchPrefix: repo.branchPrefix,
+      allowlistPaths: [...repo.allowlistPaths],
+      denylistPaths: [...repo.denylistPaths],
+      enabled: repo.enabled,
+      isDefault: repo.key === defaultKey,
+    };
+  }
+
+  listRepos(actor) {
+    this.requireAdmin(actor);
+    const defaultKey = this.store.getConfig("defaultRepo");
+    return {
+      defaultRepo: defaultKey ?? null,
+      policyRevision: this.policyRevision(),
+      repos: this.store.allRepos().map((repo) => this.repoView(repo, defaultKey)),
+    };
+  }
+
+  /** Enabled repositories for a logged-in plugin. No admin required. */
+  agentRepos() {
+    const defaultKey = this.store.getConfig("defaultRepo");
+    return {
+      defaultRepo: defaultKey ?? null,
+      policyRevision: this.policyRevision(),
+      repos: this.store
+        .allRepos()
+        .filter((repo) => repo.enabled)
+        .map((repo) => this.repoView(repo, defaultKey)),
+    };
+  }
+
+  upsertRepo(actor, input) {
+    this.requireAdmin(actor);
+    const fields = repoFields(input);
+    const updated = this.store.transaction(() => {
+      const existing = this.store.getRepo(fields.key);
+      const at = iso(this.now());
+      const next = {
+        ...fields,
+        createdAt: existing?.createdAt ?? at,
+        updatedAt: at,
+      };
+      this.store.putRepo(next);
+
+      const defaultKey = this.store.getConfig("defaultRepo");
+      const stillEnabled = defaultKey ? this.store.getRepo(defaultKey)?.enabled === true : false;
+      if (next.enabled && (!defaultKey || !stillEnabled)) {
+        this.store.setConfig("defaultRepo", next.key);
+      } else if (!next.enabled && defaultKey === next.key) {
+        const replacement = this.store.allRepos().find((repo) => repo.enabled);
+        if (replacement) this.store.setConfig("defaultRepo", replacement.key);
+        else this.store.deleteConfig("defaultRepo");
+      }
+
+      const revision = this.store.incrementPolicyRevision();
+      this.store.appendAudit(actor.id, "repo-upsert", next.key, {
+        before: existing
+          ? {
+              baseBranch: existing.baseBranch,
+              branchPrefix: existing.branchPrefix,
+              allowlistPaths: existing.allowlistPaths,
+              denylistPaths: existing.denylistPaths,
+              enabled: existing.enabled,
+            }
+          : null,
+        after: {
+          baseBranch: next.baseBranch,
+          branchPrefix: next.branchPrefix,
+          allowlistPaths: next.allowlistPaths,
+          denylistPaths: next.denylistPaths,
+          enabled: next.enabled,
+        },
+        revision,
+      });
+      return next;
+    });
+    return this.repoView(updated, this.store.getConfig("defaultRepo"));
   }
 
   updateMember(actor, id, input) {

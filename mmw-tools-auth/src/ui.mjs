@@ -32,6 +32,23 @@ export const html = `<!doctype html>
       <h2>成员与角色</h2>
       <p class="muted">角色只是权限包；“直授权限”用于临时例外。停用会立即撤销该成员的全部插件 token。</p>
       <div id="member-list"></div>
+
+      <h2>仓库注册表</h2>
+      <p class="muted">这里登记允许操作的仓库。插件启动时读取这张表；未登记的仓库会被拒绝。</p>
+      <div id="repo-list"></div>
+      <details>
+        <summary>新增或更新仓库</summary>
+        <div class="repo-form">
+          <input id="repo-owner" type="text" placeholder="owner">
+          <input id="repo-name" type="text" placeholder="repo">
+          <input id="repo-base" type="text" placeholder="baseBranch，例如 main">
+          <input id="repo-prefix" type="text" placeholder="branchPrefix，例如 content/">
+          <input id="repo-allow" type="text" placeholder="allowlist，逗号分隔">
+          <input id="repo-deny" type="text" placeholder="denylist，逗号分隔">
+          <button id="repo-save" type="button">保存仓库</button>
+        </div>
+      </details>
+
       <details>
         <summary>最近操作</summary>
         <div id="audit"></div>
@@ -56,6 +73,11 @@ button.secondary{background:#e9eef1;color:#23323d}button:disabled{opacity:.55;cu
 .member label{display:inline-flex;align-items:center;gap:4px;margin-right:8px}
 .member input[type=text]{min-width:240px;padding:7px;border:1px solid #b7c6cf;border-radius:6px;font:inherit}
 .member input[type=checkbox]{width:auto}
+.repo-row{border-top:1px solid #e3e8ec;padding:14px 0;display:grid;grid-template-columns:1.2fr 1fr 1fr 2fr 2fr auto;gap:8px;align-items:center}
+.repo-row:first-child{border-top:0}.repo-row input[type=text]{width:100%;padding:7px;border:1px solid #b7c6cf;border-radius:6px;font:inherit}
+.repo-row .key{font-weight:600;overflow-wrap:anywhere}.repo-form{display:flex;flex-wrap:wrap;gap:8px;padding-top:8px}
+.repo-form input{min-width:180px;padding:7px;border:1px solid #b7c6cf;border-radius:6px;font:inherit}
+@media(max-width:900px){.repo-row{grid-template-columns:1fr 1fr}}
 #notice:not(:empty){background:#fff3cf;border:1px solid #e2c878;padding:12px;border-radius:8px;margin-bottom:16px}
 #audit p{margin:6px 0;color:#526671;font-size:14px}code{background:#f1f4f6;padding:1px 5px;border-radius:4px}
 footer{color:#647780;font-size:13px}
@@ -111,6 +133,7 @@ async function boot() {
   if (me.isAdmin) {
     const roles = await api("/api/admin/roles");
     await members(roles);
+    await repos();
     await audit();
   }
 }
@@ -181,6 +204,83 @@ async function members(roles) {
   }
 }
 
+async function repos() {
+  const data = await api("/api/admin/repos");
+  const box = $("repo-list");
+  box.replaceChildren();
+  for (const repo of data.repos) {
+    const row = document.createElement("div");
+    row.className = "repo-row";
+
+    const key = document.createElement("span");
+    key.className = "key";
+    key.textContent = repo.key + (repo.isDefault ? " · 默认" : "");
+    row.append(key);
+
+    const base = document.createElement("input");
+    base.type = "text";
+    base.value = repo.baseBranch;
+    base.title = "baseBranch";
+    const prefix = document.createElement("input");
+    prefix.type = "text";
+    prefix.value = repo.branchPrefix;
+    prefix.title = "branchPrefix";
+    const allow = document.createElement("input");
+    allow.type = "text";
+    allow.value = repo.allowlistPaths.join(", ");
+    allow.title = "allowlistPaths";
+    const deny = document.createElement("input");
+    deny.type = "text";
+    deny.value = repo.denylistPaths.join(", ");
+    deny.title = "denylistPaths";
+
+    const enabledLabel = document.createElement("label");
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = repo.enabled;
+    enabledLabel.append(enabled, document.createTextNode("启用"));
+
+    const save = document.createElement("button");
+    save.textContent = "保存";
+    save.onclick = async () => {
+      save.disabled = true;
+      try {
+        await api("/api/admin/repos", {
+          method: "PUT",
+          body: JSON.stringify({
+            owner: repo.owner,
+            name: repo.name,
+            baseBranch: base.value,
+            branchPrefix: prefix.value,
+            allowlistPaths: listOf(allow.value),
+            denylistPaths: listOf(deny.value),
+            enabled: enabled.checked,
+          }),
+        });
+        notice("已保存仓库：" + repo.key);
+        await repos();
+        await audit();
+      } catch (error) {
+        notice(error.message);
+      } finally {
+        save.disabled = false;
+      }
+    };
+
+    row.append(base, prefix, allow, deny, enabledLabel, save);
+    box.append(row);
+  }
+  if (data.repos.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "还没有登记仓库。";
+    box.append(empty);
+  }
+}
+
+const listOf = (text) =>
+  text.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+
 async function audit() {
   const events = await api("/api/admin/audit");
   const box = $("audit");
@@ -191,6 +291,35 @@ async function audit() {
     box.append(row);
   }
 }
+
+$("repo-save").onclick = async () => {
+  const button = $("repo-save");
+  button.disabled = true;
+  try {
+    await api("/api/admin/repos", {
+      method: "PUT",
+      body: JSON.stringify({
+        owner: $("repo-owner").value,
+        name: $("repo-name").value,
+        baseBranch: $("repo-base").value || "main",
+        branchPrefix: $("repo-prefix").value || "content/",
+        allowlistPaths: listOf($("repo-allow").value),
+        denylistPaths: listOf($("repo-deny").value),
+        enabled: true,
+      }),
+    });
+    for (const id of ["repo-owner", "repo-name", "repo-base", "repo-prefix", "repo-allow", "repo-deny"]) {
+      $(id).value = "";
+    }
+    notice("仓库已保存");
+    await repos();
+    await audit();
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 
 boot().catch((error) => notice(error.message));
 `;

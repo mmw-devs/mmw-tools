@@ -92,6 +92,19 @@ export class Store {
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS repos (
+        key             TEXT PRIMARY KEY,
+        owner           TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        base_branch     TEXT NOT NULL,
+        branch_prefix   TEXT NOT NULL,
+        allowlist_paths TEXT NOT NULL,
+        denylist_paths  TEXT NOT NULL,
+        enabled         INTEGER NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
+      );
     `);
   }
 
@@ -296,6 +309,52 @@ export class Store {
       .run(key, String(value));
   }
 
+  /* ---------------- repos ---------------- */
+
+  getRepo(key) {
+    const row = this.db.prepare("SELECT * FROM repos WHERE key = ?").get(key);
+    return row ? repoFromRow(row) : undefined;
+  }
+
+  allRepos() {
+    return this.db.prepare("SELECT * FROM repos ORDER BY key COLLATE NOCASE").all().map(repoFromRow);
+  }
+
+  putRepo(repo) {
+    this.db
+      .prepare(
+        `INSERT INTO repos
+          (key, owner, name, base_branch, branch_prefix, allowlist_paths,
+           denylist_paths, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           owner=excluded.owner,
+           name=excluded.name,
+           base_branch=excluded.base_branch,
+           branch_prefix=excluded.branch_prefix,
+           allowlist_paths=excluded.allowlist_paths,
+           denylist_paths=excluded.denylist_paths,
+           enabled=excluded.enabled,
+           updated_at=excluded.updated_at`
+      )
+      .run(
+        repo.key,
+        repo.owner,
+        repo.name,
+        repo.baseBranch,
+        repo.branchPrefix,
+        JSON.stringify(repo.allowlistPaths ?? []),
+        JSON.stringify(repo.denylistPaths ?? []),
+        repo.enabled ? 1 : 0,
+        repo.createdAt,
+        repo.updatedAt
+      );
+  }
+
+  deleteConfig(key) {
+    this.db.prepare("DELETE FROM config WHERE key = ?").run(key);
+  }
+
   getPolicyRevision() {
     return Number(this.getConfig("policyRevision") ?? "1");
   }
@@ -357,8 +416,22 @@ function memberFromRow(row) {
   };
 }
 
-function loginTxFromRow(row) {
+function repoFromRow(row) {
   return {
+    key: row.key,
+    owner: row.owner,
+    name: row.name,
+    baseBranch: row.base_branch,
+    branchPrefix: row.branch_prefix,
+    allowlistPaths: parseJson(row.allowlist_paths, []),
+    denylistPaths: parseJson(row.denylist_paths, []),
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function loginTxFromRow(row) {  return {
     idHash: row.id_hash,
     pollSecretHash: row.poll_secret_hash,
     browserHash: row.browser_hash ?? undefined,
