@@ -16,9 +16,9 @@ node scripts/check-contracts.mjs --update
 ## Snapshot
 
 - Contract version: 2
-- Catalog revision: `sha256:ab3956985032576e567e571ed124d6468d559cb1d6e78418a1f32e7787f1a60e`
+- Catalog revision: `sha256:39629e0cc8e15e27a4f496f678dd7395b800033790fb911ccd23252d3cb92f0e`
 - Tools: 2
-- Operations: 12
+- Operations: 13
 - Roles: 4
 
 ## Roles
@@ -52,6 +52,7 @@ function the running auth core uses.
 | `race-ops` | `repo_search` | `mcp__mmw-tools__repo_search` | read | ✓ | ✓ | ✓ | ✓ |
 | `race-ops` | `repo_edit` | `mcp__mmw-tools__repo_edit` | write |  | ✓ | ✓ | ✓ |
 | `race-ops` | `pr_create` | `mcp__mmw-tools__pr_create` | write |  | ✓ | ✓ | ✓ |
+| `race-ops` | `pr_close` | `mcp__mmw-tools__pr_close` | write |  | ✓ | ✓ | ✓ |
 | `race-ops` | `pr_list` | `mcp__mmw-tools__pr_list` | read | ✓ | ✓ | ✓ | ✓ |
 | `race-ops` | `pr_preview` | `mcp__mmw-tools__pr_preview` | read | ✓ | ✓ | ✓ | ✓ |
 | `race-ops` | `pr_merge` | `mcp__mmw-tools__pr_merge` | write |  |  | ✓ | ✓ |

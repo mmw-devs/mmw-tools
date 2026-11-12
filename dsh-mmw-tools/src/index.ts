@@ -43,7 +43,7 @@ import {
   mcpServerEntryPath,
 } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd, type RepoBindingLike } from "./agents-md-check.js";
-import { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+import { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
 import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { installWorkspaceGuard, type UnavailablePolicy } from "./gate/workspace-guard.js";
@@ -260,7 +260,11 @@ function extendedEnv(): Record<string, string> {
 // Exported for tests: this is the seam that was broken (the child received
 // no binding at all), so it is asserted directly rather than only through a
 // real spawn, which not every sandbox permits.
-export function mcpBindingEnv(binding: NormalizedBinding, workingDir: string): Record<string, string> {
+export function mcpBindingEnv(
+  binding: NormalizedBinding,
+  workingDir: string,
+  brokerUrl = ""
+): Record<string, string> {
   const env: Record<string, string> = {
     GHOST_WORKING_DIR: workingDir,
     GHOST_REPO_URL: `https://github.com/${binding.owner}/${binding.name}.git`,
@@ -273,7 +277,11 @@ export function mcpBindingEnv(binding: NormalizedBinding, workingDir: string): R
     GHOST_PREFLIGHT_CMD: binding.preflight.cmd,
     GHOST_PREFLIGHT_TIMEOUT: String(binding.preflight.timeoutSeconds),
     GHOST_TOKEN_FILE: installationTokenPath(),
+    // The child reads this per call. It carries the identity credential for
+    // broker-proxied writes, not a GitHub installation token.
+    MMW_WRITE_AUTH_FILE: writeAuthPath(),
   };
+  if (brokerUrl) env.MMW_BROKER_URL = brokerUrl;
   if (binding.bootstrap.cmd.length > 0) {
     env.GHOST_BOOTSTRAP_CMD = binding.bootstrap.cmd;
     env.GHOST_BOOTSTRAP_WHEN_MISSING = binding.bootstrap.whenMissing;
@@ -381,6 +389,7 @@ const STATUS_OUTPUT_SCHEMA = {
       properties: {
         status: { type: "string" as const, required: true as const },
         configured: { type: "boolean" as const, required: true as const },
+        mode: { type: "string" as const },
         login: { type: "string" as const },
         scope: { type: "string" as const },
         accessTokenMasked: { type: "string" as const },
@@ -422,7 +431,9 @@ function formatExpiry(timestampMs: number): string {
   const minutes = Math.floor(remaining / 60000);
   if (minutes < 60) return `约 ${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
-  return `约 ${hours} 小时 ${minutes - hours * 60} 分钟`;
+  if (hours < 24) return `约 ${hours} 小时 ${minutes - hours * 60} 分钟`;
+  const days = Math.floor(hours / 24);
+  return `约 ${days} 天 ${hours - days * 24} 小时`;
 }
 
 function makeStatusTool(deps: {
@@ -445,6 +456,10 @@ function makeStatusTool(deps: {
     },
     async execute() {
       const brokerLine = deps.brokerUrl;
+      // Mint/refresh the repository credential before reading the view: a
+      // Feishu login only becomes visible through the issued token, so a
+      // view-first order would report the stale GitHub session instead.
+      await deps.flow.repoAccess();
       const view = await deps.store.view();
       const status = await deps.flow.resolvedStatus();
 
@@ -458,16 +473,31 @@ function makeStatusTool(deps: {
 
       const authLines: string[] = [`Auth 状态: ${status}`];
       if (status === "authorized") {
+        authLines.push(
+          view.mode === "feishu" ? "登录方式: 飞书（无需 GitHub 账号）" : "登录方式: GitHub"
+        );
         authLines.push(`登录身份: ${view.login || "(unknown)"}`);
-        authLines.push(`会话剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
-        authLines.push("仓库写入使用 broker 签发的 1 小时 App 令牌");
+        authLines.push(
+          `${view.mode === "feishu" ? "仓库令牌剩余" : "会话剩余"}: ${formatExpiry(view.accessTokenExpiresAt)}`
+        );
+        if (view.mode === "feishu") {
+          authLines.push("飞书授权剩余: 见面板「飞书授权」一栏（默认 7 天）");
+        }
+        authLines.push("仓库写入由 broker 按 operation 代理；客户端 token 只读");
       } else if (status === "reauth_needed") {
-        authLines.push("⚠️ 会话已过期 — 请在面板里点「登录 GitHub」重新登录");
+        authLines.push("⚠️ 会话已过期 — 请在面板里重新登录（飞书或 GitHub）");
       } else if (status === "device_pending") {
         authLines.push("等待浏览器完成授权 — 面板会自动继续，无需操作");
       } else {
-        authLines.push("未登录 — 请在面板里点「登录 GitHub」");
+        authLines.push("未登录 — 请先在面板完成飞书登录；GitHub 登录也可用");
       }
+
+      const nextStep =
+        status === "authorized"
+          ? "可直接使用仓库工具；写操作会走 broker 代理。"
+          : status === "device_pending"
+          ? "等待浏览器完成授权 — 面板会自动继续，无需操作。"
+          : "请用户在面板完成飞书登录（有 GitHub 账号也可用 GitHub 登录；agent 不参与登录）。";
 
       return {
         ok: true,
@@ -479,7 +509,7 @@ function makeStatusTool(deps: {
           `MCP server entry: ${pathToConnect}\n` +
           `\n--- Auth ---\n${authLines.join("\n")}\n` +
           `\n--- AGENTS.md ---\n${driftLine}\n` +
-          `\n下一步：请用户在面板里完成 GitHub 登录（agent 不参与登录）。`,
+          `\n下一步：${nextStep}`,
         pluginId: PLUGIN_ID,
         repoOwner: String(deps.repo.owner ?? ""),
         repoName: String(deps.repo.name ?? ""),
@@ -488,6 +518,7 @@ function makeStatusTool(deps: {
         auth: {
           status,
           configured: view.configured,
+          mode: view.mode,
           login: view.login,
           scope: view.scope,
           accessTokenMasked: view.accessTokenMasked,
@@ -899,17 +930,23 @@ export function apply(
   // One implementation: BrokerAuth replaces both the token store and the
   // Device Flow state machine. It is handed to the routes twice because
   // that surface still names the two halves `store` and `flow`.
+  //
+  // FeishuAuth comes first: BrokerAuth prefers a Feishu credential, which
+  // is what lets a member with no GitHub account get a repository token.
+  // The GitHub session stays as the fallback path.
+  const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
   const auth = new BrokerAuth({
     brokerUrl,
     installationTokenFile: installationTokenPath(),
+    writeAuthFile: writeAuthPath(),
     // The broker decides which repository a token writes to; this plugin
     // decides which repository it edits. Passing the binding here lets the
     // two be compared instead of failing later as a bare 403.
     repository: `${binding.owner}/${binding.name}`,
+    feishu,
   });
   const store = auth;
   const flow = auth;
-  const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
   const gate = new PolicyGate({
     auth: feishu,
     enabled: feishuEnabled,
@@ -1188,7 +1225,7 @@ export function apply(
         const transport = new StdioClientTransport({
           command: process.execPath,
           args: [pathToConnect],
-          env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir) },
+          env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir, brokerUrl) },
         });
         await client.connect(transport);
         const { tools } = await client.request(
@@ -1288,6 +1325,6 @@ export const inject = CORDIS_INJECT;
 // (The MCP child process imports from this same bundle via the lib
 //  entry — see NEXT-STEPS.md "Settings web panel".)
 export { mcpServerEntryPath } from "./const.js";
-export { BrokerAuth, installationTokenPath } from "./auth/broker-auth.js";
+export { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
 export { SessionStore } from "./auth/session-store.js";
 export { makeRoutes, API } from "./routes.js";

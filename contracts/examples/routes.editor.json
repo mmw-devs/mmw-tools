@@ -1,6 +1,6 @@
 {
   "contractVersion": 2,
-  "catalogRevision": "sha256:ab3956985032576e567e571ed124d6468d559cb1d6e78418a1f32e7787f1a60e",
+  "catalogRevision": "sha256:39629e0cc8e15e27a4f496f678dd7395b800033790fb911ccd23252d3cb92f0e",
   "policyRevision": 42,
   "ttlSeconds": 60,
   "allowed": [
@@ -9,6 +9,7 @@
   ],
   "allowedOperations": [
     "mmw-tools-status.status",
+    "race-ops.pr_close",
     "race-ops.pr_create",
     "race-ops.pr_list",
     "race-ops.pr_preview",

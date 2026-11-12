@@ -49,11 +49,14 @@ function mmss(totalSeconds) {
   return `${m}:${String(rest).padStart(2, "0")}`;
 }
 
-function hoursMinutes(totalSeconds) {
+function formatRemaining(totalSeconds) {
   const secs = Math.max(0, Math.floor(totalSeconds));
-  const h = Math.floor(secs / 3600);
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
   const m = Math.floor((secs % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分钟`;
+  return `${m} 分钟`;
 }
 
 /** The one-line state sentence for each of the four phases (contract §6). */
@@ -62,7 +65,9 @@ function stateLine(view) {
     case "authorizing":
       return `等待浏览器授权 · 剩余 ${mmss(view.session.secondsRemaining)}`;
     case "signed_in":
-      return `已登录 · ${view.session.login} · 会话剩余 ${hoursMinutes(view.session.secondsRemaining)}`;
+      return view.mode === "feishu"
+        ? `已登录（飞书）· ${view.session.login || "飞书成员"} · 仓库令牌剩余 ${formatRemaining(view.session.secondsRemaining)}`
+        : `已登录 · ${view.session.login} · 会话剩余 ${formatRemaining(view.session.secondsRemaining)}`;
     case "expired":
       return "会话已过期，请重新登录";
     default:
@@ -182,7 +187,7 @@ function buildPanel(runtime) {
       actions.push(
         _jsx(
           "button",
-          { type: "button", style: btnPrimary, disabled: busy, onClick: signIn, children: "登录 GitHub" },
+          { type: "button", style: btnPrimary, disabled: busy, onClick: signIn, children: "登录 GitHub（可选）" },
           "in"
         )
       );
@@ -191,7 +196,9 @@ function buildPanel(runtime) {
         _jsx("button", { type: "button", style: btn, disabled: busy, onClick: cancel, children: "取消" }, "cancel")
       );
     } else if (view.phase === "signed_in") {
-      if (view.repoAccess.state !== "ready") {
+      // A Feishu identity has no GitHub session to refresh or revoke here;
+      // its logout lives in the Feishu panel.
+      if (view.mode !== "feishu" && view.repoAccess.state !== "ready") {
         actions.push(
           _jsx(
             "button",
@@ -200,9 +207,11 @@ function buildPanel(runtime) {
           )
         );
       }
-      actions.push(
-        _jsx("button", { type: "button", style: btn, disabled: busy, onClick: signOut, children: "退出登录" }, "out")
-      );
+      if (view.mode !== "feishu") {
+        actions.push(
+          _jsx("button", { type: "button", style: btn, disabled: busy, onClick: signOut, children: "退出登录" }, "out")
+        );
+      }
     }
 
     const children = [
@@ -213,6 +222,15 @@ function buildPanel(runtime) {
     if (view.phase === "authorizing") {
       children.push(
         _jsx("p", { style: s.dim, children: "请在浏览器完成授权，完成后会自动继续。" }, "hint")
+      );
+    }
+    if (view.phase === "signed_out" || view.phase === "expired") {
+      children.push(
+        _jsx(
+          "p",
+          { style: s.dim, children: "优先在下方「飞书授权」登录；GitHub 账号不是必需的。" },
+          "feishu-hint"
+        )
       );
     }
     if (view.phase === "signed_in") {
@@ -227,6 +245,15 @@ function buildPanel(runtime) {
           "repo"
         )
       );
+      if (view.mode === "feishu") {
+        children.push(
+          _jsx(
+            "p",
+            { style: s.dim, children: "当前使用飞书身份授权，不需要 GitHub 账号。" },
+            "feishu-mode"
+          )
+        );
+      }
     }
     if (msg) {
       children.push(_jsx("p", { style: msgKind === "error" ? s.error : s.dim, children: msg }, "msg"));
@@ -338,7 +365,7 @@ function buildFeishuPanel(runtime) {
         _jsx("p", { style: s.dim, children: `角色：${view.roles?.length ? view.roles.join(", ") : "(无)"}` }, "roles"),
         _jsx(
           "p",
-          { style: s.dim, children: `授权服务：${view.authServiceUrl} · 剩余 ${Math.ceil(view.secondsRemaining / 60)} 分钟` },
+          { style: s.dim, children: `授权服务：${view.authServiceUrl} · 剩余 ${formatRemaining(view.secondsRemaining)}` },
           "svc"
         )
       );

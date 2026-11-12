@@ -45,6 +45,7 @@ import {
   GithubRefusedError,
   LIMITS,
 } from "../guard.js";
+import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -91,6 +92,12 @@ export interface RepoEditConfig {
    * this, every commit is refused by its own pre-flight.
    */
   bootstrap?: { cmd: string; whenMissing: string; timeoutSeconds: number };
+  /** Set when the host wants writes proxied through the broker. */
+  brokerUrl?: string;
+  writeAuthFile?: string;
+  repoOwner?: string;
+  repoName?: string;
+  githubToken?: string | null;
 }
 
 /* ============================================================== */
@@ -160,6 +167,19 @@ export async function repoEdit(
   }
 
   // ---------- Step 5: ensure branch exists ----------
+  // Broker mode: the child holds only a read credential. Send the edits to
+  // the broker, which authorizes the member's operation and commits through
+  // GitHub's Git Data API. The legacy local path below stays for stand-alone
+  // use and for hosts that have not enabled the write proxy.
+  if (
+    brokerWriteEnabled({
+      brokerUrl: cfg.brokerUrl ?? "",
+      writeAuthFile: cfg.writeAuthFile ?? "",
+    })
+  ) {
+    return editThroughBroker(input, cfg, branch);
+  }
+
   await ensureBranch(cfg.workingDir, branch, cfg.baseBranch);
 
   // ---------- Step 5b: one-time prerequisites ----------
@@ -260,6 +280,89 @@ export async function repoEdit(
     files_changed: input.edits.map((e) => e.path),
     preflight: preflightResult,
     bootstrap: { ran: bootstrap.ran, exit_code: bootstrap.exitCode, stderr: bootstrap.stderr },
+  };
+}
+
+/* ============================================================== */
+/*  Broker-proxied edit                                           */
+/* ============================================================== */
+
+interface BrokerRepoEditResult {
+  branch?: unknown;
+  new_commit_sha?: unknown;
+  files_changed?: unknown;
+}
+
+/** Current head of `branch` on origin, or null when it does not exist. */
+async function resolveBranchHead(cfg: RepoEditConfig, branch: string): Promise<string | null> {
+  const owner = cfg.repoOwner ?? "";
+  const repo = cfg.repoName ?? "";
+  const token = cfg.githubToken ?? "";
+  if (!owner || !repo || !token) {
+    throw new GithubRefusedError(
+      "broker-read-credential-missing",
+      "broker 写模式需要只读仓库令牌来确认分支基点"
+    );
+  }
+  const ref = branch.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${ref}`,
+    {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "user-agent": "dsh-mmw-tools",
+      },
+    }
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new GithubRefusedError(
+      "branch-head-failed",
+      `读取 ${branch} 的 head 失败（HTTP ${response.status}）`
+    );
+  }
+  const data = (await response.json()) as { object?: { sha?: unknown } };
+  return typeof data.object?.sha === "string" ? data.object.sha : null;
+}
+
+async function editThroughBroker(
+  input: RepoEditInput,
+  cfg: RepoEditConfig,
+  branch: string
+): Promise<RepoEditOutput> {
+  const baseSha =
+    (await resolveBranchHead(cfg, branch)) ??
+    (await resolveBranchHead(cfg, cfg.baseBranch));
+  if (!baseSha) {
+    throw new GithubRefusedError(
+      "base-sha-unavailable",
+      `无法确定 ${branch} 或 ${cfg.baseBranch} 的当前提交`
+    );
+  }
+
+  const result = await brokerWrite<BrokerRepoEditResult>(
+    { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+    "/v1/write/repo_edit",
+    {
+      branch,
+      base_sha: baseSha,
+      message: input.commit_message,
+      edits: input.edits,
+    }
+  );
+
+  return {
+    branch: typeof result.branch === "string" ? result.branch : branch,
+    new_commit_sha:
+      typeof result.new_commit_sha === "string" ? result.new_commit_sha : "",
+    files_changed: Array.isArray(result.files_changed)
+      ? (result.files_changed as string[])
+      : input.edits.map((e) => e.path),
+    // The broker has no checkout to run a local preflight in. CI remains the
+    // authority; the response says so explicitly rather than faking a pass.
+    preflight: { ran: false, exit_code: 0, stdout: "", stderr: "" },
+    bootstrap: { ran: false, exit_code: 0, stderr: "" },
   };
 }
 

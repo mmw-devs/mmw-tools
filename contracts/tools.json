@@ -97,6 +97,17 @@
           ]
         },
         {
+          "id": "pr_close",
+          "publicName": "mcp__mmw-tools__pr_close",
+          "description": "关闭一个 content/* 分支的 PR（不合并）；宿主会在执行前确认。",
+          "risk": "write",
+          "roles": [
+            "editor",
+            "operator",
+            "admin"
+          ]
+        },
+        {
           "id": "pr_list",
           "publicName": "mcp__mmw-tools__pr_list",
           "description": "列出仓库里现有的 PR。",
@@ -123,7 +134,7 @@
         {
           "id": "pr_merge",
           "publicName": "mcp__mmw-tools__pr_merge",
-          "description": "合并 PR；必须由用户明确要求，宿主会在执行前确认。",
+          "description": "合并 PR；必须由用户明确要求，宿主会在执行前确认。若 PR 声明的 command 在契约中属于 agentMerge=false 的级别（如 L3），拒绝合并。",
           "risk": "write",
           "roles": [
             "operator",

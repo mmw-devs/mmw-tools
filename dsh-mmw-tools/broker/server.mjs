@@ -13,10 +13,13 @@
  */
 
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { BrokerCore, BrokerRefused } from "./core.mjs";
 
 const MAX_BODY_BYTES = 8 * 1024;
+/** Writes carry edits, not file content; 6 MiB leaves room for a large batch. */
+const MAX_WRITE_BODY_BYTES = 6 * 1024 * 1024;
 const SWEEP_MS = 60_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 60;
@@ -36,6 +39,30 @@ function envOrDie(name) {
   return String(v).trim();
 }
 
+function splitList(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Append-only audit log. Never receives a token or a request body. */
+function makeAudit(file) {
+  if (!file) return null;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+  } catch {
+    /* the first append will report if this fails */
+  }
+  return (event) => {
+    try {
+      appendFileSync(file, `${JSON.stringify(event)}\n`);
+    } catch {
+      /* auditing must never fail a write */
+    }
+  };
+}
+
 function loadConfig() {
   return {
     appId: envOrDie("GITHUB_APP_ID"),
@@ -49,6 +76,15 @@ function loadConfig() {
     allowMode: process.env.BROKER_ALLOW_MODE === "list" ? "list" : "org",
     allowList: (process.env.BROKER_ALLOWED_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     denyList: (process.env.BROKER_DENIED_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    // Optional. When present, a Feishu plugin token can mint a repository
+    // token without a GitHub login (docs/AUTH-BROKER.md).
+    authUrl: (process.env.MMW_TOOLS_AUTH_URL ?? "").trim().replace(/\/+$/, ""),
+    writeEnabled: process.env.BROKER_WRITE_ENABLED === "true",
+    allowlistPaths: splitList(process.env.BROKER_ALLOWLIST_PATHS),
+    denylistPaths: splitList(process.env.BROKER_DENYLIST_PATHS),
+    baseBranch: process.env.BROKER_BASE_BRANCH ?? "main",
+    branchPrefix: process.env.BROKER_BRANCH_PREFIX ?? "content/",
+    audit: makeAudit((process.env.BROKER_AUDIT_LOG ?? "").trim()),
     privateKeyPem: readFileSync(envOrDie("GITHUB_APP_PRIVATE_KEY_PATH"), "utf8"),
   };
 }
@@ -108,13 +144,13 @@ function sendHtml(res, status, text) {
   res.end(payload);
 }
 
-async function readBody(req) {
+async function readBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on("data", (c) => {
       size += c.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(new BrokerRefused("body-too-large", "request body too large", 413));
         req.destroy();
         return;
@@ -130,6 +166,12 @@ function bearer(req) {
   const header = req.headers.authorization ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
   return match ? match[1] : "";
+}
+
+function headerValue(req, name) {
+  const raw = req.headers[name];
+  if (Array.isArray(raw)) return raw[0] ?? "";
+  return typeof raw === "string" ? raw : "";
 }
 
 /* ---------------- server ---------------- */
@@ -266,10 +308,62 @@ export function createBrokerServer(core, opts = {}) {
       /* --- step 3: mint --- */
       if (pathname === "/installation-token" && req.method === "POST") {
         await readBody(req);
+        // A Feishu credential is explicit: when the header is present it is
+        // the only identity considered. This is the path for people without
+        // a GitHub account; the GitHub session path stays for everyone else.
+        const feishuHeader = req.headers["x-mmw-feishu-token"];
+        if (typeof feishuHeader === "string" && feishuHeader.length > 0) {
+          const issued = await core.issueInstallationTokenForFeishu(feishuHeader);
+          log("installation_token_issued", {
+            repository: issued.repository,
+            mode: "feishu",
+            scope: issued.scope,
+          });
+          sendJson(res, 200, issued);
+          return;
+        }
         const token = bearer(req);
         const issued = await core.issueInstallationToken(token);
-        log("installation_token_issued", { repository: issued.repository });
+        log("installation_token_issued", { repository: issued.repository, mode: "github" });
         sendJson(res, 200, issued);
+        return;
+      }
+
+      /* --- write proxy --- */
+      if (pathname.startsWith("/v1/write/") && req.method === "POST") {
+        const op = pathname.slice("/v1/write/".length);
+        const raw = await readBody(req, MAX_WRITE_BODY_BYTES);
+        let payload;
+        try {
+          payload = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw new BrokerRefused("bad-json", "request body must be JSON", 400);
+        }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+          throw new BrokerRefused("bad-json", "request body must be a JSON object", 400);
+        }
+        // Credentials come from headers only; a body field cannot spoof them.
+        const args = {
+          ...payload,
+          feishuToken: headerValue(req, "x-mmw-feishu-token"),
+          sessionToken: bearer(req),
+          requestId: headerValue(req, "x-request-id"),
+        };
+        let result;
+        if (op === "repo_edit") result = await core.writeRepoEdit(args);
+        else if (op === "pr_create") result = await core.writePrCreate(args);
+        else if (op === "pr_close") result = await core.writePrClose(args);
+        else if (op === "pr_merge/approval") result = await core.approvePrMerge(args);
+        else if (op === "pr_merge") result = await core.writePrMerge(args);
+        else throw new BrokerRefused("not-found", "no such write endpoint", 404);
+
+        log("write_ok", {
+          op,
+          ...(result?.number ? { pr: result.number } : {}),
+          ...(result?.new_commit_sha ? { commit: result.new_commit_sha } : {}),
+          ...(result?.approval_id ? { approval: true } : {}),
+        });
+        sendJson(res, 200, result);
         return;
       }
 

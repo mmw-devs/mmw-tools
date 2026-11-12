@@ -22,11 +22,11 @@ A **run id** is created when the gate is about to decide a call to an
    the decision that allowed it.
 3. **Into the local audit log** — the gate emits one `gate_decision` event per
    decision (`allow`, `deny` or `ask`), including the id, the public tool name and
-   a short reason. Arguments and results are never written. Since the O1.2
-   change, a denial reason starts with its stable code in brackets
-   (`[mmw_route_denied]`, `[mmw_policy_unavailable]`, and so on), so the audit log
-   can be grouped by code without parsing prose; see
-   [`contracts/ERRORS.md`](../contracts/ERRORS.md).
+   a short reason. Since the O1.2 change, a denial reason starts with its stable
+   code in brackets (`[mmw_route_denied]`, `[mmw_policy_unavailable]`, and so on),
+   so the audit log can be grouped by code without parsing prose; see
+   [`contracts/ERRORS.md`](../contracts/ERRORS.md). `ask` currently covers
+   `pr_merge` and `pr_close`. Arguments and results are never written.
 
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not
@@ -63,13 +63,24 @@ without parsing tool arguments.
 
 ## What is not covered yet
 
-- The broker (GitHub App session exchange, installation tokens) does not receive
-  the run id, so broker-side events cannot be joined to a gate decision. Adding
-  that means changing the broker protocol; it is not a logging change.
+- The broker (GitHub App session exchange, installation tokens, the Feishu
+  `/v1/me` + `/v1/agent/routes` checks, and the `/v1/write/*` proxy) does not
+  receive the run id, so broker-side events cannot be joined to a gate decision.
+  The write proxy appends its own JSONL audit with a broker-generated request id;
+  that id is a separate correlation key, not the gate's run id. Adding the run id
+  means changing the broker protocol; it is not a logging change.
 - The auth core records member and role changes in its own audit table, but not
   per-call route-table reads. Those are policy inputs, not execution events.
 - There is no sampling, no span tree, and no latency histogram. The gate records
   decisions, not durations.
+- The `pr_merge` operations-contract check runs inside the MCP server after the
+  gate has already decided the call. Its refusal is a tool error carrying the run
+  id (`contract-merge-forbidden`), not a second `gate_decision` event; the audit
+  log still shows only the decision that allowed the call.
+- Credential lifecycle is not a governed tool call and emits no `gate_decision`
+  event: `/installation-token`, the write-auth refresh, and the Feishu token
+  refresh are visible to the user through `mmw_tools_status` and the panel, not
+  through the audit log.
 - The local JSONL file is per plugin host. Two hosts do not share a trace store.
 
 ## If central storage becomes necessary

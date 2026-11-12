@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased — Feishu members can open and close PRs without a GitHub account, through a write proxy
+
+### Added
+
+- **`pr_merge` honours the repository's operations contract.** Before either the
+  broker or the local `gh` path, it reads `contract/operations.json` at the PR
+  head and refuses when any op-log `command` in the PR's commits belongs to a
+  level with `agentMerge: false` (L1/L3 in `race-ops`). Unknown commands, a
+  missing `command`, or a level without `agentMerge` also refuse. Repositories
+  without that file are unaffected.
+- **The broker accepts a Feishu plugin token as a second credential.** `POST
+  /installation-token` also reads `X-MMW-Feishu-Token`, verifies it with the
+  auth core (`/v1/me`, `/v1/agent/routes`), and returns a **read-only** client
+  token. The org/allowlist path is unchanged, and a GitHub account is no longer
+  required to clone, edit, open, or close a PR.
+- **The broker proxies writes.** `POST /v1/write/repo_edit`,
+  `/v1/write/pr_create`, `/v1/write/pr_close`, `/v1/write/pr_merge/approval`,
+  and `/v1/write/pr_merge` re-check the exact operation on every call and use a
+  write token that exists only in broker memory. `repo_edit` uses the Git Data
+  API and requires `base_sha` to equal the current head; `pr_create` reuses an
+  open PR for the same head; `pr_close` refuses non-`content/*` or wrong-base
+  PRs and reports `already: true` for closed/merged ones; `pr_merge` needs a
+  five-minute, single-use approval bound to the member, PR, and head SHA.
+- The broker reads `MMW_TOOLS_AUTH_URL`, `BROKER_WRITE_ENABLED`,
+  `BROKER_ALLOWLIST_PATHS`, `BROKER_DENYLIST_PATHS`, `BROKER_BASE_BRANCH`,
+  `BROKER_BRANCH_PREFIX`, and `BROKER_AUDIT_LOG`; `/health` reports
+  `feishuEnabled`, `writeEnabled`, `pendingApprovals`, and `idempotencyEntries`.
+- The plugin tries the Feishu credential first (`FeishuAuth.credential()`),
+  falls back to a GitHub session, and reports `mode: "github" | "feishu" |
+  "none"` in `/api/mmw-tools/status` and `mmw_tools_status`. The GitHub panel
+  labels its button `登录 GitHub（可选）` and renders no GitHub refresh/logout
+  controls in Feishu mode.
+- The plugin writes `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`) with the
+  Feishu pluginToken or GitHub sessionToken; `repo_edit`, `pr_create`,
+  `pr_close`, and `pr_merge` use it to call the broker. Without that file they
+  keep the local git/`gh` path.
+- **`pr_close` closes a PR without merging it.** It is a `write` operation for
+  `editor` / `operator` / `admin`; the host asks the user before it runs, and an
+  already closed or merged PR returns `already: true` instead of an error.
+
+### Changed
+
+- **Client installation tokens are now read-only for both GitHub and Feishu.**
+  A write role no longer receives `contents: write` / `pull_requests: write`;
+  all writes go through `/v1/write/*`.
+
+### Fixed
+
+- **A cached installation token left MCP on the old write credential after a
+  Feishu re-login.** The cache-hit path now re-reads the valid GitHub session
+  and `FeishuAuth.credential()` and rewrites `write-auth`, so the next
+  `repo_edit` / `pr_create` / `pr_merge` uses the current identity.
+- **`mmw_tools_status` reported the stale GitHub session in Feishu mode.** It
+  now mints the repository credential before reading the view, so the first
+  call after startup reports `mode: "feishu"` and the Feishu login.
+- **Expiry labels were ambiguous.** The Feishu panel shows `剩余 N 天 H 小时`
+  instead of a raw minute count, and the one-hour installation token is labelled
+  `仓库令牌剩余` rather than being confused with the 7-day Feishu authorization.
+
+### Security
+
+- The Feishu check is server-side and repeated for every write; a process that
+  calls the broker directly cannot skip the gate.
+- A write-scoped installation token is no longer sent to clients. The remaining
+  gap is local: a process that can read the `0600` write-auth file and send HTTP
+  can request the merge approval itself. Closing that needs a host-held merge
+  secret.
+
+### Tests
+
+- broker core/server tests cover read-only client tokens, write-disabled,
+  operation denial, `base_sha` mismatch, path allow/deny, idempotency,
+  approval expiry/staleness/replay, draft handling, and the HTTP write routes.
+- `broker-auth` covers Feishu-only minting, Feishu-over-GitHub preference,
+  fallback when the Feishu token is rejected, and no-credential behaviour.
+
 ## Unreleased — the plugin stopped owning the session's tool set
 
 ### Fixed

@@ -11,6 +11,13 @@
 > 配套文档：[`mmw-tools-routing-layer-plan.md`](mmw-tools-routing-layer-plan.md)
 > 范围：DSH 插件侧的授权执行状态机；飞书鉴权核心只作为输入事件出现。
 > 当前授权单位是 tool（`allowed` tool IDs）；`allowedOperations` 是 operation 级明细。角色只决定能否消费工具；`requiredPermissions` 是工具自身能力。
+> 2026-11-11 补记：`AUTHENTICATED` 现在也可以由飞书 pluginToken 直接进入——broker
+> 用该 token 调 auth core 路由表；客户端只拿只读 installation token，写操作在
+> 2026-11-12 起走 broker `/v1/write/*` 逐次校验，不需要 GitHub session；
+> 第 4 节的 `LOGIN_PENDING` 轮询仍只描述 GitHub 往返。
+> 2026-11-12 补记：状态投影（`mmw_tools_status` / 面板）必须先 mint 当前仓库令牌
+> 再读视图；installation token 缓存命中时也要重写 `write-auth`，否则重新登录后
+> 的写操作会继续沿用旧身份的凭据。
 
 ---
 
@@ -360,6 +367,9 @@ v2 的核心变化：
 - **读工具 grace**：核心不可达时，读工具在 grace 内可用旧表；超过 grace 拒绝。
 - **不杀在途**：撤销发生在调用中，让调用完成并记审计；新调用拒绝。
 - **工具始终可见**：拒绝不会删除工具；`mmw_status` 解释原因。
+- **写操作确认**：`pr_merge` 与 `pr_close` 在 `CHECK_POLICY` 通过后由宿主要求
+  确认；确认是 UI 门，不是状态机状态。`pr_merge` 还要求 broker 的一次性
+  approval，`pr_close` 不需要。
 
 ---
 

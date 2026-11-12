@@ -20,6 +20,7 @@ import { repoRead } from "./tools/repo-read.js";
 import { repoSearch } from "./tools/repo-search.js";
 import { repoEdit } from "./tools/repo-edit.js";
 import { prCreate } from "./tools/pr-create.js";
+import { prClose } from "./tools/pr-close.js";
 import { prList } from "./tools/pr-list.js";
 import { prMerge } from "./tools/pr-merge.js";
 import { prPreview } from "./tools/pr-preview.js";
@@ -73,6 +74,8 @@ function config() {
             timeoutSeconds: Number(process.env.GHOST_BOOTSTRAP_TIMEOUT ?? 300),
         },
         githubToken: readTokenFromStore() ?? process.env.GHOST_TOKEN ?? null,
+        brokerUrl: process.env.MMW_BROKER_URL ?? "",
+        writeAuthFile: process.env.MMW_WRITE_AUTH_FILE ?? "",
     };
 }
 const TOOLS = [
@@ -204,6 +207,22 @@ const TOOLS = [
         }, config()),
     },
     {
+        name: "pr_close",
+        description: "关闭一个 content/* 分支的 PR，不合并。宿主会在执行前弹出确认。用于放弃不再需要的 PR，" +
+            "让 open 队列保持可运营；已经关闭或已合并的 PR 返回 already=true。",
+        inputSchema: {
+            type: "object",
+            properties: {
+                pr_number: { type: "number" },
+            },
+            required: ["pr_number"],
+            additionalProperties: false,
+        },
+        call: (input) => prClose({
+            pr_number: input.pr_number,
+        }, config()),
+    },
+    {
         name: "pr_list",
         description: "列出仓库里现有的 PR（默认 state=open）。返回 number/title/state/head/base/url。",
         inputSchema: {
@@ -242,7 +261,8 @@ const TOOLS = [
     {
         name: "pr_merge",
         description: "合并一个 PR。必须由用户明确要求后才调用 —— 宿主会在执行前弹出确认，未确认则不会合并。" +
-            "仅合并 content/* 分支的 PR；是否可合并以 GitHub 的分支保护结论（mergeStateStatus）为准。",
+            "仅合并 content/* 分支的 PR；是否可合并以 GitHub 的分支保护结论（mergeStateStatus）为准。" +
+            "若仓库有 contract/operations.json，PR 提交的 op-log command 属于 agentMerge=false 的级别（如 L3）时会拒绝合并。",
         inputSchema: {
             type: "object",
             properties: {

@@ -28,6 +28,7 @@ export const TOOL_MAP = {
     "mcp__mmw-tools__repo_search": { toolId: "race-ops", operationId: "race-ops.repo_search", risk: "read" },
     "mcp__mmw-tools__repo_edit": { toolId: "race-ops", operationId: "race-ops.repo_edit", risk: "write" },
     "mcp__mmw-tools__pr_create": { toolId: "race-ops", operationId: "race-ops.pr_create", risk: "write" },
+    "mcp__mmw-tools__pr_close": { toolId: "race-ops", operationId: "race-ops.pr_close", risk: "write" },
     "mcp__mmw-tools__pr_list": { toolId: "race-ops", operationId: "race-ops.pr_list", risk: "read" },
     "mcp__mmw-tools__pr_preview": { toolId: "race-ops", operationId: "race-ops.pr_preview", risk: "read" },
     "mcp__mmw-tools__pr_merge": { toolId: "race-ops", operationId: "race-ops.pr_merge", risk: "write" },

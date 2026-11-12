@@ -176,6 +176,14 @@ export function installToolGate(
                     "即将合并一个 PR（会写入主分支）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
                 };
               }
+              if (name.endsWith("pr_close")) {
+                opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "ask" });
+                return {
+                  kind: "ask",
+                  reason:
+                    "即将关闭一个 PR（不会合并）。是否确认？这一步必须由你本人同意，agent 不能自行决定。",
+                };
+              }
               opts.onEvent?.({ kind: "gate_decision", runId, tool: name, decision: "allow" });
               return next();
             },

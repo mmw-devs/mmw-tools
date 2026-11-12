@@ -37,6 +37,24 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 /** How long an allowlist verdict is trusted before asking GitHub again. */
 const ALLOW_CACHE_MS = 10 * 60 * 1000;
 
+/**
+ * Operations the auth core must grant before this broker hands out a
+ * repository token without a GitHub login.
+ */
+const FEISHU_READ_OPERATION = "race-ops.repo_read";
+const FEISHU_EDIT_OPERATION = "race-ops.repo_edit";
+const FEISHU_PR_OPERATION = "race-ops.pr_create";
+const FEISHU_MERGE_OPERATION = "race-ops.pr_merge";
+const FEISHU_CLOSE_OPERATION = "race-ops.pr_close";
+
+/** Idempotent write responses are kept for a day: a retry is not a new edit. */
+const WRITE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+/** A merge approval is short-lived and single-use. */
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
+const MAX_EDITS_PER_COMMIT = 50;
+const MAX_EDIT_BYTES = 1024 * 1024;
+const MAX_EDIT_TOTAL_BYTES = 4 * 1024 * 1024;
+
 export class BrokerRefused extends Error {
   constructor(code, message, status = 403) {
     super(message);
@@ -74,6 +92,9 @@ export class BrokerCore {
   #tokens = new Map(); // sha256(sessionToken) -> { login, expiresAt, createdAt }
   #allowCache = new Map(); // login -> { allowed, checkedAt }
   #mintCache = null; // installation token reused for membership checks
+  #writeMintCache = null; // installation token used by the write proxy only
+  #idempotency = new Map(); // key -> { value, expiresAt }
+  #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
 
   constructor(opts) {
     const required = [
@@ -105,6 +126,9 @@ export class BrokerCore {
     this.allowMode = opts.allowMode ?? "org"; // "org" | "list"
     this.allowList = (opts.allowList ?? []).map((u) => String(u).toLowerCase()).filter(Boolean);
     this.denyList = (opts.denyList ?? []).map((u) => String(u).toLowerCase()).filter(Boolean);
+    // Optional: when set, a Feishu plugin token can substitute for a GitHub
+    // login. The token is verified against the auth core, not trusted.
+    this.authUrl = opts.authUrl ? String(opts.authUrl).replace(/\/+$/, "") : "";
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? (() => Date.now());
     this.sessionTtlMs = opts.sessionTtlMs ?? SESSION_TTL_MS;
@@ -113,6 +137,18 @@ export class BrokerCore {
     this.githubTimeoutMs = opts.githubTimeoutMs ?? GITHUB_TIMEOUT_MS;
     this.githubAttempts = opts.githubAttempts ?? GITHUB_ATTEMPTS;
     this.mintInstallationToken = opts.mintInstallationToken; // injectable for tests
+
+    // Write proxy. Disabled by default so shipping the code and enabling
+    // the capability are separate, auditable operations.
+    this.writeEnabled = opts.writeEnabled === true;
+    this.allowlistPaths = (opts.allowlistPaths ?? []).map((p) => String(p).trim()).filter(Boolean);
+    this.denylistPaths = (opts.denylistPaths ?? []).map((p) => String(p).trim()).filter(Boolean);
+    this.baseBranch = String(opts.baseBranch ?? "main");
+    this.branchPrefix = String(opts.branchPrefix ?? "content/");
+    this.maxEdits = opts.maxEdits ?? MAX_EDITS_PER_COMMIT;
+    this.maxEditBytes = opts.maxEditBytes ?? MAX_EDIT_BYTES;
+    this.maxEditTotalBytes = opts.maxEditTotalBytes ?? MAX_EDIT_TOTAL_BYTES;
+    this.audit = typeof opts.audit === "function" ? opts.audit : null;
   }
 
   get repository() {
@@ -394,6 +430,149 @@ export class BrokerCore {
     return verdict;
   }
 
+  /**
+   * Feishu path: the auth core already knows who this person is and which
+   * operations their roles grant. The broker asks it each time a token is
+   * minted, so a revoked role takes effect on the next refresh.
+   *
+   * The plugin token is a bearer credential: it is forwarded only to the
+   * configured auth service and never logged or persisted here.
+   */
+  async #feishuIdentity(pluginToken) {
+    if (!this.authUrl) {
+      throw new BrokerRefused(
+        "feishu-not-configured",
+        "this broker has no auth service URL configured",
+        503
+      );
+    }
+    const token = String(pluginToken ?? "").trim();
+    if (!token) throw new BrokerRefused("feishu-token-required", "no Feishu credential", 401);
+
+    const me = await this.#authGet("/v1/me", token);
+    if (!me || typeof me.id !== "string" || me.id.length === 0) {
+      throw new BrokerRefused("feishu-bad-response", "the auth service did not identify the member", 502);
+    }
+
+    const routes = await this.#authGet("/v1/agent/routes", token);
+    const operations = Array.isArray(routes.allowedOperations)
+      ? routes.allowedOperations.map(String)
+      : [];
+    return { id: me.id, login: String(me.name ?? me.id), operations };
+  }
+
+  /**
+   * The read-token entry point. Both credentials now yield a read-only
+   * installation token; writes go through the broker so the write-capable
+   * token never reaches the agent's process.
+   */
+  async #resolveFeishu(pluginToken) {
+    const who = await this.#feishuIdentity(pluginToken);
+    const canEdit =
+      who.operations.includes(FEISHU_EDIT_OPERATION) &&
+      who.operations.includes(FEISHU_PR_OPERATION);
+    const canRead = who.operations.includes(FEISHU_READ_OPERATION);
+    if (!canRead && !canEdit) {
+      throw new BrokerRefused(
+        "feishu-no-access",
+        `${who.login} 的飞书角色没有该仓库的权限`,
+        403
+      );
+    }
+    return { login: who.login };
+  }
+
+  /** Operation-level authorization for a single write endpoint. */
+  async #requireFeishuOperation(pluginToken, operation) {
+    const who = await this.#feishuIdentity(pluginToken);
+    if (!who.operations.includes(operation)) {
+      throw new BrokerRefused(
+        "feishu-operation-denied",
+        `${who.login} 的飞书角色没有 ${operation} 权限`,
+        403
+      );
+    }
+    return who;
+  }
+
+  /** One bounded auth-service call. Errors never echo the token. */
+  async #authGet(pathname, token) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.githubAttempts; attempt++) {
+      try {
+        const signal =
+          typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(this.githubTimeoutMs)
+            : undefined;
+        const res = await this.fetchImpl(`${this.authUrl}${pathname}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            "User-Agent": "dsh-race-ops-broker",
+          },
+          signal,
+        });
+        if (res.status === 401 || res.status === 403) {
+          throw new BrokerRefused(
+            "feishu-auth-rejected",
+            "飞书授权已失效，请重新登录",
+            401
+          );
+        }
+        if (!res.ok) {
+          throw new BrokerRefused(
+            "feishu-check-failed",
+            `the auth service answered HTTP ${res.status}`,
+            502
+          );
+        }
+        const body = await res.json().catch(() => null);
+        if (!body || typeof body !== "object") {
+          throw new BrokerRefused(
+            "feishu-bad-response",
+            "the auth service returned a non-JSON body",
+            502
+          );
+        }
+        return body;
+      } catch (err) {
+        if (err instanceof BrokerRefused) throw err;
+        lastError = err;
+        if (attempt < this.githubAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        }
+      }
+    }
+    throw new BrokerRefused(
+      "feishu-unreachable",
+      `the auth service did not answer within ${this.githubTimeoutMs / 1000}s ` +
+        `(${lastError?.name ?? "network error"})`,
+      502
+    );
+  }
+
+  /**
+   * Mint a token for a Feishu-authenticated member. This is the path that
+   * lets someone without a GitHub account open a PR: the PR is authored by
+   * the App installation, and the person is identified by Feishu.
+   */
+  async issueInstallationTokenForFeishu(pluginToken) {
+    const resolved = await this.#resolveFeishu(pluginToken);
+    const permissions = { contents: "read", pull_requests: "read" };
+    const mint = this.mintInstallationToken ?? defaultMint(this);
+    const result = await mint({ permissions });
+    return {
+      token: result.token,
+      expiresAt: result.expiresAt,
+      repository: this.repository,
+      permissions: result.permissions ?? permissions,
+      authMode: "feishu",
+      login: resolved.login,
+      // The client token is always read-only now. Writes are proxied.
+      scope: "read",
+    };
+  }
+
   /** One installation token, reused briefly for membership checks. */
   async #installationTokenForChecks() {
     const now = this.now();
@@ -454,7 +633,7 @@ export class BrokerCore {
     return { key, record };
   }
 
-  /** The only way to obtain something that can write to the repository. */
+  /** A read-only token; repository writes go through the broker proxy. */
   async issueInstallationToken(sessionToken) {
     const { record } = this.#sessionFor(sessionToken);
 
@@ -466,14 +645,681 @@ export class BrokerCore {
       throw new BrokerRefused("not-allowed", `no longer allowed: ${verdict.reason}`, 403);
     }
 
+    const permissions = { contents: "read", pull_requests: "read" };
     const mint = this.mintInstallationToken ?? defaultMint(this);
-    const result = await mint();
+    const result = await mint({ permissions });
     return {
       token: result.token,
       expiresAt: result.expiresAt,
       repository: this.repository,
-      permissions: result.permissions ?? {},
+      permissions: result.permissions ?? permissions,
+      authMode: "github",
+      login: record.login,
+      scope: "read",
     };
+  }
+
+  /* ---------------- write proxy ---------------- */
+
+  /**
+   * The write-capable installation token. It is minted here, kept in this
+   * process and never returned to a client. The client token from
+   * `/installation-token` is read-only.
+   */
+  async #writeToken() {
+    const now = this.now();
+    if (this.#writeMintCache && this.#writeMintCache.expiresAt - 60_000 > now) {
+      return this.#writeMintCache.token;
+    }
+    const mint = this.mintInstallationToken ?? defaultMint(this);
+    const issued = await mint({ permissions: { contents: "write", pull_requests: "write" } });
+    this.#writeMintCache = { token: issued.token, expiresAt: issued.expiresAt };
+    return issued.token;
+  }
+
+  /** One GitHub API call with the broker's write token. */
+  async #api(method, pathname, { body, allow404 = false } = {}) {
+    const token = await this.#writeToken();
+    let res;
+    try {
+      const signal =
+        typeof AbortSignal.timeout === "function"
+          ? AbortSignal.timeout(this.githubTimeoutMs)
+          : undefined;
+      res = await this.fetchImpl(
+        `${GITHUB_API}/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(this.repo)}${pathname}`,
+        {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "dsh-race-ops-broker",
+            ...(body ? { "content-type": "application/json" } : {}),
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal,
+        }
+      );
+    } catch (err) {
+      throw new BrokerRefused(
+        "github-unreachable",
+        `GitHub did not answer within ${this.githubTimeoutMs / 1000}s (${err?.name ?? "network error"})`,
+        502
+      );
+    }
+
+    if (res.status === 404 && allow404) return null;
+    const text = await res.text().catch(() => "");
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!res.ok) {
+      const message =
+        parsed && typeof parsed.message === "string"
+          ? parsed.message
+          : `GitHub answered HTTP ${res.status}`;
+      const status = res.status === 422 || res.status === 409 ? 409 : res.status === 403 ? 403 : 502;
+      throw new BrokerRefused("github-write-failed", message, status);
+    }
+    return parsed;
+  }
+
+  /** Which credential is writing, and is it allowed to perform this operation? */
+  async #authorizeWrite(operation, { feishuToken, sessionToken }) {
+    if (!this.writeEnabled) {
+      throw new BrokerRefused("write-disabled", "the write proxy is not enabled on this broker", 503);
+    }
+    const feishu = String(feishuToken ?? "").trim();
+    if (feishu) {
+      const who = await this.#requireFeishuOperation(feishu, operation);
+      return { login: who.login, kind: "feishu" };
+    }
+    const session = String(sessionToken ?? "").trim();
+    if (session) {
+      const { record } = this.#sessionFor(session);
+      const verdict = await this.#checkAllowlist(record.login);
+      if (!verdict.allowed) {
+        this.#revokeByLogin(record.login);
+        throw new BrokerRefused("not-allowed", `no longer allowed: ${verdict.reason}`, 403);
+      }
+      return { login: record.login, kind: "github" };
+    }
+    throw new BrokerRefused(
+      "write-credential-required",
+      "no Feishu or GitHub credential",
+      401
+    );
+  }
+
+  #assertBranch(branch) {
+    if (typeof branch !== "string" || !branch.startsWith(this.branchPrefix)) {
+      throw new BrokerRefused(
+        "branch-prefix",
+        `branch must start with ${this.branchPrefix}`,
+        400
+      );
+    }
+    if (branch === this.baseBranch || branch.includes("..") || branch.length > 200) {
+      throw new BrokerRefused("branch-invalid", "branch name is not allowed", 400);
+    }
+  }
+
+  #normalizePath(raw) {
+    const normalized = normalizeRepoPath(raw);
+    if (!this.allowlistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+      throw new BrokerRefused("path-not-allowed", `${normalized} is not in the write allowlist`, 403);
+    }
+    if (this.denylistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+      throw new BrokerRefused("path-denied", `${normalized} is on the write denylist`, 403);
+    }
+    return normalized;
+  }
+
+  #idempotencyKey(kind, provided, payload) {
+    if (typeof provided === "string" && provided.trim() !== "") {
+      return `${kind}:provided:${provided.trim()}`;
+    }
+    return `${kind}:sha:${sha256(JSON.stringify(payload))}`;
+  }
+
+  #recall(key) {
+    const hit = this.#idempotency.get(key);
+    if (!hit) return null;
+    if (hit.expiresAt <= this.now()) {
+      this.#idempotency.delete(key);
+      return null;
+    }
+    return hit.value;
+  }
+
+  #remember(key, value) {
+    this.#idempotency.set(key, {
+      value,
+      expiresAt: this.now() + WRITE_IDEMPOTENCY_TTL_MS,
+    });
+  }
+
+  #audit(event) {
+    if (!this.audit) return;
+    try {
+      this.audit({ at: new Date(this.now()).toISOString(), ...event });
+    } catch {
+      /* auditing must never fail the write */
+    }
+  }
+
+  #requestId(requestId) {
+    return typeof requestId === "string" && requestId.trim() !== ""
+      ? requestId.trim().slice(0, 80)
+      : randomToken(8);
+  }
+
+  async #readContent(pathname, ref) {
+    const data = await this.#api(
+      "GET",
+      `/contents/${encodePath(pathname)}?ref=${encodeURIComponent(ref)}`,
+      { allow404: true }
+    );
+    if (!data) return null;
+    if (Array.isArray(data) || data.type !== "file" || typeof data.content !== "string") {
+      throw new BrokerRefused("path-not-file", `${pathname} is not a file in this commit`, 409);
+    }
+    const encoding = data.encoding === "base64" ? "base64" : "utf8";
+    return Buffer.from(data.content, encoding).toString("utf8");
+  }
+
+  #applyEdit(original, edit) {
+    if (edit.mode === "replace") {
+      if (original === null) {
+        throw new BrokerRefused("replace-no-file", `replace mode requires an existing file at ${edit.path}`, 409);
+      }
+      const find = String(edit.find ?? "");
+      if (find === "") throw new BrokerRefused("edit-find-required", "replace mode requires find", 400);
+      const occurrences = original.split(find).length - 1;
+      if (occurrences !== 1) {
+        throw new BrokerRefused(
+          "find-not-found",
+          occurrences === 0
+            ? `find string not found in ${edit.path}`
+            : `find string matches ${occurrences} occurrences in ${edit.path}`,
+          409
+        );
+      }
+      return original.replace(find, String(edit.replace ?? ""));
+    }
+    if (edit.mode === "insert") {
+      const content = String(edit.content ?? "");
+      if (content === "") throw new BrokerRefused("edit-content-required", "insert mode requires content", 400);
+      return (original ?? "") + content;
+    }
+    throw new BrokerRefused(
+      "edit-mode-invalid",
+      "only replace and insert are supported by the write proxy",
+      400
+    );
+  }
+
+  #validateEditMessages(message) {
+    if (typeof message !== "string" || message.trim() === "") {
+      throw new BrokerRefused("commit-message-empty", "commit message is required", 400);
+    }
+    if (Buffer.byteLength(message) > 10_000) {
+      throw new BrokerRefused("commit-message-too-long", "commit message is too long", 400);
+    }
+  }
+
+  /**
+   * Apply edits through the GitHub Git Data API. The commit is authored by
+   * the App installation; `base_sha` pins it to the branch head the caller
+   * read, which is what makes a stale edit a conflict instead of a silent
+   * overwrite.
+   */
+  async writeRepoEdit(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_EDIT_OPERATION, args);
+    const branch = String(args.branch ?? "");
+    const baseSha = String(args.baseSha ?? args.base_sha ?? "");
+    const message = String(args.message ?? args.commit_message ?? "");
+    const edits = Array.isArray(args.edits) ? args.edits : [];
+
+    this.#assertBranch(branch);
+    if (!/^[0-9a-f]{40}$/i.test(baseSha)) {
+      throw new BrokerRefused("base-sha-invalid", "base_sha must be a 40-character commit SHA", 400);
+    }
+    this.#validateEditMessages(message);
+    if (edits.length === 0 || edits.length > this.maxEdits) {
+      throw new BrokerRefused("edits-invalid", `edits must contain 1..${this.maxEdits} entries`, 400);
+    }
+
+    const normalized = [];
+    const seen = new Set();
+    let totalBytes = 0;
+    for (const raw of edits) {
+      if (!raw || typeof raw !== "object") {
+        throw new BrokerRefused("edit-invalid", "every edit must be an object", 400);
+      }
+      const pathname = this.#normalizePath(raw.path);
+      if (seen.has(pathname)) {
+        throw new BrokerRefused("edit-duplicate-path", `${pathname} appears twice`, 400);
+      }
+      seen.add(pathname);
+      const mode = String(raw.mode ?? "");
+      if (mode !== "replace" && mode !== "insert") {
+        throw new BrokerRefused("edit-mode-invalid", "only replace and insert are supported", 400);
+      }
+      const payload = { path: pathname, mode, find: raw.find, replace: raw.replace, content: raw.content };
+      const bytes =
+        Buffer.byteLength(String(payload.find ?? "")) +
+        Buffer.byteLength(String(payload.replace ?? "")) +
+        Buffer.byteLength(String(payload.content ?? ""));
+      totalBytes += bytes;
+      normalized.push(payload);
+    }
+    if (totalBytes > this.maxEditTotalBytes) {
+      throw new BrokerRefused("edits-too-large", "the combined edit payload is too large", 413);
+    }
+
+    const requestId = this.#requestId(args.requestId);
+    const idemKey = this.#idempotencyKey("repo_edit", args.idempotencyKey, {
+      branch,
+      baseSha,
+      message,
+      edits: normalized,
+    });
+    const cached = this.#recall(idemKey);
+    if (cached) return { ...cached, idempotent: true };
+
+    const refPath = `/git/ref/heads/${encodeBranch(branch)}`;
+    const existing = await this.#api("GET", refPath, { allow404: true });
+    let base;
+    if (existing) {
+      base = existing?.object?.sha;
+    } else {
+      const baseRef = await this.#api("GET", `/git/ref/heads/${encodeBranch(this.baseBranch)}`);
+      base = baseRef?.object?.sha;
+    }
+    if (typeof base !== "string" || !/^[0-9a-f]{40}$/i.test(base)) {
+      throw new BrokerRefused("base-branch-missing", "could not resolve the base commit", 502);
+    }
+    if (base !== baseSha) {
+      throw new BrokerRefused(
+        "base-sha-mismatch",
+        `the branch head is ${base}, not ${baseSha}; pull the branch and retry`,
+        409
+      );
+    }
+
+    const baseCommit = await this.#api("GET", `/git/commits/${base}`);
+    const baseTree = baseCommit?.tree?.sha;
+    if (typeof baseTree !== "string") {
+      throw new BrokerRefused("base-commit-invalid", "could not read the base tree", 502);
+    }
+
+    const tree = [];
+    const filesChanged = [];
+    for (const edit of normalized) {
+      const original = await this.#readContent(edit.path, base);
+      const next = this.#applyEdit(original, edit);
+      const bytes = Buffer.byteLength(next);
+      if (bytes > this.maxEditBytes) {
+        throw new BrokerRefused("edit-too-large", `${edit.path} would exceed the file size limit`, 413);
+      }
+      const blob = await this.#api("POST", "/git/blobs", {
+        body: { content: next, encoding: "utf-8" },
+      });
+      tree.push({ path: edit.path, mode: "100644", type: "blob", sha: blob.sha });
+      filesChanged.push(edit.path);
+    }
+
+    const newTree = await this.#api("POST", "/git/trees", {
+      body: { base_tree: baseTree, tree },
+    });
+    const newCommit = await this.#api("POST", "/git/commits", {
+      body: { message, tree: newTree.sha, parents: [base] },
+    });
+
+    if (existing) {
+      await this.#api("PATCH", `/git/refs/heads/${encodeBranch(branch)}`, {
+        body: { sha: newCommit.sha, force: false },
+      });
+    } else {
+      await this.#api("POST", "/git/refs", {
+        body: { ref: `refs/heads/${branch}`, sha: newCommit.sha },
+      });
+    }
+
+    const result = {
+      branch,
+      base_sha: base,
+      new_commit_sha: newCommit.sha,
+      files_changed: filesChanged,
+      idempotent: false,
+    };
+    this.#remember(idemKey, result);
+    this.#audit({
+      requestId,
+      op: "repo_edit",
+      member: who.login,
+      kind: who.kind,
+      branch,
+      baseSha: base,
+      commitSha: newCommit.sha,
+      files: filesChanged,
+    });
+    return result;
+  }
+
+  async writePrCreate(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_PR_OPERATION, args);
+    const head = String(args.head ?? args.head_branch ?? "");
+    const base = String(args.base ?? this.baseBranch);
+    const title = String(args.title ?? "");
+    const body = String(args.body ?? "");
+    const draft = args.draft !== false;
+
+    this.#assertBranch(head);
+    if (base !== this.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `PRs may only target ${this.baseBranch}`, 400);
+    }
+    if (title.trim() === "" || Buffer.byteLength(title) > 256) {
+      throw new BrokerRefused("title-invalid", "title must be 1..256 characters", 400);
+    }
+    if (Buffer.byteLength(body) > 65_536) {
+      throw new BrokerRefused("body-too-large", "PR body is too large", 413);
+    }
+
+    const requestId = this.#requestId(args.requestId);
+    const idemKey = this.#idempotencyKey("pr_create", args.idempotencyKey, {
+      head,
+      base,
+      title,
+      body,
+      draft,
+    });
+    const cached = this.#recall(idemKey);
+    if (cached) return { ...cached, idempotent: true };
+
+    const ref = await this.#api("GET", `/git/ref/heads/${encodeBranch(head)}`, { allow404: true });
+    if (!ref) {
+      throw new BrokerRefused("branch-not-found", `branch ${head} does not exist on the remote`, 409);
+    }
+    const headSha = ref.object?.sha;
+
+    const query =
+      `?state=open` +
+      `&head=${encodeURIComponent(`${this.owner}:${head}`)}` +
+      `&base=${encodeURIComponent(base)}`;
+    const open = await this.#api("GET", `/pulls${query}`);
+    const existing = Array.isArray(open)
+      ? open.find((pr) => pr?.head?.ref === head && pr?.base?.ref === base)
+      : null;
+
+    let pr = existing;
+    let created = false;
+    if (!pr) {
+      pr = await this.#api("POST", "/pulls", {
+        body: { title, body, head, base, draft },
+      });
+      created = true;
+    }
+
+    const result = {
+      number: pr.number,
+      url: pr.html_url,
+      head_sha: pr.head?.sha ?? headSha,
+      draft: Boolean(pr.draft),
+      created,
+      idempotent: false,
+    };
+    this.#remember(idemKey, result);
+    this.#audit({
+      requestId,
+      op: "pr_create",
+      member: who.login,
+      kind: who.kind,
+      pr: pr.number,
+      head,
+      base,
+      headSha: result.head_sha,
+      created,
+    });
+    return result;
+  }
+
+  /**
+   * Close an open content/* PR without merging it.
+   *
+   * Closing is what makes the lifecycle finite: a PR that is abandoned (CI
+   * red, superseded, or the change no longer wanted) should leave the open
+   * queue. Re-closing an already closed/merged PR is a no-op, so a retry
+   * after a lost response is safe.
+   */
+  async writePrClose(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_CLOSE_OPERATION, args);
+    const prNumber = Number(args.prNumber ?? args.pr_number);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
+    }
+
+    const requestId = this.#requestId(args.requestId);
+    const idemKey = this.#idempotencyKey("pr_close", args.idempotencyKey, { prNumber });
+    const cached = this.#recall(idemKey);
+    if (cached) return { ...cached, idempotent: true };
+
+    const pr = await this.#api("GET", `/pulls/${prNumber}`, { allow404: true });
+    if (!pr) {
+      throw new BrokerRefused("pr-not-found", `PR #${prNumber} does not exist`, 404);
+    }
+
+    // Already closed (including merged): nothing to do, and a retry should
+    // not turn into an error just because the first call succeeded.
+    if (pr.state !== "open") {
+      const result = {
+        number: pr.number,
+        closed: true,
+        already: true,
+        merged: Boolean(pr.merged_at),
+        head_sha: pr.head?.sha ?? "",
+        url: pr.html_url ?? "",
+        idempotent: false,
+      };
+      this.#remember(idemKey, result);
+      return result;
+    }
+
+    if (!String(pr.head?.ref ?? "").startsWith(this.branchPrefix)) {
+      throw new BrokerRefused("branch-prefix", "the PR head is not a content branch", 409);
+    }
+    if (pr.base?.ref !== this.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `the PR does not target ${this.baseBranch}`, 409);
+    }
+
+    await this.#api("PATCH", `/pulls/${prNumber}`, { body: { state: "closed" } });
+
+    const result = {
+      number: pr.number,
+      closed: true,
+      already: false,
+      merged: false,
+      head_sha: pr.head?.sha ?? "",
+      url: pr.html_url ?? "",
+      idempotent: false,
+    };
+    this.#remember(idemKey, result);
+    this.#audit({
+      requestId,
+      op: "pr_close",
+      member: who.login,
+      kind: who.kind,
+      pr: prNumber,
+      headSha: result.head_sha,
+    });
+    return result;
+  }
+
+  async #fetchMergeablePr(prNumber) {
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
+    }
+    let pr = await this.#api("GET", `/pulls/${prNumber}`);
+    if (!pr || pr.state !== "open") {
+      throw new BrokerRefused("pr-not-open", `PR #${prNumber} is not open`, 409);
+    }
+    if (pr.draft) {
+      await this.#api("PATCH", `/pulls/${prNumber}`, { body: { draft: false } });
+      pr = await this.#api("GET", `/pulls/${prNumber}`);
+    }
+    if (!String(pr.head?.ref ?? "").startsWith(this.branchPrefix)) {
+      throw new BrokerRefused("branch-prefix", "the PR head is not a content branch", 409);
+    }
+    if (pr.base?.ref !== this.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `the PR does not target ${this.baseBranch}`, 409);
+    }
+    for (let i = 0; i < 5 && pr.mergeable_state === "unknown"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      pr = await this.#api("GET", `/pulls/${prNumber}`);
+    }
+    if (pr.mergeable_state !== "clean") {
+      throw new BrokerRefused(
+        "pr-not-mergeable",
+        `GitHub reports mergeable_state=${pr.mergeable_state ?? "unknown"}`,
+        409
+      );
+    }
+    return pr;
+  }
+
+  /**
+   * Step 1 of a merge: bind the user's intent to this PR's current head.
+   * The returned id is single-use and expires quickly.
+   */
+  async approvePrMerge(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_MERGE_OPERATION, args);
+    const prNumber = Number(args.prNumber ?? args.pr_number);
+    const mergeMethod = String(args.mergeMethod ?? args.merge_method ?? "squash");
+    if (!["merge", "squash", "rebase"].includes(mergeMethod)) {
+      throw new BrokerRefused("merge-method-invalid", "merge_method must be merge, squash or rebase", 400);
+    }
+    const commitTitle = String(args.commitTitle ?? args.commit_title ?? "");
+    if (Buffer.byteLength(commitTitle) > 256) {
+      throw new BrokerRefused("commit-title-too-long", "commit_title is too long", 400);
+    }
+
+    const pr = await this.#fetchMergeablePr(prNumber);
+    const approvalId = randomToken(32);
+    const expiresAt = this.now() + APPROVAL_TTL_MS;
+    this.#approvals.set(approvalId, {
+      member: who.login,
+      kind: who.kind,
+      pr: prNumber,
+      headSha: pr.head.sha,
+      method: mergeMethod,
+      title: commitTitle,
+      expiresAt,
+    });
+    this.#audit({
+      requestId: this.#requestId(args.requestId),
+      op: "pr_merge_approval",
+      member: who.login,
+      kind: who.kind,
+      pr: prNumber,
+      headSha: pr.head.sha,
+      method: mergeMethod,
+    });
+    return {
+      approval_id: approvalId,
+      pr_number: prNumber,
+      head_sha: pr.head.sha,
+      expires_at: expiresAt,
+    };
+  }
+
+  async writePrMerge(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_MERGE_OPERATION, args);
+    const prNumber = Number(args.prNumber ?? args.pr_number);
+    const approvalId = String(args.approvalId ?? args.approval_id ?? "");
+    const requestId = this.#requestId(args.requestId);
+    const idemKey = this.#idempotencyKey("pr_merge", args.idempotencyKey, {
+      prNumber,
+      approvalId,
+    });
+    const cached = this.#recall(idemKey);
+    if (cached) return { ...cached, idempotent: true };
+
+    const approval = this.#approvals.get(approvalId);
+    if (!approval) {
+      throw new BrokerRefused("approval-unknown", "merge approval is missing or already used", 409);
+    }
+    if (approval.expiresAt <= this.now()) {
+      this.#approvals.delete(approvalId);
+      throw new BrokerRefused("approval-expired", "merge approval expired; ask the user again", 409);
+    }
+    if (approval.member !== who.login || approval.kind !== who.kind) {
+      throw new BrokerRefused("approval-member-mismatch", "this approval belongs to another member", 403);
+    }
+    if (approval.pr !== prNumber) {
+      throw new BrokerRefused("approval-pr-mismatch", "this approval is for another PR", 403);
+    }
+
+    let pr = await this.#api("GET", `/pulls/${prNumber}`);
+    if (!pr || pr.state !== "open") {
+      throw new BrokerRefused("pr-not-open", `PR #${prNumber} is not open`, 409);
+    }
+    if (pr.head?.sha !== approval.headSha) {
+      this.#approvals.delete(approvalId);
+      throw new BrokerRefused(
+        "approval-stale",
+        "the PR head moved since approval; ask the user again",
+        409
+      );
+    }
+    if (pr.mergeable_state !== "clean") {
+      throw new BrokerRefused(
+        "pr-not-mergeable",
+        `GitHub reports mergeable_state=${pr.mergeable_state ?? "unknown"}`,
+        409
+      );
+    }
+
+    // Single use: consume before the call, so a lost response cannot replay it.
+    this.#approvals.delete(approvalId);
+    const merged = await this.#api("PUT", `/pulls/${prNumber}/merge`, {
+      body: {
+        merge_method: approval.method,
+        ...(approval.title ? { commit_title: approval.title } : {}),
+      },
+    });
+    if (!merged || merged.merged !== true) {
+      throw new BrokerRefused(
+        "merge-refused",
+        merged?.message ? String(merged.message) : "GitHub did not merge the PR",
+        409
+      );
+    }
+
+    const result = {
+      number: prNumber,
+      merged: true,
+      sha: merged.sha,
+      method: approval.method,
+      branch: pr.head.ref,
+      idempotent: false,
+    };
+    this.#remember(idemKey, result);
+    this.#audit({
+      requestId,
+      op: "pr_merge",
+      member: who.login,
+      kind: who.kind,
+      pr: prNumber,
+      headSha: approval.headSha,
+      sha: merged.sha,
+      method: approval.method,
+    });
+    return result;
   }
 
   revoke(sessionToken) {
@@ -505,6 +1351,12 @@ export class BrokerCore {
     for (const [login, cached] of this.#allowCache) {
       if (now - cached.checkedAt >= this.allowCacheMs) this.#allowCache.delete(login);
     }
+    for (const [key, hit] of this.#idempotency) {
+      if (hit.expiresAt <= now) this.#idempotency.delete(key);
+    }
+    for (const [key, approval] of this.#approvals) {
+      if (approval.expiresAt <= now) this.#approvals.delete(key);
+    }
   }
 
   /** Counts only — safe to expose on /health. */
@@ -516,8 +1368,64 @@ export class BrokerCore {
       // Makes the explicit grant visible on /health after a deploy: the
       // count, never the names.
       allowListSize: this.allowList.length,
+      // Whether this deployment can authorize a Feishu member without a
+      // GitHub login. The URL itself is not secret, but it is not needed.
+      feishuEnabled: Boolean(this.authUrl),
+      // The write proxy is a separate switch from Feishu login.
+      writeEnabled: this.writeEnabled,
+      pendingApprovals: this.#approvals.size,
+      idempotencyEntries: this.#idempotency.size,
     };
   }
+}
+
+function normalizeRepoPath(raw) {
+  const value = String(raw ?? "");
+  if (value === "" || value.length > 512) {
+    throw new BrokerRefused("path-invalid", "path is empty or too long", 400);
+  }
+  if (value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) {
+    throw new BrokerRefused("path-invalid", `${value} is not a relative repository path`, 400);
+  }
+  const parts = value.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new BrokerRefused("path-invalid", `${value} is not a normalized repository path`, 400);
+  }
+  return value;
+}
+
+/** Tiny glob matcher: `**` across directories, `*` within a segment, `?` one char. */
+function globToRegExp(pattern) {
+  let out = "^";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        i++;
+        if (pattern[i + 1] === "/") {
+          i++;
+          out += "(?:.*/)?";
+        } else {
+          out += ".*";
+        }
+      } else {
+        out += "[^/]*";
+      }
+    } else if (c === "?") {
+      out += "[^/]";
+    } else {
+      out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${out}$`);
+}
+
+function encodeBranch(branch) {
+  return branch.split("/").map(encodeURIComponent).join("/");
+}
+
+function encodePath(pathname) {
+  return pathname.split("/").map(encodeURIComponent).join("/");
 }
 
 /**
@@ -525,7 +1433,7 @@ export class BrokerCore {
  * token limited to the single configured repository.
  */
 function defaultMint(core) {
-  return async () => {
+  return async (opts = {}) => {
     const { createInstallationToken } = await import(
       new URL("../lib/auth/github-app.js", import.meta.url).href
     );
@@ -535,6 +1443,9 @@ function defaultMint(core) {
       installationId: core.installationId,
       repositories: [core.repo],
       fetchImpl: core.fetchImpl,
+      // Checks (membership) need the App's own permission set, so they call
+      // this without options. Feishu modes pass an explicit, narrower set.
+      ...(opts.permissions ? { permissions: opts.permissions } : {}),
     });
   };
 }

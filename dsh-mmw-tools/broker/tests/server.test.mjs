@@ -170,6 +170,64 @@ await withServer({}, async ({ base }) => {
   eq(afterRevoke.status, 401, "a revoked session cannot mint");
 });
 
+console.log("\n--- the Feishu header mints without a GitHub session ---");
+{
+  const authCalls = [];
+  const authImpl = async (url, init = {}) => {
+    authCalls.push(String(url));
+    const p = new URL(String(url)).pathname;
+    if (p === "/v1/me") return json({ id: "ou_zhangsan", name: "张三" });
+    if (p === "/v1/agent/routes") {
+      return json({
+        allowedOperations: ["race-ops.repo_read", "race-ops.repo_edit", "race-ops.pr_create"],
+      });
+    }
+    return json({ message: "unexpected" }, 500);
+  };
+  await withServer(
+    {
+      authUrl: "https://auth.example",
+      fetchImpl: authImpl,
+      mintInstallationToken: async (opts = {}) => ({
+        token: "ghs_feishu_http",
+        expiresAt: Date.now() + 3_600_000,
+        permissions: opts.permissions,
+      }),
+    },
+    async ({ base }) => {
+      const res = await post(base, "/installation-token", {
+        headers: { "x-mmw-feishu-token": "fs-plugin-token" },
+      });
+      eq(res.status, 200, "a Feishu header alone mints a token");
+      const body = await res.json();
+      eq(body.token, "ghs_feishu_http", "the minted token is returned");
+      eq(body.authMode, "feishu", "the reply names the Feishu path");
+      eq(body.scope, "read", "client tokens are read-only even for an editor");
+      eq(body.login, "张三", "the Feishu identity is returned");
+      eq(body.permissions?.contents, "read", "the token is scoped to contents:read");
+      eq(authCalls.length, 2, "the broker verified the token with the auth core");
+    }
+  );
+}
+{
+  const authImpl = async (url) => {
+    const p = new URL(String(url)).pathname;
+    if (p === "/v1/me") return json({ id: "ou_nobody", name: "nobody" });
+    if (p === "/v1/agent/routes") return json({ allowedOperations: [] });
+    return json({ message: "unexpected" }, 500);
+  };
+  await withServer(
+    { authUrl: "https://auth.example", fetchImpl: authImpl },
+    async ({ base }) => {
+      const res = await post(base, "/installation-token", {
+        headers: { "x-mmw-feishu-token": "fs-plugin-token" },
+      });
+      eq(res.status, 403, "a role with no access is refused over HTTP");
+      eq((await res.json()).error, "feishu-no-access", "the refusal is machine-readable");
+    }
+  );
+}
+
 console.log("\n--- denial renders a page, and issues nothing ---");
 await withServer({ fetchImpl: fakeGithub({ membership: "none" }).impl }, async ({ base }) => {
   const started = await (await post(base, "/session/start")).json();
@@ -286,6 +344,29 @@ console.log("\n--- rate limiting ---");
     await new Promise((r) => server.close(r));
   }
 }
+
+console.log("\n--- write proxy over HTTP ---");
+await withServer({}, async ({ base }) => {
+  const res = await post(base, "/v1/write/repo_edit", {
+    headers: { "content-type": "application/json", "x-mmw-feishu-token": "fs" },
+    body: JSON.stringify({
+      branch: "content/x",
+      base_sha: "a".repeat(40),
+      message: "m",
+      edits: [],
+    }),
+  });
+  eq(res.status, 503, "the write proxy is off by default");
+  eq((await res.json()).error, "write-disabled", "the refusal is machine-readable");
+});
+await withServer({ writeEnabled: true }, async ({ base }) => {
+  const res = await post(base, "/v1/write/no-such-op", {
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  eq(res.status, 404, "an unknown write endpoint is 404");
+  eq((await res.json()).error, "not-found", "the 404 is machine-readable");
+});
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

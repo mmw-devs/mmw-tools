@@ -35,11 +35,18 @@ the current shape:
   (`operator`, `admin`) used by any operation that does not declare roles.
 - `mmw-tools-status` is available to every authenticated member.
 - The operation-level ladder is data, not code: `viewer` gets the read-only
-  operations, `editor` adds worktree/pull/edit/PR creation, and `operator` /
-  `admin` get everything, including `pr_merge` and `mmw_tools_run`. The exact
-  matrix is generated in [`REFERENCE.md`](REFERENCE.md).
-- `pr_merge` still has host confirmation and GitHub branch protection behind it.
-  The Feishu role is the first of several gates, not the last one.
+  operations, `editor` adds worktree/pull/edit/PR creation and closing, and
+  `operator` / `admin` get everything, including `pr_merge` and `mmw_tools_run`.
+  The exact matrix is generated in [`REFERENCE.md`](REFERENCE.md).
+- `pr_merge` and `pr_close` still have host confirmation behind them; `pr_merge`
+  also has GitHub branch protection. The Feishu role is the first of several
+  gates, not the last one.
+- In addition, `pr_merge` reads the target repository's
+  `contract/operations.json` before either merge path: when the PR declares an
+  op-log `command` whose level has `agentMerge: false` (for example L3), the merge
+  is refused with `contract-merge-forbidden`. The repository's own level policy is
+  therefore enforced at merge time, not only described in its docs. Repositories
+  without that file are unaffected.
 
 This is a guard against mistakes and accidental scope creep, not a boundary
 against a malicious local user. The security boundary is the broker-issued

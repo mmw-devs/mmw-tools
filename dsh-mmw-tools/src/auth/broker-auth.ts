@@ -31,6 +31,7 @@ import { homedir } from "node:os";
 
 import { BrokerClient, BrokerError } from "./broker-client.js";
 import { SessionStore, maskToken } from "./session-store.js";
+import type { SessionRecord } from "./session-store.js";
 import type { InstallationTokenResult } from "./broker-client.js";
 
 /** Same union the status schema and the panel already render. */
@@ -59,6 +60,8 @@ export interface StartedSignIn {
 
 export interface AuthView {
   configured: boolean;
+  /** Which credential the plugin is currently acting as. */
+  mode: "feishu" | "github" | "none";
   login: string;
   scope: string;
   accessTokenMasked: string;
@@ -69,16 +72,38 @@ export interface AuthView {
   configPath: string;
 }
 
+/**
+ * The subset of FeishuAuth this class needs. Declared structurally so a
+ * Feishu login can mint repository tokens without a GitHub account, and so
+ * tests can supply a two-line fake.
+ */
+export interface FeishuCredentialSource {
+  /** Current plugin token, refreshed near expiry; null when signed out. */
+  credential(): Promise<string | null>;
+}
+
 export interface BrokerAuthOptions {
   brokerUrl: string;
   /** Where the child reads `accessToken` from. */
   installationTokenFile: string;
+  /**
+   * Where the child reads the credential for broker-proxied writes. Contains
+   * a Feishu plugin token or a GitHub session token, never a GitHub
+   * installation token: the broker mints its own write token and keeps it.
+   */
+  writeAuthFile?: string;
   /**
    * `owner/name` this plugin edits. The broker decides which repository a
    * token can write to; comparing the two turns a misconfiguration into a
    * clear error instead of an unexplained 403 halfway through an edit.
    */
   repository?: string;
+  /**
+   * Optional Feishu credential source. When present it is preferred over the
+   * GitHub session: people without a GitHub account can still get a
+   * repository token, and the broker enforces their Feishu role.
+   */
+  feishu?: FeishuCredentialSource;
   store?: SessionStore;
   broker?: BrokerClient;
   now?: () => number;
@@ -105,7 +130,9 @@ export class BrokerAuth {
   private readonly broker: BrokerClient;
   private readonly now: () => number;
   private readonly tokenFile: string;
+  private readonly writeAuthFile: string;
   private readonly repository: string;
+  private readonly feishu: FeishuCredentialSource | null;
 
   private pending: Pending | null = null;
   private installation: InstallationTokenResult | null = null;
@@ -117,7 +144,9 @@ export class BrokerAuth {
       new BrokerClient({ brokerUrl: opts.brokerUrl });
     this.now = opts.now ?? (() => Date.now());
     this.tokenFile = opts.installationTokenFile;
+    this.writeAuthFile = (opts.writeAuthFile ?? "").trim();
     this.repository = (opts.repository ?? "").trim();
+    this.feishu = opts.feishu ?? null;
   }
 
   /**
@@ -148,16 +177,19 @@ export class BrokerAuth {
   async resolvedStatus(): Promise<AuthStatus> {
     if (this.pending) return "device_pending";
     const session = await this.store.read();
-    if (!session) return "no_token";
-    return session.expiresAt > this.now() ? "authorized" : "reauth_needed";
+    if (session && session.expiresAt > this.now()) return "authorized";
+    // A Feishu login without a GitHub account is a supported state.
+    if (this.feishu && (await this.feishu.credential())) return "authorized";
+    return session ? "reauth_needed" : "no_token";
   }
 
   /** The four states of docs/PANEL-CONTRACT.md §3, and nothing else. */
   async phase(): Promise<"signed_out" | "authorizing" | "signed_in" | "expired"> {
     if (this.pending) return "authorizing";
     const session = await this.store.read();
-    if (!session) return "signed_out";
-    return session.expiresAt > this.now() ? "signed_in" : "expired";
+    if (session && session.expiresAt > this.now()) return "signed_in";
+    if (this.feishu && (await this.feishu.credential())) return "signed_in";
+    return session ? "expired" : "signed_out";
   }
 
   /**
@@ -172,7 +204,7 @@ export class BrokerAuth {
       const token = await this.ensureInstallationToken(false);
       return token
         ? { state: "ready", reason: "" }
-        : { state: "unavailable", reason: "尚未登录" };
+        : { state: "unavailable", reason: "尚未登录（飞书或 GitHub）" };
     } catch (err) {
       return {
         state: "unavailable",
@@ -182,29 +214,55 @@ export class BrokerAuth {
   }
 
   async view(): Promise<AuthView> {
+    // If the last mint came from Feishu, report that identity. This is the
+    // only place the panel and mmw_tools_status learn about a Feishu-only
+    // login, since there is no GitHub session record for it.
+    if (this.installation?.authMode === "feishu") {
+      return this.feishuView(this.installation);
+    }
     const session = await this.store.read();
-    if (!session) {
+    if (session) {
       return {
-        configured: false,
-        login: "",
-        scope: "",
-        accessTokenMasked: "",
-        accessTokenExpiresAt: 0,
+        configured: true,
+        mode: "github",
+        login: session.login,
+        scope: "broker",
+        accessTokenMasked: maskToken(session.sessionToken),
+        accessTokenExpiresAt: session.expiresAt,
         refreshTokenExpiresAt: 0,
-        tokenUpdatedAt: "",
+        tokenUpdatedAt: session.updatedAt
+          ? new Date(session.updatedAt).toISOString()
+          : "",
         configPath: this.store.path,
       };
     }
+    if (this.feishu && (await this.feishu.credential())) {
+      return this.feishuView(null);
+    }
+    return {
+      configured: false,
+      mode: "none",
+      login: "",
+      scope: "",
+      accessTokenMasked: "",
+      accessTokenExpiresAt: 0,
+      refreshTokenExpiresAt: 0,
+      tokenUpdatedAt: "",
+      configPath: this.store.path,
+    };
+  }
+
+  /** What the panel shows for a member who signed in with Feishu only. */
+  private feishuView(issued: InstallationTokenResult | null): AuthView {
     return {
       configured: true,
-      login: session.login,
+      mode: "feishu",
+      login: issued?.login ?? "",
       scope: "broker",
-      accessTokenMasked: maskToken(session.sessionToken),
-      accessTokenExpiresAt: session.expiresAt,
+      accessTokenMasked: issued ? maskToken(issued.token) : "",
+      accessTokenExpiresAt: issued?.expiresAt ?? 0,
       refreshTokenExpiresAt: 0,
-      tokenUpdatedAt: session.updatedAt
-        ? new Date(session.updatedAt).toISOString()
-        : "",
+      tokenUpdatedAt: issued ? new Date(this.now()).toISOString() : "",
       configPath: this.store.path,
     };
   }
@@ -278,6 +336,11 @@ export class BrokerAuth {
   /**
    * Mint or reuse an installation token and write it where the MCP child
    * reads it. `force` bypasses the cache.
+   *
+   * Feishu is preferred when configured: the broker verifies the plugin
+   * token and scopes the result to the member's operations, so no GitHub
+   * account is needed. A valid GitHub session remains the fallback, which
+   * keeps the organization/allow-list path working unchanged.
    */
   async ensureInstallationToken(force = false): Promise<string | null> {
     const cached = this.installation;
@@ -286,21 +349,55 @@ export class BrokerAuth {
       cached &&
       cached.expiresAt - INSTALLATION_MARGIN_MS > this.now()
     ) {
+      if (this.writeAuthFile) {
+        // A re-login rotates the Feishu plugin token without changing the
+        // cached read token. Refresh the broker credential on the cache path
+        // too, otherwise MCP keeps presenting the token from before the login.
+        const session = await this.store.readValid(this.now());
+        const feishuToken = this.feishu ? await this.feishu.credential() : null;
+        await this.writeWriteAuth(cached, session, feishuToken);
+      }
       return cached.token;
     }
 
     const session = await this.store.readValid(this.now());
-    if (!session) {
+    const feishuToken = this.feishu ? await this.feishu.credential() : null;
+    if (!session && !feishuToken) {
       this.installation = null;
       await this.removeTokenFile();
+      await this.removeWriteAuth();
       return null;
     }
 
-    const issued = await this.broker.getInstallationToken(session.sessionToken);
+    const issued = await this.mintInstallationToken(session, feishuToken);
     this.assertRepository(issued);
     this.installation = issued;
     await this.writeTokenFile(issued);
+    await this.writeWriteAuth(issued, session, feishuToken);
     return issued.token;
+  }
+
+  /**
+   * One place that decides which credential to present. Keeping the fallback
+   * here (rather than in each caller) is what makes "Feishu first, GitHub
+   * second" true for the watchdog, the panel and the first tool call alike.
+   */
+  private async mintInstallationToken(
+    session: SessionRecord | null,
+    feishuToken: string | null
+  ): Promise<InstallationTokenResult> {
+    if (feishuToken) {
+      try {
+        return await this.broker.getInstallationTokenForFeishu(feishuToken);
+      } catch (err) {
+        // A stale Feishu token must not strand an otherwise valid GitHub
+        // session; fall through. With no session the Feishu error is the
+        // useful one, so rethrow it.
+        if (!session) throw err;
+      }
+    }
+    if (session) return this.broker.getInstallationToken(session.sessionToken);
+    throw new BrokerError("session-required", "no Feishu or GitHub credential; sign in first");
   }
 
   /** Watchdog hook: keep the child's credential fresh. */
@@ -311,10 +408,18 @@ export class BrokerAuth {
       return token !== null && token !== before;
     } catch (err) {
       if (err instanceof BrokerError && err.code === "session-rejected") {
-        // The broker no longer accepts this session; drop it locally too.
-        await this.store.clear();
-        this.installation = null;
-        await this.removeTokenFile();
+        // Only the GitHub path owns the session record. With Feishu
+        // configured, a rejected token may be a stale Feishu credential
+        // with a valid session behind it; clearing would be wrong.
+        const feishuAvailable = this.feishu
+          ? Boolean(await this.feishu.credential())
+          : false;
+        if (!feishuAvailable) {
+          await this.store.clear();
+          this.installation = null;
+          await this.removeTokenFile();
+          await this.removeWriteAuth();
+        }
         return false;
       }
       throw err;
@@ -323,18 +428,15 @@ export class BrokerAuth {
 
   /** Panel "Refresh": force a new installation token. */
   async refresh(): Promise<OpResult> {
-    const session = await this.store.readValid(this.now());
-    if (!session) {
-      return { ok: false, message: "尚未登录，请先完成浏览器授权。" };
-    }
     try {
-      const issued = await this.broker.getInstallationToken(session.sessionToken);
-      this.assertRepository(issued);
-      this.installation = issued;
-      await this.writeTokenFile(issued);
+      const token = await this.ensureInstallationToken(true);
+      if (!token) {
+        return { ok: false, message: "尚未登录，请先完成飞书或 GitHub 登录。" };
+      }
+      const expiresAt = this.installation?.expiresAt ?? 0;
       return {
         ok: true,
-        message: `已获取仓库令牌，有效期至 ${new Date(issued.expiresAt).toISOString()}。`,
+        message: `已获取仓库令牌，有效期至 ${new Date(expiresAt).toISOString()}。`,
       };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
@@ -347,6 +449,7 @@ export class BrokerAuth {
     this.pending = null;
     this.installation = null;
     await this.removeTokenFile();
+    await this.removeWriteAuth();
     await this.store.clear();
     if (session) {
       try {
@@ -372,6 +475,52 @@ export class BrokerAuth {
     }
   }
 
+  /**
+   * A broker-proxied write presents the credential that proved *who* the
+   * caller is, not a repository token. The broker mints the write token
+   * itself, so this file never grants repository access on its own.
+   */
+  private async writeWriteAuth(
+    issued: InstallationTokenResult,
+    session: SessionRecord | null,
+    feishuToken: string | null
+  ): Promise<void> {
+    if (!this.writeAuthFile) return;
+    let kind: "feishu" | "github";
+    let token: string;
+    if (feishuToken) {
+      kind = "feishu";
+      token = feishuToken;
+    } else if (session?.sessionToken) {
+      kind = "github";
+      token = session.sessionToken;
+    } else {
+      await this.removeWriteAuth();
+      return;
+    }
+    const payload = JSON.stringify(
+      { kind, token, expiresAt: issued.expiresAt },
+      null,
+      2
+    );
+    await mkdir(path.dirname(this.writeAuthFile), { recursive: true });
+    await writeFile(this.writeAuthFile, payload, { mode: 0o600 });
+    try {
+      await chmod(this.writeAuthFile, 0o600);
+    } catch {
+      /* Windows / FAT */
+    }
+  }
+
+  private async removeWriteAuth(): Promise<void> {
+    if (!this.writeAuthFile || !existsSync(this.writeAuthFile)) return;
+    try {
+      await unlink(this.writeAuthFile);
+    } catch {
+      /* best effort */
+    }
+  }
+
   private async removeTokenFile(): Promise<void> {
     if (!existsSync(this.tokenFile)) return;
     try {
@@ -385,4 +534,9 @@ export class BrokerAuth {
 /** Default location the MCP child is told to read. */
 export function installationTokenPath(): string {
   return path.join(homedir(), ".dsh", "dsh-mmw-tools-installation.json");
+}
+
+/** Where the child reads the identity credential for broker-proxied writes. */
+export function writeAuthPath(): string {
+  return path.join(homedir(), ".dsh", "dsh-mmw-tools-write-auth.json");
 }
