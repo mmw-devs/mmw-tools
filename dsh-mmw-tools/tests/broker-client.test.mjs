@@ -162,6 +162,38 @@ console.log("\n--- getInstallationToken ---");
 }
 
 {
+  const { impl, calls } = stub(() =>
+    json({
+      token: "ghs_scoped",
+      expiresAt: 1_800_003_600_000,
+      repository: "mmw-devs/xivstrat-relay",
+      permissions: { contents: "read", pull_requests: "read" },
+    })
+  );
+  const client = new BrokerClient({ brokerUrl: BASE, fetchImpl: impl });
+  const t = await client.getInstallationToken("sess_abcdefgh", "mmw-devs/xivstrat-relay");
+  eq(
+    calls[0].url,
+    `${BASE}/installation-token?repo=mmw-devs%2Fxivstrat-relay`,
+    "a scoped mint names the repository in the query string"
+  );
+  eq(t.repository, "mmw-devs/xivstrat-relay", "the scoped repository is returned");
+}
+
+{
+  const { impl, calls } = stub(() =>
+    json({ token: "ghs_scoped", expiresAt: 1_800_003_600_000, repository: "mmw-devs/xivstrat-relay" })
+  );
+  const client = new BrokerClient({ brokerUrl: BASE, fetchImpl: impl });
+  await client.getInstallationTokenForFeishu("feishu_token", "mmw-devs/xivstrat-relay");
+  eq(
+    calls[0].url,
+    `${BASE}/installation-token?repo=mmw-devs%2Fxivstrat-relay`,
+    "the Feishu path scopes the mint too"
+  );
+}
+
+{
   const { impl } = stub(() => json({ message: "nope" }, 401));
   const client = new BrokerClient({ brokerUrl: BASE, fetchImpl: impl });
   await rejectsWith(() => client.getInstallationToken("s"), "session-rejected", "401 means the session is gone");

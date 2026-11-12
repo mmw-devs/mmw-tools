@@ -211,11 +211,14 @@ export class BrokerClient {
   }
 
   /** Step 3: exchange the session for a 1-hour installation token. */
-  async getInstallationToken(sessionToken: string): Promise<InstallationTokenResult> {
+  async getInstallationToken(
+    sessionToken: string,
+    repository?: string
+  ): Promise<InstallationTokenResult> {
     if (!sessionToken) {
       throw new BrokerError("session-required", "no session token; sign in first");
     }
-    const body = (await this.request("/installation-token", {
+    const body = (await this.request(this.installationTokenPath(repository), {
       method: "POST",
       bearer: sessionToken,
     })) as Record<string, unknown>;
@@ -227,15 +230,30 @@ export class BrokerClient {
    * plugin token against the auth core and mints a token scoped to the
    * member's operations.
    */
-  async getInstallationTokenForFeishu(feishuToken: string): Promise<InstallationTokenResult> {
+  async getInstallationTokenForFeishu(
+    feishuToken: string,
+    repository?: string
+  ): Promise<InstallationTokenResult> {
     if (!feishuToken) {
       throw new BrokerError("session-required", "no Feishu credential; sign in first");
     }
-    const body = (await this.request("/installation-token", {
+    const body = (await this.request(this.installationTokenPath(repository), {
       method: "POST",
       headers: { "x-mmw-feishu-token": feishuToken },
     })) as Record<string, unknown>;
     return this.parseInstallationToken(body);
+  }
+
+  /**
+   * A repository-scoped mint must name the repository in the query string:
+   * the deployed broker ignores an unknown parameter name but happily falls
+   * back to its default repository when the query is absent.
+   */
+  private installationTokenPath(repository?: string): string {
+    const repo = (repository ?? "").trim();
+    return repo.length > 0
+      ? `/installation-token?repo=${encodeURIComponent(repo)}`
+      : "/installation-token";
   }
 
   private parseInstallationToken(body: Record<string, unknown>): InstallationTokenResult {

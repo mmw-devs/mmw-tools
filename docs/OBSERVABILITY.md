@@ -29,6 +29,9 @@ A **run id** is created when the gate is about to decide a call to an
    so the audit log can be grouped by code without parsing prose; see
    [`contracts/ERRORS.md`](../contracts/ERRORS.md). `ask` currently covers
    `pr_merge` and `pr_close`. Arguments and results are never written.
+   `select_repo` is decided from local session state before the route table is
+   fetched (the table may lag a deployment); it still emits one
+   `gate_decision`, and business tools continue to require the table.
 
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not

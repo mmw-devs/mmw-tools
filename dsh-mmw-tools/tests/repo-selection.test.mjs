@@ -90,6 +90,24 @@ const fakeAuth = { routes: async () => routes };
   eq(unknownSession.ok, false, "missing session id fails closed");
 }
 
+// A deployed auth table may lag the plugin contract; select_repo must still
+// work so the session can bind a repository before any business call.
+{
+  const lagging = { ...routes, allowedOperations: ["race-ops.repo_read"] };
+  const gate = new PolicyGate({
+    auth: { routes: async () => lagging },
+    enabled: true,
+    repos: new RepoRegistry([entry("mmw-devs/xivstrat-relay")], "mmw-devs/xivstrat-relay"),
+  });
+  eq(
+    (await gate.check("mcp__mmw-tools__select_repo", "session-lag")).ok,
+    true,
+    "select_repo works even when the deployed operation table lags"
+  );
+  const denied = await gate.check("mcp__mmw-tools__pr_merge", "session-lag");
+  eq(denied.ok, false, "a lagging table still denies operations it does not list");
+}
+
 // A gate without a registry (single-repo profile) keeps the old behaviour.
 {
   const gate = new PolicyGate({ auth: fakeAuth, enabled: true });

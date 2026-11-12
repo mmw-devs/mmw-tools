@@ -10,6 +10,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
+/**
+ * The remote URL can carry the installation token (`https://x-access-token:…@`).
+ * `repo_status` output is shown to the model and may end up in transcripts, so
+ * never echo the credential part.
+ */
+export function redactRemoteUrl(url) {
+    return url.replace(/\/\/[^/@\s]+@/, "//");
+}
 export async function repoStatus(input, cfg) {
     // Probe whether a .git exists.
     // The dispatcher resolves the selected repository and passes its working
@@ -39,7 +47,7 @@ export async function repoStatus(input, cfg) {
         let remote = null;
         try {
             const remoteR = await execFileAsync("git", ["remote", "get-url", "origin"], { cwd: workingDir });
-            remote = remoteR.stdout.trim() || null;
+            remote = redactRemoteUrl(remoteR.stdout.trim()) || null;
         }
         catch {
             // No remote configured — that's fine.

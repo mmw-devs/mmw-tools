@@ -388,7 +388,7 @@ export class BrokerAuth {
   ): Promise<InstallationTokenResult> {
     if (feishuToken) {
       try {
-        return await this.broker.getInstallationTokenForFeishu(feishuToken);
+        return await this.broker.getInstallationTokenForFeishu(feishuToken, this.repository);
       } catch (err) {
         // A stale Feishu token must not strand an otherwise valid GitHub
         // session; fall through. With no session the Feishu error is the
@@ -396,7 +396,7 @@ export class BrokerAuth {
         if (!session) throw err;
       }
     }
-    if (session) return this.broker.getInstallationToken(session.sessionToken);
+    if (session) return this.broker.getInstallationToken(session.sessionToken, this.repository);
     throw new BrokerError("session-required", "no Feishu or GitHub credential; sign in first");
   }
 

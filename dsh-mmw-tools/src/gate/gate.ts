@@ -96,6 +96,15 @@ export class PolicyGate {
     }
     if (!this.enabled || ref.always) return { ok: true };
 
+    // `select_repo` is local session state, not a repository operation: it
+    // must be callable before a repository is bound and even when the auth
+    // service's operation table has not learned about it yet (the table is
+    // generated from a deployed contract, which can lag the plugin). Every
+    // real business operation below still needs an entry in allowedOperations.
+    if (ref.operationId === "race-ops.select_repo") {
+      return this.repoDecision(ref, sessionId);
+    }
+
     let routes;
     try {
       // Write operations must not ride on a cached table older than 15s:

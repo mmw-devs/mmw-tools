@@ -79,6 +79,15 @@
 - **Expiry labels were ambiguous.** The Feishu panel shows `剩余 N 天 H 小时`
   instead of a raw minute count, and the one-hour installation token is labelled
   `仓库令牌剩余` rather than being confused with the 7-day Feishu authorization.
+- **Broker token minting ignored the selected repository.** The client now sends
+  `?repo=<owner/name>` for both the GitHub-session and Feishu credential paths,
+  so a session bound to a non-default repository no longer gets a token for the
+  default one (`repo-mismatch`).
+- **`select_repo` was refused while the route table lagged.** The gate decides it
+  from local session state before fetching the table; business tools still
+  require `allowedOperations`.
+- **`repo_status` leaked the installation token in `remote_url`.** The remote URL
+  is now redacted before it is returned to the model.
 
 ### Security
 
