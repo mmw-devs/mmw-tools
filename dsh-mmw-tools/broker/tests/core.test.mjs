@@ -686,7 +686,9 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
     }
     if (method === "GET" && p === "/pulls/11") return json(state.pr);
     if (method === "PATCH" && p === "/pulls/11") {
-      state.pr = { ...state.pr, draft: false };
+      const patch = typeof init.body === "string" ? JSON.parse(init.body) : (init.body ?? {});
+      if (patch.state === "closed") state.pr = { ...state.pr, state: "closed" };
+      if (patch.draft === false) state.pr = { ...state.pr, draft: false };
       return json(state.pr);
     }
     if (method === "PUT" && p === "/pulls/11/merge") {
@@ -701,10 +703,11 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
 function makeWriteCore(overrides = {}) {
   const gh = fakeWriteGithub();
   const auth = fakeAuthService({
-    operations: [
+    operations: overrides.operations ?? [
       "race-ops.repo_read",
       "race-ops.repo_edit",
       "race-ops.pr_create",
+      "race-ops.pr_close",
       "race-ops.pr_merge",
     ],
   });
@@ -887,6 +890,50 @@ console.log("\n--- write proxy: pr_create ---");
   eq(res.number, 11, "the PR number is returned");
   eq(res.created, true, "a new PR is created");
   eq(res.draft, true, "draft is preserved");
+}
+
+console.log("\n--- write proxy: pr_close ---");
+{
+  const { core, gh, audits } = makeWriteCore();
+  const res = await core.writePrClose({ feishuToken: "fs", pr_number: 11 });
+  eq(res.number, 11, "the closed PR number is returned");
+  eq(res.closed, true, "the PR is closed");
+  eq(res.already, false, "the first close is not a no-op");
+  eq(gh.state.pr.state, "closed", "GitHub received the close");
+  eq(audits.at(-1)?.op, "pr_close", "the close is audited");
+}
+{
+  const { core } = makeWriteCore();
+  await core.writePrClose({ feishuToken: "fs", pr_number: 11, idempotencyKey: "first" });
+  const again = await core.writePrClose({ feishuToken: "fs", pr_number: 11, idempotencyKey: "second" });
+  eq(again.already, true, "closing an already closed PR is a no-op");
+  eq(again.closed, true, "an already closed PR still reports closed");
+}
+{
+  const { core } = makeWriteCore();
+  await core.writePrClose({ feishuToken: "fs", pr_number: 11, idempotencyKey: "once" });
+  const replay = await core.writePrClose({
+    feishuToken: "fs",
+    pr_number: 11,
+    idempotencyKey: "once",
+  });
+  eq(replay.idempotent, true, "a retry with the same key is idempotent");
+}
+{
+  const { core } = makeWriteCore({ operations: ["race-ops.repo_read", "race-ops.repo_edit"] });
+  await rejectsWith(
+    () => core.writePrClose({ feishuToken: "fs", pr_number: 11 }),
+    "feishu-operation-denied",
+    "a Feishu role without pr_close cannot close"
+  );
+}
+{
+  const { core } = makeWriteCore({ branchPrefix: "other/" });
+  await rejectsWith(
+    () => core.writePrClose({ feishuToken: "fs", pr_number: 11 }),
+    "branch-prefix",
+    "a PR outside content/* is not closed"
+  );
 }
 
 console.log("\n--- write proxy: pr_merge approval ---");

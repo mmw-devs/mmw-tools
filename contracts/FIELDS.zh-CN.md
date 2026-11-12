@@ -93,6 +93,9 @@
 }
 ```
 
+当前 `pr_close` 也是这类 operation-level 覆盖的写操作，显式声明
+`roles: ["editor", "operator", "admin"]`；它复用上面的字段结构，不新增字段。
+
 ## 7. 修改后怎么办
 
 ```sh

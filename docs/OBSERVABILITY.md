@@ -22,7 +22,8 @@ A **run id** is created when the gate is about to decide a call to an
    the decision that allowed it.
 3. **Into the local audit log** — the gate emits one `gate_decision` event per
    decision (`allow`, `deny` or `ask`), including the id, the public tool name and
-   a short reason. Arguments and results are never written.
+   a short reason. `ask` currently covers `pr_merge` and `pr_close`. Arguments
+   and results are never written.
 
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not

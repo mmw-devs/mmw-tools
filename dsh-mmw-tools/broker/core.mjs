@@ -45,6 +45,7 @@ const FEISHU_READ_OPERATION = "race-ops.repo_read";
 const FEISHU_EDIT_OPERATION = "race-ops.repo_edit";
 const FEISHU_PR_OPERATION = "race-ops.pr_create";
 const FEISHU_MERGE_OPERATION = "race-ops.pr_merge";
+const FEISHU_CLOSE_OPERATION = "race-ops.pr_close";
 
 /** Idempotent write responses are kept for a day: a retry is not a new edit. */
 const WRITE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1084,6 +1085,77 @@ export class BrokerCore {
       base,
       headSha: result.head_sha,
       created,
+    });
+    return result;
+  }
+
+  /**
+   * Close an open content/* PR without merging it.
+   *
+   * Closing is what makes the lifecycle finite: a PR that is abandoned (CI
+   * red, superseded, or the change no longer wanted) should leave the open
+   * queue. Re-closing an already closed/merged PR is a no-op, so a retry
+   * after a lost response is safe.
+   */
+  async writePrClose(args = {}) {
+    const who = await this.#authorizeWrite(FEISHU_CLOSE_OPERATION, args);
+    const prNumber = Number(args.prNumber ?? args.pr_number);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
+    }
+
+    const requestId = this.#requestId(args.requestId);
+    const idemKey = this.#idempotencyKey("pr_close", args.idempotencyKey, { prNumber });
+    const cached = this.#recall(idemKey);
+    if (cached) return { ...cached, idempotent: true };
+
+    const pr = await this.#api("GET", `/pulls/${prNumber}`);
+    if (!pr) {
+      throw new BrokerRefused("pr-not-found", `PR #${prNumber} does not exist`, 404);
+    }
+
+    // Already closed (including merged): nothing to do, and a retry should
+    // not turn into an error just because the first call succeeded.
+    if (pr.state !== "open") {
+      const result = {
+        number: pr.number,
+        closed: true,
+        already: true,
+        merged: Boolean(pr.merged_at),
+        head_sha: pr.head?.sha ?? "",
+        url: pr.html_url ?? "",
+        idempotent: false,
+      };
+      this.#remember(idemKey, result);
+      return result;
+    }
+
+    if (!String(pr.head?.ref ?? "").startsWith(this.branchPrefix)) {
+      throw new BrokerRefused("branch-prefix", "the PR head is not a content branch", 409);
+    }
+    if (pr.base?.ref !== this.baseBranch) {
+      throw new BrokerRefused("base-not-allowed", `the PR does not target ${this.baseBranch}`, 409);
+    }
+
+    await this.#api("PATCH", `/pulls/${prNumber}`, { body: { state: "closed" } });
+
+    const result = {
+      number: pr.number,
+      closed: true,
+      already: false,
+      merged: false,
+      head_sha: pr.head?.sha ?? "",
+      url: pr.html_url ?? "",
+      idempotent: false,
+    };
+    this.#remember(idemKey, result);
+    this.#audit({
+      requestId,
+      op: "pr_close",
+      member: who.login,
+      kind: who.kind,
+      pr: prNumber,
+      headSha: result.head_sha,
     });
     return result;
   }

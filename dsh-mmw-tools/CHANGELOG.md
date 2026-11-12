@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Feishu members can open PRs without a GitHub account, through a write proxy
+## Unreleased — Feishu members can open and close PRs without a GitHub account, through a write proxy
 
 ### Added
 
@@ -14,14 +14,15 @@
   /installation-token` also reads `X-MMW-Feishu-Token`, verifies it with the
   auth core (`/v1/me`, `/v1/agent/routes`), and returns a **read-only** client
   token. The org/allowlist path is unchanged, and a GitHub account is no longer
-  required to clone, edit, or open a PR.
+  required to clone, edit, open, or close a PR.
 - **The broker proxies writes.** `POST /v1/write/repo_edit`,
-  `/v1/write/pr_create`, `/v1/write/pr_merge/approval`, and
-  `/v1/write/pr_merge` re-check the exact operation on every call and use a
+  `/v1/write/pr_create`, `/v1/write/pr_close`, `/v1/write/pr_merge/approval`,
+  and `/v1/write/pr_merge` re-check the exact operation on every call and use a
   write token that exists only in broker memory. `repo_edit` uses the Git Data
   API and requires `base_sha` to equal the current head; `pr_create` reuses an
-  open PR for the same head; `pr_merge` needs a five-minute, single-use
-  approval bound to the member, PR, and head SHA.
+  open PR for the same head; `pr_close` refuses non-`content/*` or wrong-base
+  PRs and reports `already: true` for closed/merged ones; `pr_merge` needs a
+  five-minute, single-use approval bound to the member, PR, and head SHA.
 - The broker reads `MMW_TOOLS_AUTH_URL`, `BROKER_WRITE_ENABLED`,
   `BROKER_ALLOWLIST_PATHS`, `BROKER_DENYLIST_PATHS`, `BROKER_BASE_BRANCH`,
   `BROKER_BRANCH_PREFIX`, and `BROKER_AUDIT_LOG`; `/health` reports
@@ -32,9 +33,12 @@
   labels its button `登录 GitHub（可选）` and renders no GitHub refresh/logout
   controls in Feishu mode.
 - The plugin writes `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`) with the
-  Feishu pluginToken or GitHub sessionToken; `repo_edit`, `pr_create`, and
-  `pr_merge` use it to call the broker. Without that file they keep the local
-  git/`gh` path.
+  Feishu pluginToken or GitHub sessionToken; `repo_edit`, `pr_create`,
+  `pr_close`, and `pr_merge` use it to call the broker. Without that file they
+  keep the local git/`gh` path.
+- **`pr_close` closes a PR without merging it.** It is a `write` operation for
+  `editor` / `operator` / `admin`; the host asks the user before it runs, and an
+  already closed or merged PR returns `already: true` instead of an error.
 
 ### Changed
 

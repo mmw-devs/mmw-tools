@@ -76,6 +76,7 @@ const fetchImpl = async (url, init = {}) => {
       allowedOperations: [
         "mmw-tools-status.status",
         "race-ops.repo_read",
+        "race-ops.pr_close",
         "race-ops.pr_merge",
       ],
       denied: [],
@@ -130,6 +131,7 @@ try {
   const gate = new PolicyGate({ auth, enabled: true });
   eq((await gate.check("mmw_tools_status")).ok, true, "always-on status is allowed");
   eq((await gate.check("mcp__mmw-tools__repo_read")).ok, true, "race-ops operation allowed for operator");
+  eq((await gate.check("mcp__mmw-tools__pr_close")).ok, true, "pr_close allowed by policy; host confirmation is separate");
   eq((await gate.check("mcp__mmw-tools__pr_merge")).ok, true, "pr_merge allowed by policy; host confirmation is separate");
   eq((await gate.check("mcp__mmw-tools__unknown")).ok, false, "unknown tool is denied");
 
@@ -392,8 +394,10 @@ try {
   installToolGate(ctx2, { gate: allowGate, logger: { warn: () => {} } });
   const ask = await allowListener({ name: "mcp__mmw-tools__pr_merge" }, async () => "next");
   eq(ask.kind, "ask", "allowed pr_merge still asks the operator");
+  const closeAsk = await allowListener({ name: "mcp__mmw-tools__pr_close" }, async () => "next");
+  eq(closeAsk.kind, "ask", "allowed pr_close asks the operator");
   const passthrough = await allowListener({ name: "mcp__mmw-tools__repo_read" }, async () => "next");
-  eq(passthrough, "next", "non-merge calls pass through");
+  eq(passthrough, "next", "non-destructive calls pass through");
 }
 
 // REGRESSION: the gate is a global `tools/pre-execute` listener, so it sees

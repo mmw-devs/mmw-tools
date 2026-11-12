@@ -256,12 +256,12 @@ with older brokers).
 1. `GET /v1/me` with `Authorization: Bearer <pluginToken>`; a string `id` is
    required.
 2. `GET /v1/agent/routes`; read `allowedOperations`.
-3. Decide the scope: `race-ops.repo_read` → read;
-   `race-ops.repo_edit` **and** `race-ops.pr_create` → write; neither →
+3. Require at least one repository operation (`repo_read`, `repo_edit`,
+   `pr_create`, `pr_close`, or `pr_merge`); none →
    `403 feishu-no-access` (no mint).
-4. Mint with only the needed permissions — read:
-   `{contents: "read", pull_requests: "read"}`, write:
-   `{contents: "write", pull_requests: "write"}`.
+4. `/installation-token` always mints the read-only client token
+   `{contents: "read", pull_requests: "read"}`. Write permission is checked
+   again on each `/v1/write/*` call (§13), never by this endpoint.
 5. Failure codes: auth core 401/403 → `feishu-auth-rejected`; non-2xx / bad
    JSON → `feishu-check-failed` / `feishu-bad-response`; network → 
    `feishu-unreachable`; no `MMW_TOOLS_AUTH_URL` → `feishu-not-configured`.
@@ -336,7 +336,7 @@ write operations are proxied per call in §13.
 
 | `allowedOperations` contains | Client token |
 |---|---|
-| any of `repo_read` / `repo_edit` / `pr_create` / `pr_merge` | read: `contents: read`, `pull_requests: read` |
+| any of `repo_read` / `repo_edit` / `pr_create` / `pr_close` / `pr_merge` | read: `contents: read`, `pull_requests: read` |
 | none | refused, `feishu-no-access` |
 
 Properties worth stating:
@@ -627,8 +627,8 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
   write token。
 - 面板：飞书模式显示「已登录（飞书）」，隐藏「重新获取仓库权限」「退出登录」，
   GitHub 按钮降级为「登录 GitHub（可选）」。
-- MCP 的 `repo_edit` / `pr_create` / `pr_merge` 在有写认证时走 broker；没有写认证
-  时保留旧的本地 git / `gh` 路径，供独立使用与旧测试。
+- MCP 的 `repo_edit` / `pr_create` / `pr_close` / `pr_merge` 在有写认证时走 broker；
+  没有写认证时保留旧的本地 git / `gh` 路径，供独立使用与旧测试。
 - 测试：`broker/tests/core.test.mjs`、`broker/tests/server.test.mjs`、
   `tests/broker-auth.test.mjs` 覆盖只读 token、写授权、幂等、approval、路径
   allow/deny 与回退。
@@ -641,7 +641,7 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 2. `systemctl restart race-ops-broker`。
 3. `GET /health` 看到 `"feishuEnabled": true` 与 `"writeEnabled": true`。
 4. 飞书成员在插件里完成飞书登录，不需要 GitHub 账号。只读要 `viewer`；开 PR
-   要 `editor` 或更高（`repo_edit` + `pr_create`）。
+   或关 PR 要 `editor` 或更高（`repo_edit` + `pr_create` / `pr_close`）。
 
 **未实现（仍是缺口）**
 
@@ -656,8 +656,8 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 ## 13. 写代理（2026-11-12）
 
-客户端不再持有 GitHub write token。`repo_edit`、`pr_create`、`pr_merge` 由
-broker 用内存里的 write token 代执行，broker 是唯一能写仓库的进程。
+客户端不再持有 GitHub write token。`repo_edit`、`pr_create`、`pr_close`、
+`pr_merge` 由 broker 用内存里的 write token 代执行，broker 是唯一能写仓库的进程。
 
 ### 端点
 
@@ -665,6 +665,7 @@ broker 用内存里的 write token 代执行，broker 是唯一能写仓库的�
 |---|---|---|
 | `POST /v1/write/repo_edit` | `race-ops.repo_edit` | 用 Git Data API 建 blob/tree/commit/ref |
 | `POST /v1/write/pr_create` | `race-ops.pr_create` | 创建 PR；同 head 的 open PR 直接复用 |
+| `POST /v1/write/pr_close` | `race-ops.pr_close` | 关闭 PR；已关闭/已合并返回 `already: true` |
 | `POST /v1/write/pr_merge/approval` | `race-ops.pr_merge` | 取一次性 approval，不合并 |
 | `POST /v1/write/pr_merge` | `race-ops.pr_merge` | 消费 approval 并合并 |
 
@@ -712,6 +713,15 @@ broker 用内存里的 write token 代执行，broker 是唯一能写仓库的�
 请求 `{head, base, title, body, draft}`。`head` 必须已存在且以分支前缀开头；
 `base` 必须等于 `BROKER_BASE_BRANCH`；`draft` 默认 `true`。broker 先查同 head
 的 open PR，有则复用，没有才创建。成功返回 `{number, url, head_sha, draft}`。
+
+### `pr_close`
+
+请求 `{pr_number}`。broker 先 `GET /pulls/{n}`：不存在返回 `pr-not-found`（404）；
+已经不是 open（包括已合并）时直接返回 `{closed: true, already: true, merged}`，
+不重复调用 GitHub。只有 head 以 `BROKER_BRANCH_PREFIX` 开头、base 等于
+`BROKER_BASE_BRANCH` 的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
+不会删除分支；成功返回 `{number, closed: true, already: false, head_sha, url}`。
+宿主在执行前仍会弹出一次确认。
 
 ### `pr_merge`
 

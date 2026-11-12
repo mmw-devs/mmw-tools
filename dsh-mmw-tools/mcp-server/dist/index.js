@@ -20,6 +20,7 @@ import { repoRead } from "./tools/repo-read.js";
 import { repoSearch } from "./tools/repo-search.js";
 import { repoEdit } from "./tools/repo-edit.js";
 import { prCreate } from "./tools/pr-create.js";
+import { prClose } from "./tools/pr-close.js";
 import { prList } from "./tools/pr-list.js";
 import { prMerge } from "./tools/pr-merge.js";
 import { prPreview } from "./tools/pr-preview.js";
@@ -203,6 +204,22 @@ const TOOLS = [
             body: input.body,
             draft: input.draft,
             base: input.base,
+        }, config()),
+    },
+    {
+        name: "pr_close",
+        description: "关闭一个 content/* 分支的 PR，不合并。宿主会在执行前弹出确认。用于放弃不再需要的 PR，" +
+            "让 open 队列保持可运营；已经关闭或已合并的 PR 返回 already=true。",
+        inputSchema: {
+            type: "object",
+            properties: {
+                pr_number: { type: "number" },
+            },
+            required: ["pr_number"],
+            additionalProperties: false,
+        },
+        call: (input) => prClose({
+            pr_number: input.pr_number,
         }, config()),
     },
     {
