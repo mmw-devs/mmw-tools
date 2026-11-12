@@ -1018,6 +1018,43 @@ console.log("\n--- write proxy: pr_merge approval ---");
   eq(gh.state.pr.draft, false, "approval marks the draft ready");
 }
 
+console.log("\n--- repo registry: mint for a second repository ---");
+{
+  const mints = [];
+  const { core } = makeCore({
+    repos: [{ owner: "mmw-devs", name: "xivstrat-relay", baseBranch: "master" }],
+    mintInstallationToken: async (opts = {}) => {
+      mints.push(opts);
+      return {
+        token: `ghs:${opts.repository}`,
+        expiresAt: NOW + 3_600_000,
+        permissions: opts.permissions ?? {},
+      };
+    },
+  });
+  const started = core.startSession();
+  const res = await core.completeLogin({ code: "c", state: started.state });
+
+  const fallback = await core.issueInstallationToken(res.sessionToken);
+  eq(fallback.repository, "mmw-devs/ffxiv-race-ops", "omitting repo keeps the default repository");
+  eq(mints.at(-1).repository, "mmw-devs/ffxiv-race-ops", "the default mint names its repository");
+
+  const relay = await core.issueInstallationToken(res.sessionToken, "MMW-DEVS/xivstrat-relay");
+  eq(relay.repository, "mmw-devs/xivstrat-relay", "a repo key selects the second repository (case-insensitive)");
+  eq(relay.token, "ghs:mmw-devs/xivstrat-relay", "the token is minted for that repository");
+  eq(
+    core.repos.get("mmw-devs/xivstrat-relay").baseBranch,
+    "master",
+    "per-repository base branch is kept in the registry"
+  );
+
+  await rejectsWith(
+    () => core.issueInstallationToken(res.sessionToken, "mmw-devs/not-configured"),
+    "repo-denied",
+    "an unknown repository is refused instead of falling back"
+  );
+}
+
 console.log("\n--- safeEqual ---");
 {
   eq(safeEqual("abc", "abc"), true, "equal strings match");

@@ -46,6 +46,23 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+/**
+ * Extra repositories this broker may mint read tokens for, as a JSON array:
+ * [{"owner":"mmw-devs","name":"xivstrat-relay","baseBranch":"master"}].
+ * ABSENT means the broker only knows the default REPO_OWNER/REPO_NAME.
+ */
+function parseRepos(value) {
+  if (!value || value.trim() === "") return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("BROKER_REPOS must be valid JSON");
+  }
+  if (!Array.isArray(parsed)) throw new Error("BROKER_REPOS must be a JSON array");
+  return parsed;
+}
+
 /** Append-only audit log. Never receives a token or a request body. */
 function makeAudit(file) {
   if (!file) return null;
@@ -72,6 +89,7 @@ function loadConfig() {
     publicUrl: envOrDie("BROKER_PUBLIC_URL"),
     owner: envOrDie("REPO_OWNER"),
     repo: envOrDie("REPO_NAME"),
+    repos: parseRepos(process.env.BROKER_REPOS),
     org: process.env.BROKER_ORG ?? process.env.REPO_OWNER,
     allowMode: process.env.BROKER_ALLOW_MODE === "list" ? "list" : "org",
     allowList: (process.env.BROKER_ALLOWED_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -308,12 +326,14 @@ export function createBrokerServer(core, opts = {}) {
       /* --- step 3: mint --- */
       if (pathname === "/installation-token" && req.method === "POST") {
         await readBody(req);
+        // Optional repo selection; omitted means the default repository.
+        const repoKey = url.searchParams.get("repo") ?? undefined;
         // A Feishu credential is explicit: when the header is present it is
         // the only identity considered. This is the path for people without
         // a GitHub account; the GitHub session path stays for everyone else.
         const feishuHeader = req.headers["x-mmw-feishu-token"];
         if (typeof feishuHeader === "string" && feishuHeader.length > 0) {
-          const issued = await core.issueInstallationTokenForFeishu(feishuHeader);
+          const issued = await core.issueInstallationTokenForFeishu(feishuHeader, repoKey);
           log("installation_token_issued", {
             repository: issued.repository,
             mode: "feishu",
@@ -323,7 +343,7 @@ export function createBrokerServer(core, opts = {}) {
           return;
         }
         const token = bearer(req);
-        const issued = await core.issueInstallationToken(token);
+        const issued = await core.issueInstallationToken(token, repoKey);
         log("installation_token_issued", { repository: issued.repository, mode: "github" });
         sendJson(res, 200, issued);
         return;
