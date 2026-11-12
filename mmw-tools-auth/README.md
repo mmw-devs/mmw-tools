@@ -4,7 +4,9 @@
 DSH 插件是消费者；它静态注册全部工具，并在每次调用时按这里下发的 `allowed` 集合放行或拒绝。
 
 > 状态：Phase 1 MVP 已部署到 `https://mmw-tools.mmw-team.icu`；公网 `/health` 正常。
-> 首位管理员已配置，bootstrap token 已移除；真实飞书插件登录待验证。
+> 首位管理员已配置，bootstrap token 已移除；真实飞书登录已于 2026-11-11 验证通过
+> （浏览器 + 插件两次授权，插件 token 7 天有效），证据见
+> [`../docs/CONFORMANCE.md`](../docs/CONFORMANCE.md) 的“2026-11-11 更正”。
 > 设计见 [`../mmw-tools-routing-layer-plan.md`](../mmw-tools-routing-layer-plan.md) 和
 > [`../mmw-tools-routing-state-machine.md`](../mmw-tools-routing-state-machine.md)。
 > 部署步骤见 [`deploy/README.md`](deploy/README.md)。

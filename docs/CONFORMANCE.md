@@ -51,3 +51,23 @@ Status: historical
 3. **O3**：`catalogRevision` 漂移检查、拒绝原因脱敏不变量、故障码覆盖。
 4. **O5**：按 [`MULTI-REPO-ROUTING.md`](MULTI-REPO-ROUTING.md) 选定形态后
    再动契约与传输。
+
+## 2026-11-11 更正（O2 联调）
+
+本节的日期指实际验证时间，不改变上面的快照内容。
+
+- 第 1 行“稳定错误码未实现”已由 PR #6 关闭：`dsh-mmw-tools/src/gate/gate.ts`
+  的拒绝 reason 以 `[mmw_route_denied]` 等稳定码开头，测试覆盖 6 组
+  auth 错误映射、未知本插件工具、取表失败与角色撤销；`mmw_tool_unavailable`
+  仍属传输层，gate 不产生。
+- 第 8 行“端到端登录本机无法验证”已被推翻。本机可访问
+  `https://mmw-tools.mmw-team.icu`：`/health` 返回 200；用户完成浏览器与插件
+  两次飞书授权后，插件 token 于 2026-11-11 04:15 +08:00 重写（168 小时）；
+  `/v1/me` 返回 200，`/v1/agent/routes` 返回 `contractVersion: 2`、12 个
+  operation 与当时的 `catalogRevision` 一致。无 token 与伪造 token 仍分别返回
+  401 `mmw_auth_required` / `mmw_session_expired`。
+- 这次联调没有覆盖：viewer 账号的线上只读拒绝（需要第二个飞书账号）、
+  token refresh 与 logout 的线上路径。它们仍属 O2 的剩余验收项。
+- 第 3 行“`catalogRevision` 漂移检测”仍未实现，留给 O3。合并后契约因新增
+  `pr_close` 变为 13 个 operation，`catalogRevision` 为
+  `sha256:39629e0c…`；上文的 12 与旧 revision 只描述快照当时。
