@@ -229,6 +229,12 @@ X-MMW-Feishu-Token: <pluginToken>             # Feishu path; no GitHub session
 
 If both are present the Feishu header wins (the plugin sends only one).
 
+Optional query parameter `?repo=owner/name` selects a non-default repository
+from the broker's registry (`BROKER_REPOS`, §9). Omitted means the default
+`REPO_OWNER/REPO_NAME`. An unknown key is refused with `403 repo-denied`; the
+minted token is limited to that repository and the response echoes its
+canonical `owner/name`.
+
 Response:
 
 ```json
@@ -236,10 +242,10 @@ Response:
   "token": "ghs_...",
   "expiresAt": 1780000000000,
   "repository": "mmw-devs/ffxiv-race-ops",
-  "permissions": { "contents": "write", "pull_requests": "write" },
+  "permissions": { "contents": "read", "pull_requests": "read" },
   "authMode": "feishu",
   "login": "张三",
-  "scope": "write"
+  "scope": "read"
 }
 ```
 
@@ -426,6 +432,11 @@ BROKER_ALLOWLIST_PATHS=public/data.json,scripts/**
 BROKER_DENYLIST_PATHS=AGENTS.md,.github/**
 BROKER_BASE_BRANCH=main
 BROKER_BRANCH_PREFIX=content/
+# 可选：额外仓库注册表（JSON 数组）。目前只用于 /installation-token 的
+# ?repo= 选择；写代理仍只操作默认仓库。每项可覆盖 baseBranch/branchPrefix/
+# allowlistPaths/denylistPaths，省略则继承上面的默认值。
+# BROKER_REPOS=[{"owner":"mmw-devs","name":"xivstrat-relay","baseBranch":"master"}]
+BROKER_REPOS=
 # 可选：写审计 JSONL；目录必须对服务用户可写。不配则只写进程日志。
 BROKER_AUDIT_LOG=/opt/race-ops-broker/write-audit.jsonl
 # 飞书直连（可选）：配了才会接受 X-MMW-Feishu-Token；broker 必须能访问 auth core。

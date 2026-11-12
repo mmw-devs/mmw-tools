@@ -91,7 +91,7 @@ export class BrokerCore {
   #sessions = new Map(); // state -> { pollSecret, status, createdAt, expiresAt, login, reason }
   #tokens = new Map(); // sha256(sessionToken) -> { login, expiresAt, createdAt }
   #allowCache = new Map(); // login -> { allowed, checkedAt }
-  #mintCache = null; // installation token reused for membership checks
+  #mintCache = new Map(); // repo key -> installation token reused for membership checks
   #writeMintCache = null; // installation token used by the write proxy only
   #idempotency = new Map(); // key -> { value, expiresAt }
   #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
@@ -145,6 +145,36 @@ export class BrokerCore {
     this.denylistPaths = (opts.denylistPaths ?? []).map((p) => String(p).trim()).filter(Boolean);
     this.baseBranch = String(opts.baseBranch ?? "main");
     this.branchPrefix = String(opts.branchPrefix ?? "content/");
+
+    // Repository registry. The configured repo stays the default; extra
+    // entries let one broker mint tokens for several repositories without
+    // changing the App installation. Each entry carries the rules that were
+    // previously process-wide (base branch, branch prefix, path allowlist).
+    this.defaultRepo = {
+      key: `${this.owner}/${this.repo}`,
+      owner: this.owner,
+      name: this.repo,
+      baseBranch: this.baseBranch,
+      branchPrefix: this.branchPrefix,
+      allowlistPaths: this.allowlistPaths,
+      denylistPaths: this.denylistPaths,
+    };
+    this.repos = new Map([[this.defaultRepo.key.toLowerCase(), this.defaultRepo]]);
+    for (const raw of Array.isArray(opts.repos) ? opts.repos : []) {
+      const owner = String(raw?.owner ?? "").trim();
+      const name = String(raw?.name ?? raw?.repo ?? "").trim();
+      if (!owner || !name) throw new Error("broker repos entries need owner and name");
+      const key = `${owner}/${name}`;
+      this.repos.set(key.toLowerCase(), {
+        key,
+        owner,
+        name,
+        baseBranch: String(raw.baseBranch ?? this.baseBranch),
+        branchPrefix: String(raw.branchPrefix ?? this.branchPrefix),
+        allowlistPaths: Array.isArray(raw.allowlistPaths) ? raw.allowlistPaths : this.allowlistPaths,
+        denylistPaths: Array.isArray(raw.denylistPaths) ? raw.denylistPaths : this.denylistPaths,
+      });
+    }
     this.maxEdits = opts.maxEdits ?? MAX_EDITS_PER_COMMIT;
     this.maxEditBytes = opts.maxEditBytes ?? MAX_EDIT_BYTES;
     this.maxEditTotalBytes = opts.maxEditTotalBytes ?? MAX_EDIT_TOTAL_BYTES;
@@ -153,6 +183,20 @@ export class BrokerCore {
 
   get repository() {
     return `${this.owner}/${this.repo}`;
+  }
+
+  /**
+   * Resolve a repo key ("owner/name") against the registry. An omitted key
+   * means the default repository; an unknown key is refused instead of
+   * falling back, so a typo can never touch the wrong repository.
+   */
+  #repoConfig(key) {
+    const wanted = String(key ?? "").trim();
+    const resolved = wanted === "" ? this.defaultRepo : this.repos.get(wanted.toLowerCase());
+    if (!resolved) {
+      throw new BrokerRefused("repo-denied", `repository ${wanted} is not configured`, 403);
+    }
+    return resolved;
   }
 
   callbackUrl() {
@@ -556,15 +600,15 @@ export class BrokerCore {
    * lets someone without a GitHub account open a PR: the PR is authored by
    * the App installation, and the person is identified by Feishu.
    */
-  async issueInstallationTokenForFeishu(pluginToken) {
+  async issueInstallationTokenForFeishu(pluginToken, repoKey) {
     const resolved = await this.#resolveFeishu(pluginToken);
+    const rc = this.#repoConfig(repoKey);
     const permissions = { contents: "read", pull_requests: "read" };
-    const mint = this.mintInstallationToken ?? defaultMint(this);
-    const result = await mint({ permissions });
+    const result = await this.#mintFor(rc, { permissions });
     return {
       token: result.token,
       expiresAt: result.expiresAt,
-      repository: this.repository,
+      repository: rc.key,
       permissions: result.permissions ?? permissions,
       authMode: "feishu",
       login: resolved.login,
@@ -576,13 +620,19 @@ export class BrokerCore {
   /** One installation token, reused briefly for membership checks. */
   async #installationTokenForChecks() {
     const now = this.now();
-    if (this.#mintCache && this.#mintCache.expiresAt - 60_000 > now) {
-      return this.#mintCache.token;
+    const key = this.defaultRepo.key.toLowerCase();
+    const cached = this.#mintCache.get(key);
+    if (cached && cached.expiresAt - 60_000 > now) {
+      return cached.token;
     }
-    const mint = this.mintInstallationToken ?? defaultMint(this);
-    const issued = await mint();
-    this.#mintCache = { token: issued.token, expiresAt: issued.expiresAt };
+    const issued = await this.#mintFor(this.defaultRepo);
+    this.#mintCache.set(key, { token: issued.token, expiresAt: issued.expiresAt });
     return issued.token;
+  }
+
+  #mintFor(rc, opts = {}) {
+    const mint = this.mintInstallationToken ?? defaultMint(this);
+    return mint({ ...opts, repository: rc.key });
   }
 
   /* ---------------- polling ---------------- */
@@ -634,7 +684,7 @@ export class BrokerCore {
   }
 
   /** A read-only token; repository writes go through the broker proxy. */
-  async issueInstallationToken(sessionToken) {
+  async issueInstallationToken(sessionToken, repoKey) {
     const { record } = this.#sessionFor(sessionToken);
 
     // Re-check: the allowlist is the revocation mechanism, so a cached
@@ -645,13 +695,13 @@ export class BrokerCore {
       throw new BrokerRefused("not-allowed", `no longer allowed: ${verdict.reason}`, 403);
     }
 
+    const rc = this.#repoConfig(repoKey);
     const permissions = { contents: "read", pull_requests: "read" };
-    const mint = this.mintInstallationToken ?? defaultMint(this);
-    const result = await mint({ permissions });
+    const result = await this.#mintFor(rc, { permissions });
     return {
       token: result.token,
       expiresAt: result.expiresAt,
-      repository: this.repository,
+      repository: rc.key,
       permissions: result.permissions ?? permissions,
       authMode: "github",
       login: record.login,
@@ -1430,18 +1480,20 @@ function encodePath(pathname) {
 
 /**
  * Default minting path: sign a JWT with the App key and exchange it for a
- * token limited to the single configured repository.
+ * token limited to one repository. `opts.repository` is "owner/name"; the
+ * installation token API takes repository *names* only.
  */
 function defaultMint(core) {
   return async (opts = {}) => {
     const { createInstallationToken } = await import(
       new URL("../lib/auth/github-app.js", import.meta.url).href
     );
+    const repoName = String(opts.repository ?? core.repository).split("/").pop();
     return createInstallationToken({
       appId: core.appId,
       privateKeyPem: core.privateKeyPem,
       installationId: core.installationId,
-      repositories: [core.repo],
+      repositories: [repoName],
       fetchImpl: core.fetchImpl,
       // Checks (membership) need the App's own permission set, so they call
       // this without options. Feishu modes pass an explicit, narrower set.
