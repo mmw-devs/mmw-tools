@@ -163,11 +163,11 @@ PR 不算安全修复。
 4. **MCP server 在插件启动时就拉起**：与目标状态机的“未授权不启动 Transport”
    不一致；当前靠 gate 在调用时拒绝。
 5. **无 rate limiting**：单仓库、单用户场景暂时可接受，多用户前必须补。
-6. **多仓库只完成了执行侧**：`select_repo`、会话锁定、`_meta.mmwRepo`、每仓库
-   工作副本/令牌与 broker 路由已实现；`select_repo` 在授权表之前按会话状态
-   放行，避免角色表滞后阻塞选仓，业务工具仍查表。auth core 的 `repos` 表、
-   管理 UI、`grants(member, repo, role)` 与 `.dsh-mmw-tools.yaml` 运行时规则
-   仍未实现，当前靠插件配置 `repos` 注册仓库、靠账号级 operation 集合授权。
+6. **多仓库只完成了执行侧与注册表**：`select_repo`、会话锁定、`_meta.mmwRepo`、
+   每仓库工作副本/令牌与 broker 路由已实现；auth core 的 `repos` 表、管理 UI 与
+   `GET /v1/agent/repos` 已落地。仍未实现的是插件从 auth core 读取注册表（当前
+   仍读插件配置 `repos`）、`grants(member, repo, role)` 与 `.dsh-mmw-tools.yaml`
+   运行时规则；账号级 operation 集合仍未按仓库收窄。
 7. **approval 不绑定“人真的点了确认”**：一次性的 approval 绑定 member、PR、
    head SHA，且 5 分钟过期；但能读 `0600` 写认证文件并直接发 HTTP 的本地进程
    可以自调用 approval + merge。宿主对 `pr_merge` 的确认只是 UI 门，关闭这个
@@ -210,6 +210,10 @@ PR 不算安全修复。
   `select_repo` 在授权表之前按本地会话状态判定，业务工具仍受
   `allowedOperations` 约束；仓库注册表、按仓库授权与运行时规则文件仍是
   目标设计，见 ADR-0001。
+- **v9（2026-11-13）**：auth core 增加仓库注册表（`repos` 表、管理员
+  `PUT /api/admin/repos`、管理 UI、插件只读的 `GET /v1/agent/repos`）。
+  注册表是仓库事实的服务端源；插件尚未改为从它读取，`grants` 与运行时
+  规则文件仍待实现。
 
 ## 9. 相关文档
 

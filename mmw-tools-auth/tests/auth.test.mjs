@@ -434,6 +434,95 @@ export async function runAuthTests(test) {
     }
   });
 
+  await test("repo registry: admin-only upsert, default selection, agent view", async () => {
+    const fixture = createFixture({ bootstrapToken: "boot-secret" });
+    const server = await startServer(fixture);
+    try {
+      fixture.mock.state.user = { tenant_key: "tenant_test", open_id: "ou_admin", name: "Admin" };
+      const admin = await loginBrowser(fixture, server, new CookieJar(), { bootstrap: "boot-secret" });
+
+      const putRepo = async (body) => {
+        const response = await request(admin.jar, `${server.origin}/api/admin/repos`, {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+            origin: server.origin,
+            "x-csrf-token": admin.me.csrf,
+          },
+          body: JSON.stringify(body),
+        });
+        return { status: response.status, body: await readJson(response) };
+      };
+
+      const first = await putRepo({
+        owner: "mmw-devs",
+        name: "ffxiv-race-ops",
+        baseBranch: "main",
+        branchPrefix: "content/",
+        allowlistPaths: ["public/data.json"],
+        denylistPaths: [".github/**"],
+        enabled: true,
+      });
+      assert.equal(first.status, 200);
+      assert.equal(first.body.key, "mmw-devs/ffxiv-race-ops");
+      assert.equal(first.body.isDefault, true);
+
+      const second = await putRepo({
+        owner: "mmw-devs",
+        name: "xivstrat-relay",
+        baseBranch: "master",
+        allowlistPaths: ["src/data/**"],
+        enabled: true,
+      });
+      assert.equal(second.status, 200);
+      assert.equal(second.body.isDefault, false);
+
+      const list = await request(admin.jar, `${server.origin}/api/admin/repos`);
+      const listBody = await readJson(list);
+      assert.equal(listBody.repos.length, 2);
+      assert.equal(listBody.defaultRepo, "mmw-devs/ffxiv-race-ops");
+
+      const plugin = await loginPlugin(fixture, server);
+      const agent = await request(new CookieJar(), `${server.origin}/v1/agent/repos`, {
+        headers: { authorization: `Bearer ${plugin.poll.pluginToken}` },
+      });
+      const agentBody = await readJson(agent);
+      assert.equal(agent.status, 200);
+      assert.equal(agentBody.repos.length, 2);
+      assert.equal(agentBody.defaultRepo, "mmw-devs/ffxiv-race-ops");
+
+      const disableDefault = await putRepo({
+        owner: "mmw-devs",
+        name: "ffxiv-race-ops",
+        baseBranch: "main",
+        branchPrefix: "content/",
+        allowlistPaths: ["public/data.json"],
+        denylistPaths: [".github/**"],
+        enabled: false,
+      });
+      assert.equal(disableDefault.status, 200);
+      assert.equal(disableDefault.body.isDefault, false);
+
+      const after = await readJson(await request(admin.jar, `${server.origin}/api/admin/repos`));
+      assert.equal(after.defaultRepo, "mmw-devs/xivstrat-relay");
+      assert.equal(after.repos.find((repo) => repo.key === "mmw-devs/ffxiv-race-ops").enabled, false);
+
+      const invalid = await putRepo({ owner: "bad owner", name: "repo" });
+      assert.equal(invalid.status, 400);
+      assert.equal(invalid.body.error, "mmw_repo_invalid");
+
+      const noCsrf = await request(admin.jar, `${server.origin}/api/admin/repos`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", origin: server.origin },
+        body: JSON.stringify({ owner: "mmw-devs", name: "nope" }),
+      });
+      assert.equal(noCsrf.status, 403);
+    } finally {
+      await server.close();
+      fixture.cleanup();
+    }
+  });
+
   await test("CSRF and session checks protect the admin API", async () => {
     const fixture = createFixture({ bootstrapToken: "boot-secret" });
     const server = await startServer(fixture);

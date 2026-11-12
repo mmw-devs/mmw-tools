@@ -1,6 +1,6 @@
 # mmw-tools-auth
 
-飞书 H5 鉴权核心：成员、角色、插件 token，以及 `GET /v1/agent/routes` 授权表。
+飞书 H5 鉴权核心：成员、角色、仓库注册表、插件 token，以及 `GET /v1/agent/routes` 授权表。
 DSH 插件是消费者；它静态注册全部工具，并在每次调用时按这里下发的 `allowed` 集合放行或拒绝。
 
 > 状态：Phase 1 MVP 已部署到 `https://mmw-tools.mmw-team.icu`；公网 `/health` 正常。
@@ -172,9 +172,10 @@ node scripts/check-contracts.mjs
 | `POST` | `/v1/session/refresh` | 轮换插件 token |
 | `POST` | `/v1/session/logout` | 撤销当前插件 token |
 | `GET` | `/v1/agent/routes` | 授权表（allowed / denied / 版本 / TTL） |
+| `GET` | `/v1/agent/repos` | 已启用的仓库注册表与默认仓库 |
 | `POST` | `/v1/agent/events` | 执行侧审计事件 |
 | `GET` | `/` | 管理 UI |
-| `/api/admin/*` | 管理接口 | 角色、成员、审计；写请求需 CSRF |
+| `/api/admin/*` | 管理接口 | 角色、成员、仓库注册表、审计；写请求需 CSRF |
 
 ## 状态与安全
 
@@ -182,6 +183,7 @@ node scripts/check-contracts.mjs
 - 浏览器登录使用 `state` + browser cookie + PKCE；回调一次性消费。
 - 管理 UI 的写请求校验 `Origin` + `X-CSRF-Token`；cookie 为 `HttpOnly; SameSite=Lax`。
 - 停用成员会删除其全部 plugin token 和浏览器 session。
+- 仓库注册表只接受管理员写入；插件只能读取已启用项。`owner/name` 统一小写，默认仓库在首个仓库启用时自动产生。
 - 不能停用或降级最后一位有效管理员。
 - 审计只记录 actor/action/target/时间；不记录 token、Feishu code、文件内容。
 
