@@ -91,6 +91,7 @@ see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
 | `docs/OBSERVABILITY.md` | Run ids, audit events, and why trace storage is a bounded JSONL file rather than a collector. |
 | `docs/CONFORMANCE.md` | 2026-11-11 snapshot of claims vs. evidence; historical, not current behaviour. |
 | `docs/MULTI-REPO-ROUTING.md` | Target design for multi-repo authorization; not implemented. |
+| `docs/ADR-0001-MULTI-REPO.md` | Decision proposal for a multi-repo registry, per-repo tool aliases, and one-repo-per-session binding; not implemented. |
 | `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
 | `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
 | `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |

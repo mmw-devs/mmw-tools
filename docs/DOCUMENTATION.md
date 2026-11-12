@@ -42,6 +42,11 @@ The absence of a label on a long-lived document is a documentation bug. A
 document whose body says “design agreed, not yet implemented” belongs under
 `target design`, and the map must use the same label.
 
+A decision record lives in `docs/ADR-*.md`. It uses `target design` until the
+decision is implemented, states the options it rejected and why, and lists the
+parts that are still unimplemented. Do not rewrite an ADR into “current
+behaviour”; when it ships, link the implementation from it.
+
 ## What must be generated
 
 `node scripts/check-contracts.mjs` generates and verifies:
@@ -144,6 +149,7 @@ most operational weight.
 | [`docs/DEPLOYMENTS.md`](DEPLOYMENTS.md) | historical | Append-only record of what each deploy changed and verified. |
 | [`docs/CONFORMANCE.md`](CONFORMANCE.md) | historical | 2026-11-11 claims-vs-evidence snapshot; not current behaviour. |
 | [`docs/MULTI-REPO-ROUTING.md`](MULTI-REPO-ROUTING.md) | target design | Multi-repo authorization options; none implemented. |
+| [`docs/ADR-0001-MULTI-REPO.md`](ADR-0001-MULTI-REPO.md) | target design | Multi-repo registry, tool identity, and session binding decision; unimplemented. |
 | [`scripts/doc-map.json`](../scripts/doc-map.json) | manifest | Document-to-source map used by the impact check. |
 
 ## When in doubt
