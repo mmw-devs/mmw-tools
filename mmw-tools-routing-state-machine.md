@@ -371,6 +371,13 @@ v2 的核心变化：
 > 2026-11-13 修正：`select_repo` 在 `CHECK_POLICY` 之前用本地会话状态判定
 > （授权表可能滞后于插件部署），因此对它的顺序是 Auth → Repo；业务工具仍是
 > Auth → Policy → Repo。
+>
+> 2026-11-13 注册表接入：`select_repo` 在绑定前刷新 `GET /v1/agent/repos`，
+> 未启用/未知仓库返回 `[mmw_route_denied]`，刷新失败返回
+> `[mmw_policy_unavailable]`；成功后把注册表写入
+> `~/.dsh/mmw-tools-repos.json`。启动阶段无法等待网络，因此先读该缓存来注册
+> 工具与 `MMW_REPOS`，`select_repo` 再以服务端为准覆盖；未启用飞书的 profile
+> 只读本地 `repos`。
 
 ### 7.3 关键规则
 - **检查顺序**：业务工具 Auth → Policy → Repo → Transport；`select_repo` 是

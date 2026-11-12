@@ -4,6 +4,14 @@
 
 ### Added
 
+- **The repository registry behind `select_repo` is the auth core, not the
+  profile file.** When Feishu is enabled, `select_repo` refreshes
+  `GET /v1/agent/repos` before binding, refuses repositories that are not
+  enabled there, and caches the result at `~/.dsh/mmw-tools-repos.json` so the
+  next plugin load can register the same tools synchronously. A failed refresh
+  is `[mmw_policy_unavailable]`; an unknown or disabled repository is
+  `[mmw_route_denied]`. Profiles without Feishu keep using `repos` from the
+  profile.
 - **One session can select one repository explicitly.** The new
   `mcp__mmw-tools__select_repo` tool (contract `race-ops.select_repo`) binds the
   session to a registered `owner/name`. Business tools refuse an unselected

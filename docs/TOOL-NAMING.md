@@ -67,6 +67,11 @@ mcp__mmw-tools__select_repo
 
 因此仓库 slug **不得**出现在工具名、operation ID 或 `publicName` 中。也不要生成 `race-ops__xivstrat-relay__repo_read` 这类按仓库展开的别名——那会让名字数量随仓库数增长，并让契约与授权表产生 N 份副本。
 
+启用飞书时，可用仓库由 auth core 的注册表决定：`select_repo` 先刷新
+`GET /v1/agent/repos`，只接受注册表中已启用的 `owner/name`；刷新结果缓存到
+`~/.dsh/mmw-tools-repos.json`，供下次启动同步注册工具。缓存不改变命名规则，
+也不能绕过刷新：管理端停用的仓库即使还在旧缓存里，也会在选择时被拒绝。
+
 ## 4. 新增东西时
 
 ### 新增仓库

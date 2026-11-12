@@ -48,6 +48,11 @@ import { SessionStore } from "./auth/session-store.js";
 import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { RepoRegistry, repoKey, type RepoEntry } from "./gate/repo-registry.js";
+import {
+  readRepoRegistryCache,
+  writeRepoRegistryCache,
+  type CachedRepo,
+} from "./gate/repo-cache.js";
 import { installWorkspaceGuard, type UnavailablePolicy } from "./gate/workspace-guard.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
@@ -428,8 +433,37 @@ export function buildRepoEntries(
   return entries;
 }
 
-export function normalizeBinding(raw: Record<string, unknown>): NormalizedBinding {
-  const str = (v: unknown, fallback: string) =>
+/**
+ * Overlay auth-core registry values on the profile's local entries.
+ *
+ * The registry owns repository coordinates and write rules; the profile owns
+ * machine-local details (working directory, token file, preflight). A repo
+ * that is registered but absent from the profile gets neutral local defaults,
+ * so a registry update does not require editing cordis first.
+ */
+export function mergeRepoCacheEntries(configured: RepoEntry[], cached: CachedRepo[]): RepoEntry[] {
+  const local = new Map(configured.map((entry) => [entry.key, entry]));
+  return cached.map((repo) => {
+    const base = local.get(repo.key);
+    return {
+      key: repo.key,
+      owner: repo.owner,
+      name: repo.name,
+      baseBranch: repo.baseBranch,
+      branchPrefix: repo.branchPrefix,
+      allowlistPaths: [...repo.allowlistPaths],
+      denylistPaths: [...repo.denylistPaths],
+      workingDir:
+        base?.workingDir ?? path.join(homedir(), ".dsh", "workspaces", repo.owner, repo.name),
+      tokenFile: base?.tokenFile ?? repoTokensPath(repo.key),
+      repoUrl: base?.repoUrl ?? `https://github.com/${repo.owner}/${repo.name}.git`,
+      preflight: base?.preflight ?? { cmd: "", timeoutSeconds: 300 },
+      bootstrap: base?.bootstrap ?? { cmd: "", whenMissing: "", timeoutSeconds: 600 },
+    };
+  });
+}
+
+export function normalizeBinding(raw: Record<string, unknown>): NormalizedBinding {  const str = (v: unknown, fallback: string) =>
     typeof v === "string" && v.length > 0 ? v : fallback;
   const list = (v: unknown) =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -1016,8 +1050,23 @@ export function apply(
   const workingDir = resolveWorkingDir(config?.workingDir, binding);
   // The default binding is always the first entry; `config.repos` only adds
   // selectable repositories. Unknown names never route to the default.
-  const repoEntries = buildRepoEntries(binding, workingDir, config?.repos);
-  const repos = new RepoRegistry(repoEntries, repoKey(binding.owner, binding.name));
+  const configuredEntries = buildRepoEntries(binding, workingDir, config?.repos);
+  // The auth-core registry is authoritative for repository coordinates and
+  // write rules. Startup cannot await a network call, so the last successful
+  // fetch is cached on disk and overlaid here; `select_repo` refreshes it.
+  const repoCache = readRepoRegistryCache();
+  const repoEntries =
+    repoCache && repoCache.repos.length > 0
+      ? mergeRepoCacheEntries(configuredEntries, repoCache.repos)
+      : configuredEntries;
+  const defaultRepoKeyFromCache =
+    repoCache?.defaultRepo && repoEntries.some((entry) => entry.key === repoCache.defaultRepo)
+      ? repoCache.defaultRepo
+      : undefined;
+  const repos = new RepoRegistry(
+    repoEntries,
+    defaultRepoKeyFromCache ?? repoKey(binding.owner, binding.name)
+  );
   const defaultRepoKey = repos.defaultKey;
 
   // Construct audit + redacting loggers once, share across tools.
@@ -1230,6 +1279,48 @@ export function apply(
             throw new Error("[mmw_route_denied] 无法识别当前会话，不能绑定仓库");
           }
           const requested = String((args as { repo?: unknown }).repo ?? "");
+          // The registry is authoritative; refresh it before binding so a
+          // repository removed or disabled in the admin UI cannot be selected
+          // from the stale on-disk cache. Profiles without Feishu keep the
+          // local list: there is no registry to refresh.
+          let table = null;
+          if (feishuEnabled) {
+            try {
+              table = await feishu.repos();
+            } catch (err) {
+              throw new Error(
+                `[mmw_policy_unavailable] 无法刷新仓库注册表：${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+          }
+          if (table) {
+            if (table.repos.length === 0) {
+              throw new Error("[mmw_policy_unavailable] 授权服务没有启用任何仓库，请联系管理员");
+            }
+            const known = repos.normalize(requested);
+            if (!known) {
+              throw new Error(
+                `[mmw_route_denied] 未知仓库 ${JSON.stringify(requested)}；可用仓库：${repos.keys().join(", ")}`
+              );
+            }
+            const registered = table.repos.find((repo) => repo.key === known);
+            if (!registered) {
+              throw new Error(`[mmw_route_denied] 仓库 ${known} 未在授权服务注册表中启用`);
+            }
+            const current = repos.keys().map((key) => repos.entry(key)!).filter(Boolean);
+            const merged = mergeRepoCacheEntries(current, table.repos);
+            const nextDefault =
+              table.defaultRepo && merged.some((entry) => entry.key === table.defaultRepo)
+                ? table.defaultRepo
+                : merged[0].key;
+            repos.replace(merged, nextDefault);
+            writeRepoRegistryCache({
+              fetchedAt: Date.now(),
+              policyRevision: table.policyRevision,
+              defaultRepo: table.defaultRepo,
+              repos: table.repos,
+            });
+          }
           const selected = repos.select(sessionId, requested);
           if (!selected.ok) {
             throw new Error(`[mmw_route_denied] ${selected.reason}`);

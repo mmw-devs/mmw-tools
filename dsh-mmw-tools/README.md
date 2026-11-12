@@ -31,7 +31,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 - Does not drive an LLM. `mmw_tools_run` prepares context; the DSH agent runs the loop.
 - Does not merge without the operator confirming the host's prompt, and never bypasses branch protection.
 - Does not push to the base branch.
-- Does not work across multiple repositories. One binding per install.
+- Does not switch repositories inside a session: `select_repo` binds once, and the binding cannot change until the session ends.
 - Does not receive webhooks, and needs no public IP.
 
 ## Requirements
@@ -84,8 +84,9 @@ are proxied by the broker (see `docs/AUTH-BROKER.md` §13).
 A DSH **profile** is the unit of plugin scope — there is no per-workspace
 plugin scope. A plugin installed into a profile is loaded in **every**
 workspace that profile hosts, and it is the plugin's tools that appear in
-those sessions. One plugin, one repository, one binding: give this plugin a
-profile of its own.
+those sessions. A profile may host several registered repositories, but each
+session binds to exactly one with `select_repo`; for a single-repository
+deployment a dedicated profile is still the cleanest boundary.
 
 ```sh
 # a dedicated profile for this repository
@@ -187,6 +188,16 @@ repository gets its own working copy and installation-token file
 (`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`). Broker token
 requests carry the selected repository as `?repo=`, so the minted token is
 scoped to that repository rather than the default one.
+
+When Feishu is enabled, the auth core's repository registry
+(`GET /v1/agent/repos`, managed at **Admin → 仓库注册表**) is authoritative
+for repository coordinates and write rules. `select_repo` refreshes the
+registry before binding and refuses a repository that is not enabled there.
+Because DSH registers tools synchronously at load, the last successful
+refresh is cached at `~/.dsh/mmw-tools-repos.json` (0600) and overlaid on the
+profile at the next start; a repository added in the admin UI therefore
+appears after a plugin reload. Profiles without Feishu keep using `repos`
+from the profile file.
 
 | Field | Meaning |
 |---|---|
@@ -384,7 +395,7 @@ the plugin at all.
 
 | Tool | Purpose |
 |---|---|
-| `select_repo` | Bind this session to one registered repository. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection |
+| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry itself is refreshed first and cached for the next plugin load |
 | `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files; credentials in the remote URL are redacted |
 | `repo_clone` | Shallow clone of the base branch into `workingDir` |
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |

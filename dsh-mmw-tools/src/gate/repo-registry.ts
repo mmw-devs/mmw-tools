@@ -31,7 +31,7 @@ export function repoKey(owner: string, name: string): string {
 export class RepoRegistry {
   private readonly byKey = new Map<string, RepoEntry>();
   private readonly selected = new Map<string, string>();
-  readonly defaultKey: string;
+  defaultKey: string;
 
   constructor(entries: RepoEntry[], defaultKey: string) {
     for (const entry of entries) {
@@ -89,6 +89,13 @@ export class RepoRegistry {
     }
     this.selected.set(sessionId, key);
     return { ok: true, key };
+  }
+
+  /** Replace the registry after a successful auth-core refresh. */
+  replace(entries: RepoEntry[], defaultKey: string): void {
+    this.byKey.clear();
+    for (const entry of entries) this.byKey.set(entry.key, entry);
+    this.defaultKey = defaultKey;
   }
 
   /** Test seam: forget every binding. */
