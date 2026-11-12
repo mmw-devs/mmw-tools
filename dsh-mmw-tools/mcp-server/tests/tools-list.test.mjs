@@ -3,7 +3,7 @@
  *
  * Starts the MCP server as a real stdio child process, performs the
  * JSON-RPC handshake, and asserts that `tools/list` advertises the
- * eight tools with object input schemas.
+ * eleven tools with object input schemas.
  *
  * This is the only suite that proves the server *starts*: every other
  * MCP-side test imports the compiled modules in-process and therefore
@@ -27,6 +27,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.resolve(__dirname, "..", "dist", "index.js");
 
 const EXPECTED = [
+  "pr_close",
   "pr_create",
   "pr_preview",
   "pr_list",
@@ -176,7 +177,7 @@ const tools = toolsResp?.result?.tools ?? [];
 check(Array.isArray(tools), "result.tools is an array");
 
 const names = tools.map((t) => t.name).sort();
-check(names.length === 10, `tools/list advertises 10 tools (got ${names.length})`, names.join(", "));
+check(names.length === 11, `tools/list advertises 11 tools (got ${names.length})`, names.join(", "));
 for (const name of EXPECTED) {
   check(names.includes(name), `${name} advertised`);
 }
