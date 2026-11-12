@@ -10,11 +10,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
-export async function repoStatus(input) {
+export async function repoStatus(input, cfg) {
     // Probe whether a .git exists.
-    // Caller passes working_dir via the MCP framework env (GHOST_WORKING_DIR)
-    // but we read it via env here for simplicity.
-    const workingDir = process.env.GHOST_WORKING_DIR ?? "";
+    // The dispatcher resolves the selected repository and passes its working
+    // directory; the env fallback keeps stand-alone use working.
+    const workingDir = cfg?.workingDir ?? process.env.GHOST_WORKING_DIR ?? "";
     if (!workingDir) {
         return {
             cloned: false,

@@ -34,8 +34,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { PLUGIN_ID, PLUGIN_DISPLAY_NAME, PLUGIN_NAMESPACE, CORDIS_INJECT, SYSTEM_PROMPT_SECTION_ORDER, mcpServerEntryPath, } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd } from "./agents-md-check.js";
 import { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
+import { SessionStore } from "./auth/session-store.js";
 import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
+import { RepoRegistry, repoKey } from "./gate/repo-registry.js";
 import { installWorkspaceGuard } from "./gate/workspace-guard.js";
 import { makeRoutes, API } from "./routes.js";
 import { createAuditLogger, createRedactingLogger, auditPath, MAX_BYTES as MAX_AUDIT_BYTES } from "./util/audit.js";
@@ -231,7 +233,7 @@ function extendedEnv() {
 // Exported for tests: this is the seam that was broken (the child received
 // no binding at all), so it is asserted directly rather than only through a
 // real spawn, which not every sandbox permits.
-export function mcpBindingEnv(binding, workingDir, brokerUrl = "") {
+export function mcpBindingEnv(binding, workingDir, brokerUrl = "", entries) {
     const env = {
         GHOST_WORKING_DIR: workingDir,
         GHOST_REPO_URL: `https://github.com/${binding.owner}/${binding.name}.git`,
@@ -254,6 +256,24 @@ export function mcpBindingEnv(binding, workingDir, brokerUrl = "") {
         env.GHOST_BOOTSTRAP_CMD = binding.bootstrap.cmd;
         env.GHOST_BOOTSTRAP_WHEN_MISSING = binding.bootstrap.whenMissing;
         env.GHOST_BOOTSTRAP_TIMEOUT = String(binding.bootstrap.timeoutSeconds);
+    }
+    // The MCP child has no session state; it resolves the repository the gate
+    // already picked from this table, keyed by `owner/name`.
+    if (entries && entries.length > 0) {
+        env.MMW_REPOS = JSON.stringify(entries.map((entry) => ({
+            key: entry.key,
+            owner: entry.owner,
+            name: entry.name,
+            repoUrl: entry.repoUrl,
+            workingDir: entry.workingDir,
+            tokenFile: entry.tokenFile,
+            baseBranch: entry.baseBranch,
+            branchPrefix: entry.branchPrefix,
+            allowlist: entry.allowlistPaths,
+            denylist: entry.denylistPaths,
+            preflight: entry.preflight,
+            bootstrap: entry.bootstrap,
+        })));
     }
     return env;
 }
@@ -286,6 +306,67 @@ export function resolveWorkingDir(configWorkingDir, binding, env = process.env) 
         return env.GHOST_WORKING_DIR;
     }
     return path.join(homedir(), ".dsh", "workspaces", binding.owner, binding.name);
+}
+/** Per-repository token file; the default keeps the historical path. */
+function repoTokensPath(key) {
+    const slug = key.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return path.join(path.dirname(installationTokenPath()), `dsh-mmw-tools-installation-${slug}.json`);
+}
+/**
+ * The default binding plus every `repos` entry becomes the known set.
+ *
+ * Tool names do not carry repositories, so this set is the entire allow-list
+ * `select_repo` can choose from. Unknown repositories are refused instead of
+ * being silently routed to the default.
+ */
+export function buildRepoEntries(binding, workingDir, extras) {
+    const entries = [
+        {
+            key: repoKey(binding.owner, binding.name),
+            owner: binding.owner,
+            name: binding.name,
+            baseBranch: binding.baseBranch,
+            branchPrefix: binding.branchPrefix,
+            allowlistPaths: binding.allowlistPaths,
+            denylistPaths: binding.denylistPaths,
+            workingDir,
+            tokenFile: installationTokenPath(),
+            repoUrl: `https://github.com/${binding.owner}/${binding.name}.git`,
+            preflight: binding.preflight,
+            bootstrap: binding.bootstrap,
+        },
+    ];
+    if (!Array.isArray(extras))
+        return entries;
+    for (const raw of extras) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw))
+            continue;
+        const record = raw;
+        const extra = normalizeBinding(record);
+        if (!extra.owner || !extra.name)
+            continue;
+        const key = repoKey(extra.owner, extra.name);
+        if (entries.some((entry) => entry.key === key))
+            continue;
+        const configuredDir = typeof record.workingDir === "string" ? record.workingDir.trim() : "";
+        entries.push({
+            key,
+            owner: extra.owner,
+            name: extra.name,
+            baseBranch: extra.baseBranch,
+            branchPrefix: extra.branchPrefix,
+            allowlistPaths: extra.allowlistPaths,
+            denylistPaths: extra.denylistPaths,
+            workingDir: configuredDir.length > 0
+                ? configuredDir
+                : path.join(homedir(), ".dsh", "workspaces", extra.owner, extra.name),
+            tokenFile: repoTokensPath(key),
+            repoUrl: `https://github.com/${extra.owner}/${extra.name}.git`,
+            preflight: extra.preflight,
+            bootstrap: extra.bootstrap,
+        });
+    }
+    return entries;
 }
 export function normalizeBinding(raw) {
     const str = (v, fallback) => typeof v === "string" && v.length > 0 ? v : fallback;
@@ -719,6 +800,11 @@ export function apply(ctx, config) {
     };
     const logger = safeAccess(() => ctx.logger) ?? consoleLogger;
     const workingDir = resolveWorkingDir(config?.workingDir, binding);
+    // The default binding is always the first entry; `config.repos` only adds
+    // selectable repositories. Unknown names never route to the default.
+    const repoEntries = buildRepoEntries(binding, workingDir, config?.repos);
+    const repos = new RepoRegistry(repoEntries, repoKey(binding.owner, binding.name));
+    const defaultRepoKey = repos.defaultKey;
     // Construct audit + redacting loggers once, share across tools.
     const audit = createAuditLogger({
         file: auditPath(),
@@ -735,16 +821,41 @@ export function apply(ctx, config) {
     // is what lets a member with no GitHub account get a repository token.
     // The GitHub session stays as the fallback path.
     const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
+    const sessionStore = new SessionStore();
+    const defaultEntry = repos.entry(defaultRepoKey);
     const auth = new BrokerAuth({
         brokerUrl,
-        installationTokenFile: installationTokenPath(),
+        installationTokenFile: defaultEntry?.tokenFile ?? installationTokenPath(),
         writeAuthFile: writeAuthPath(),
         // The broker decides which repository a token writes to; this plugin
         // decides which repository it edits. Passing the binding here lets the
         // two be compared instead of failing later as a bare 403.
-        repository: `${binding.owner}/${binding.name}`,
+        repository: defaultRepoKey,
         feishu,
+        store: sessionStore,
     });
+    // One credential source per repository: each mints its own read token into
+    // its own file, so two sessions bound to different repositories cannot
+    // overwrite each other's credential.
+    const authByRepo = new Map([[defaultRepoKey, auth]]);
+    const authFor = (key) => {
+        const existing = authByRepo.get(key);
+        if (existing)
+            return existing;
+        const entry = repos.entry(key);
+        if (!entry)
+            throw new Error(`未知仓库：${key}`);
+        const created = new BrokerAuth({
+            brokerUrl,
+            installationTokenFile: entry.tokenFile,
+            writeAuthFile: writeAuthPath(),
+            repository: key,
+            feishu,
+            store: sessionStore,
+        });
+        authByRepo.set(key, created);
+        return created;
+    };
     const store = auth;
     const flow = auth;
     const gate = new PolicyGate({
@@ -755,6 +866,7 @@ export function apply(ctx, config) {
         // every workspace it hosts and an exclusive allowlist would strip the
         // host's `read` / `pwsh` / … out of all of them.
         sessionWide: config?.feishu?.gateScope === "session",
+        repos,
     });
     // Hydrate lastStatus before exposing it.
     ctx.effect(() => {
@@ -774,7 +886,9 @@ export function apply(ctx, config) {
     const extraRoots = Array.isArray(guardConfig?.allowPaths)
         ? guardConfig.allowPaths.filter((p) => typeof p === "string" && p.length > 0)
         : [];
-    const workspaceRoots = [workingDir, ...extraRoots];
+    const workspaceRoots = [
+        ...new Set([workingDir, ...repoEntries.map((entry) => entry.workingDir), ...extraRoots]),
+    ];
     // Fail closed by default: a host that cannot report the session directory
     // must not silently become a way to use the repository tools everywhere.
     const unavailablePolicy = guardConfig?.onUnavailable === "allow" ? "allow" : "deny";
@@ -844,6 +958,61 @@ export function apply(ctx, config) {
     ctx.effect(() => {
         return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, store, flow }));
     }, "mmw-tools: status tool");
+    // 1b. Repository selection. The name lives in the MCP namespace because it
+    // is part of the contract the model sees, but it is handled here: the MCP
+    // child has no per-session state.
+    ctx.effect(() => {
+        return ctx.tools.register(defineTool({
+            name: "mcp__mmw-tools__select_repo",
+            description: "选择本会话要操作的仓库（owner/name）。必须先选择才能调用其他业务工具；同一会话不能改选另一个仓库。",
+            parameters: {
+                repo: {
+                    type: "string",
+                    description: "仓库全名，例如 mmw-devs/ffxiv-race-ops",
+                    required: true,
+                },
+            },
+            output: {
+                schema: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        ok: { type: "boolean", required: true },
+                        message: { type: "string", required: true },
+                        repo: { type: "string", required: true },
+                    },
+                },
+                render(_args, value) {
+                    return [{ type: "text", text: String(value.message ?? "") }];
+                },
+            },
+            async execute(args, exec) {
+                const sessionId = exec.agent?.id;
+                if (!sessionId) {
+                    throw new Error("[mmw_route_denied] 无法识别当前会话，不能绑定仓库");
+                }
+                const requested = String(args.repo ?? "");
+                const selected = repos.select(sessionId, requested);
+                if (!selected.ok) {
+                    throw new Error(`[mmw_route_denied] ${selected.reason}`);
+                }
+                const entry = repos.entry(selected.key);
+                let tokenNote = "";
+                try {
+                    const token = await authFor(selected.key).ensureInstallationToken();
+                    tokenNote = token ? "仓库令牌已就绪。" : "尚未登录，工具调用会被拒绝。";
+                }
+                catch (err) {
+                    tokenNote = `仓库令牌获取失败：${err instanceof Error ? err.message : String(err)}`;
+                }
+                return {
+                    ok: true,
+                    repo: selected.key,
+                    message: `已选择仓库 ${selected.key}（工作目录 ${entry?.workingDir ?? "?"}）。${tokenNote}`,
+                };
+            },
+        }));
+    }, "mmw-tools: select_repo tool");
     // 2. Register the OAuth tools.
     // 2.5. Register mmw_tools_run (v0.5.0 bootstrap).
     ctx.effect(() => {
@@ -964,7 +1133,7 @@ export function apply(ctx, config) {
                 const transport = new StdioClientTransport({
                     command: process.execPath,
                     args: [pathToConnect],
-                    env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir, brokerUrl) },
+                    env: { ...extendedEnv(), ...mcpBindingEnv(binding, workingDir, brokerUrl, repoEntries) },
                 });
                 await client.connect(transport);
                 const { tools } = await client.request({ method: "tools/list" }, ListToolsResultSchema);
@@ -1002,12 +1171,16 @@ export function apply(ctx, config) {
                             // disabled in a local profile) still gets an id so MCP errors
                             // can be correlated with the host log.
                             const runId = currentRunId() ?? newRunId();
+                            const sessionId = exec.agent?.id;
+                            const selectedRepo = sessionId ? repos.selectedBy(sessionId) : undefined;
                             const result = (await client.request({
                                 method: "tools/call",
                                 params: {
                                     name: tool.name,
                                     arguments: forwardArgs,
-                                    _meta: { mmwRunId: runId },
+                                    _meta: selectedRepo
+                                        ? { mmwRunId: runId, mmwRepo: selectedRepo }
+                                        : { mmwRunId: runId },
                                 },
                             }, 
                             // The SDK requires a result schema and dereferences it

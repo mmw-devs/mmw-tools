@@ -128,6 +128,7 @@ export async function prMerge(input, cfg) {
             pr_number: number,
             merge_method: method,
             commit_title: input.commit_title,
+            repo: cfg.repo,
         }, { timeoutMs: 90_000 });
         const approvalId = typeof approval.approval_id === "string" ? approval.approval_id : "";
         const headSha = typeof approval.head_sha === "string" ? approval.head_sha : "";
@@ -140,6 +141,7 @@ export async function prMerge(input, cfg) {
             head_sha: headSha,
             merge_method: method,
             commit_title: input.commit_title,
+            repo: cfg.repo,
         }, { timeoutMs: 120_000 });
         return {
             number,

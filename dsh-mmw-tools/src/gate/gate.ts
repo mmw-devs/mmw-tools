@@ -2,6 +2,7 @@ import type { FeishuAuth } from "../auth/feishu-auth.js";
 import { FeishuAuthError } from "../auth/feishu-auth.js";
 import { newRunId, runWithRunId } from "../util/run-context.js";
 import { TOOL_MAP, isMmwTool, type OperationRef } from "./tool-map.js";
+import type { RepoRegistry } from "./repo-registry.js";
 
 export type GateDecision = { ok: true } | { ok: false; reason: string };
 
@@ -32,6 +33,11 @@ function authErrorCode(err: FeishuAuthError): GateErrorCode {
   return "mmw_policy_unavailable";
 }
 
+function sessionIdOf(exec: { agent?: { id?: unknown } }): string | undefined {
+  const id = exec.agent?.id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
 export interface GateEvent {
   kind: "gate_decision";
   runId: string;
@@ -54,11 +60,18 @@ export class PolicyGate {
   private readonly auth: FeishuAuth;
   private readonly enabled: boolean;
   private readonly wide: boolean;
+  private readonly repos: RepoRegistry | undefined;
 
-  constructor(opts: { auth: FeishuAuth; enabled: boolean; sessionWide?: boolean }) {
+  constructor(opts: {
+    auth: FeishuAuth;
+    enabled: boolean;
+    sessionWide?: boolean;
+    repos?: RepoRegistry;
+  }) {
     this.auth = opts.auth;
     this.enabled = opts.enabled;
     this.wide = opts.sessionWide === true;
+    this.repos = opts.repos;
   }
 
   get isEnabled(): boolean {
@@ -70,7 +83,7 @@ export class PolicyGate {
     return this.wide;
   }
 
-  async check(publicName: string): Promise<GateDecision> {
+  async check(publicName: string, sessionId?: string): Promise<GateDecision> {
     const ref = TOOL_MAP[publicName];
     if (!ref) {
       // Not in the contract. If it is not even ours, it belongs to the host
@@ -96,11 +109,15 @@ export class PolicyGate {
       return deny("mmw_policy_unavailable", "飞书授权不可用，已拒绝调用");
     }
 
-    if (routes.allowedOperations.includes(ref.operationId)) return { ok: true };
+    if (routes.allowedOperations.includes(ref.operationId)) {
+      return this.repoDecision(ref, sessionId);
+    }
     // Contract v1 had no operation-level table; keep the old tool-level
     // fallback for it. From v2 on, allowedOperations is authoritative, so a
     // future operation-level denial cannot be bypassed by the parent tool.
-    if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId)) return { ok: true };
+    if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId)) {
+      return this.repoDecision(ref, sessionId);
+    }
 
     const required = routes.denied.find((entry) => entry.toolId === ref.toolId)?.requiredRoles ?? [];
     return deny(
@@ -108,6 +125,29 @@ export class PolicyGate {
       `当前账号的角色不能消费 ${ref.toolId}` +
         (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : "")
     );
+  }
+
+  /**
+   * The operation-level check passed; now enforce the session's repository.
+   *
+   * `select_repo` itself must be callable before a repository exists. Every
+   * other business tool needs one: an unselected session is refused instead
+   * of silently falling back to the default repository.
+   */
+  private repoDecision(ref: OperationRef, sessionId?: string): GateDecision {
+    if (!this.enabled || !this.repos) return { ok: true };
+    if (ref.operationId === "race-ops.select_repo") return { ok: true };
+    if (!sessionId) {
+      return deny("mmw_route_denied", "无法识别当前会话，不能确定要操作哪个仓库");
+    }
+    const key = this.repos.selectedBy(sessionId);
+    if (!key) {
+      return deny(
+        "mmw_route_denied",
+        '本会话尚未选择仓库；请先调用 mcp__mmw-tools__select_repo，参数 repo 为 "owner/name"'
+      );
+    }
+    return { ok: true };
   }
 
   operation(publicName: string): OperationRef | undefined {
@@ -146,7 +186,7 @@ export function installToolGate(
       ctx,
       "tools/pre-execute",
       async (
-        exec: { name?: string },
+        exec: { name?: string; agent?: { id?: unknown } },
         next: () => Promise<unknown>
       ): Promise<unknown> => {
         const name = typeof exec?.name === "string" ? exec.name : "";
@@ -157,7 +197,7 @@ export function installToolGate(
           return runWithRunId(
             runId,
             async () => {
-              const decision = await opts.gate.check(name);
+              const decision = await opts.gate.check(name, sessionIdOf(exec));
               if (!decision.ok) {
                 opts.onEvent?.({
                   kind: "gate_decision",

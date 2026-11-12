@@ -32,7 +32,7 @@ export async function prClose(input, cfg) {
         writeAuthFile: cfg.writeAuthFile ?? "",
     };
     if (brokerWriteEnabled(brokerCfg)) {
-        const result = await brokerWrite(brokerCfg, "/v1/write/pr_close", { pr_number: number });
+        const result = await brokerWrite(brokerCfg, "/v1/write/pr_close", { pr_number: number, repo: cfg.repo });
         return {
             number: result.number ?? number,
             closed: true,

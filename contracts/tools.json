@@ -15,6 +15,18 @@
       ],
       "operations": [
         {
+          "id": "select_repo",
+          "publicName": "mcp__mmw-tools__select_repo",
+          "description": "选择本会话要操作的仓库（owner/name）。选定后本会话的业务工具都作用于该仓库，同一会话不能改选另一个仓库。",
+          "risk": "read",
+          "roles": [
+            "viewer",
+            "editor",
+            "operator",
+            "admin"
+          ]
+        },
+        {
           "id": "repo_status",
           "publicName": "mcp__mmw-tools__repo_status",
           "description": "查看工作副本的分支、脏状态、HEAD 和未提交文件。",

@@ -36,8 +36,7 @@ const server = new Server({ name: PLUGIN_DISPLAY_NAME, version: PLUGIN_VERSION }
  * without restarting the child. `GHOST_TOKEN` remains supported as a
  * static fallback for tests.
  */
-function readTokenFromStore() {
-    const file = process.env.GHOST_TOKEN_FILE;
+function readTokenFromStore(file = process.env.GHOST_TOKEN_FILE) {
     if (!file)
         return null;
     try {
@@ -78,12 +77,90 @@ function config() {
         writeAuthFile: process.env.MMW_WRITE_AUTH_FILE ?? "",
     };
 }
+/**
+ * Parse the host's `MMW_REPOS` table once per process.
+ *
+ * The child has no session state: the gate already decided, and forwards the
+ * selected `owner/name` in `_meta`. An entry that does not resolve stays
+ * absent, so `configFor` can refuse instead of falling back to the default.
+ */
+function parseRepoTable() {
+    const table = new Map();
+    const raw = process.env.MMW_REPOS;
+    if (!raw)
+        return table;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed))
+            return table;
+        for (const item of parsed) {
+            if (!item || typeof item !== "object")
+                continue;
+            const r = item;
+            if (typeof r.key !== "string" || typeof r.owner !== "string" || typeof r.name !== "string")
+                continue;
+            const preflight = (r.preflight ?? {});
+            const bootstrap = (r.bootstrap ?? {});
+            table.set(r.key.toLowerCase(), {
+                key: r.key.toLowerCase(),
+                owner: r.owner,
+                name: r.name,
+                repoUrl: typeof r.repoUrl === "string" ? r.repoUrl : "",
+                workingDir: typeof r.workingDir === "string" ? r.workingDir : "",
+                tokenFile: typeof r.tokenFile === "string" ? r.tokenFile : "",
+                baseBranch: typeof r.baseBranch === "string" ? r.baseBranch : "main",
+                branchPrefix: typeof r.branchPrefix === "string" ? r.branchPrefix : "content/",
+                allowlistPaths: Array.isArray(r.allowlist) ? r.allowlist : [],
+                denylistPaths: Array.isArray(r.denylist) ? r.denylist : [],
+                preflight: {
+                    cmd: typeof preflight.cmd === "string" ? preflight.cmd : "npm run validate",
+                    timeoutSeconds: typeof preflight.timeoutSeconds === "number" ? preflight.timeoutSeconds : 60,
+                },
+                bootstrap: {
+                    cmd: typeof bootstrap.cmd === "string" ? bootstrap.cmd : "",
+                    whenMissing: typeof bootstrap.whenMissing === "string" ? bootstrap.whenMissing : "node_modules",
+                    timeoutSeconds: typeof bootstrap.timeoutSeconds === "number" ? bootstrap.timeoutSeconds : 300,
+                },
+            });
+        }
+    }
+    catch {
+        /* malformed table: every explicit repo is refused below */
+    }
+    return table;
+}
+const REPO_TABLE = parseRepoTable();
+/** Resolve the selected repository; unknown names are refused, not defaulted. */
+function configFor(repoKey) {
+    const base = config();
+    if (!repoKey)
+        return base;
+    const entry = REPO_TABLE.get(repoKey);
+    if (!entry) {
+        throw new GithubRefusedError("mmw_route_denied", `未知仓库 ${repoKey}；可用仓库：${[...REPO_TABLE.keys()].join(", ") || "（未配置）"}`);
+    }
+    return {
+        ...base,
+        repo: entry.key,
+        workingDir: entry.workingDir,
+        repoUrl: entry.repoUrl,
+        repoOwner: entry.owner,
+        repoName: entry.name,
+        baseBranch: entry.baseBranch,
+        branchPrefix: entry.branchPrefix,
+        allowlistPaths: entry.allowlistPaths,
+        denylistPaths: entry.denylistPaths,
+        preflight: entry.preflight,
+        bootstrap: entry.bootstrap,
+        githubToken: readTokenFromStore(entry.tokenFile) ?? base.githubToken,
+    };
+}
 const TOOLS = [
     {
         name: "repo_status",
         description: "报告已克隆工作副本的当前状态：分支、是否有未提交变更、HEAD SHA、未提交文件列表。",
         inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
-        call: () => repoStatus({}),
+        call: (_input, cfg) => repoStatus({}, cfg),
     },
     {
         name: "repo_clone",
@@ -94,7 +171,7 @@ const TOOLS = [
             required: [],
             additionalProperties: false,
         },
-        call: (input) => repoClone({ force: input.force }, config()),
+        call: (input, cfg) => repoClone({ force: input.force }, cfg),
     },
     {
         name: "repo_pull",
@@ -108,10 +185,10 @@ const TOOLS = [
             required: [],
             additionalProperties: false,
         },
-        call: (input) => repoPull({
+        call: (input, cfg) => repoPull({
             branch: input.branch,
             rebase: input.rebase,
-        }, config()),
+        }, cfg),
     },
     {
         name: "repo_read",
@@ -125,10 +202,10 @@ const TOOLS = [
             required: ["path"],
             additionalProperties: false,
         },
-        call: (input) => repoRead({
+        call: (input, cfg) => repoRead({
             path: input.path,
             max_bytes: input.max_bytes,
-        }, config()),
+        }, cfg),
     },
     {
         name: "repo_search",
@@ -143,11 +220,11 @@ const TOOLS = [
             required: ["query"],
             additionalProperties: false,
         },
-        call: (input) => repoSearch({
+        call: (input, cfg) => repoSearch({
             query: input.query,
             glob: input.glob,
             max_results: input.max_results,
-        }, config()),
+        }, cfg),
     },
     {
         name: "repo_edit",
@@ -177,11 +254,11 @@ const TOOLS = [
             required: ["branch", "edits", "commit_message"],
             additionalProperties: false,
         },
-        call: (input) => repoEdit({
+        call: (input, cfg) => repoEdit({
             branch: input.branch,
             edits: input.edits,
             commit_message: input.commit_message,
-        }, config()),
+        }, cfg),
     },
     {
         name: "pr_create",
@@ -198,13 +275,13 @@ const TOOLS = [
             required: ["head_branch", "title", "body"],
             additionalProperties: false,
         },
-        call: (input) => prCreate({
+        call: (input, cfg) => prCreate({
             head_branch: input.head_branch,
             title: input.title,
             body: input.body,
             draft: input.draft,
             base: input.base,
-        }, config()),
+        }, cfg),
     },
     {
         name: "pr_close",
@@ -218,9 +295,9 @@ const TOOLS = [
             required: ["pr_number"],
             additionalProperties: false,
         },
-        call: (input) => prClose({
+        call: (input, cfg) => prClose({
             pr_number: input.pr_number,
-        }, config()),
+        }, cfg),
     },
     {
         name: "pr_list",
@@ -234,10 +311,10 @@ const TOOLS = [
             required: [],
             additionalProperties: false,
         },
-        call: (input) => prList({
+        call: (input, cfg) => prList({
             state: input.state,
             base: input.base,
-        }, config()),
+        }, cfg),
     },
     {
         name: "pr_preview",
@@ -253,10 +330,10 @@ const TOOLS = [
             required: ["pr_number"],
             additionalProperties: false,
         },
-        call: (input) => prPreview({
+        call: (input, cfg) => prPreview({
             pr_number: input.pr_number,
             wait_seconds: input.wait_seconds,
-        }, config()),
+        }, cfg),
     },
     {
         name: "pr_merge",
@@ -273,11 +350,11 @@ const TOOLS = [
             required: ["pr_number"],
             additionalProperties: false,
         },
-        call: (input) => prMerge({
+        call: (input, cfg) => prMerge({
             pr_number: input.pr_number,
             merge_method: input.merge_method,
             commit_title: input.commit_title,
-        }, config()),
+        }, cfg),
     },
 ];
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -295,13 +372,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const runId = typeof meta?.mmwRunId === "string" && /^run_[A-Za-z0-9-]{1,80}$/.test(meta.mmwRunId)
         ? meta.mmwRunId
         : undefined;
+    const repoKey = typeof meta?.mmwRepo === "string" &&
+        /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(meta.mmwRepo)
+        ? meta.mmwRepo.toLowerCase()
+        : undefined;
     const runSuffix = runId ? ` [${runId}]` : "";
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) {
         throw new Error(`Unknown tool: ${name}`);
     }
     try {
-        const result = await tool.call((args ?? {}));
+        const result = await tool.call((args ?? {}), configFor(repoKey));
         return {
             content: [
                 { type: "text", text: JSON.stringify(result, null, 2) },

@@ -1,6 +1,6 @@
 # 工具命名规范
 
-Status: target design — 命名规则已由 `scripts/check-contracts.mjs` 强制；`select_repo` 与会话锁定尚未实现。
+Status: living — 命名规则由 `scripts/check-contracts.mjs` 强制；`select_repo`、会话锁定与 `_meta` 传仓库已落地（2026-11-13）。按仓库授权表仍未实现，见第 6 节。
 
 这份文档定义本插件暴露给模型的工具名、契约里的 operation 名，以及新增仓库/工具时必须遵守的规则。命名不是风格问题：注册表、授权、审计和模型看到的工具列表都以这些名字为键，改名等同于换身份。
 
@@ -105,10 +105,17 @@ mcp__mmw-tools__select_repo
 2. 没有为同一操作复制第二份名字；
 3. 契约、`TOOL_MAP`、MCP 注册三处一致。
 
-## 6. 尚未实现
+## 6. 已实现与剩余
 
-- `select_repo` 工具与会话级仓库绑定；
-- `_meta` 传递仓库、每仓库工作副本；
-- 按仓库的授权表（`grants(member, repo, role)`）。
+已落地：
+
+- `mcp__mmw-tools__select_repo` 与会话级仓库绑定（`src/gate/repo-registry.ts`）；
+- 未选择时业务工具返回 `[mmw_route_denied]`；同会话改选另一个仓库同样拒绝；
+- 插件通过 `_meta.mmwRepo` 把选择传给 MCP 子进程，子进程按 `MMW_REPOS` 解析该仓库的工作目录、分支基线和令牌文件；
+- 每仓库独立的工作副本与只读令牌文件；写操作经 broker 按 `repo` 路由。
+
+仍未实现：
+
+- 按仓库的授权表（`grants(member, repo, role)`）；当前授权仍按账号的 operation 集合判断，仓库范围由会话选择约束。
 
 实现顺序与验收见 [`ADR-0001-MULTI-REPO.md`](ADR-0001-MULTI-REPO.md)。

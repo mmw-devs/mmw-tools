@@ -21,6 +21,7 @@ export function isMmwTool(publicName) {
     return (publicName.startsWith(TOOL_NAMESPACE) || publicName.startsWith(TOOL_OWN_PREFIX));
 }
 export const TOOL_MAP = {
+    "mcp__mmw-tools__select_repo": { toolId: "race-ops", operationId: "race-ops.select_repo", risk: "read" },
     "mcp__mmw-tools__repo_status": { toolId: "race-ops", operationId: "race-ops.repo_status", risk: "read" },
     "mcp__mmw-tools__repo_clone": { toolId: "race-ops", operationId: "race-ops.repo_clone", risk: "read" },
     "mcp__mmw-tools__repo_pull": { toolId: "race-ops", operationId: "race-ops.repo_pull", risk: "read" },

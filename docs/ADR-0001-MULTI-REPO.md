@@ -38,6 +38,21 @@ Status: target design
 
 以下第 3、4 节是原提案，保留作决策记录。
 
+## 实现进度（2026-11-13）
+
+已实现（PR #18–#21 系列）：
+
+- `mcp__mmw-tools__select_repo` 与门禁的会话级仓库绑定；
+- 未选择时业务工具返回 `[mmw_route_denied]`，选定后不可切换；
+- 插件经 `_meta.mmwRepo` 把选择传给 MCP 子进程，子进程按 `MMW_REPOS` 解析该仓库的工作目录、基线、令牌文件与规则；
+- broker 的只读令牌与写代理均已按 `repo` 路由；每仓库独立令牌文件。
+
+仍未实现：
+
+- auth core 的 `repos` 表与管理 UI（当前可选用插件配置 `repos` 注册）；
+- `grants(member, repo, role)` 授权表，以及 route table 按仓库派生；
+- `.dsh-mmw-tools.yaml` 作为运行时规则 authority。
+
 ## 1. 约束与现状
 
 用户约束（2026-11-12 确认）：

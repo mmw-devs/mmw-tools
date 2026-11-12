@@ -41,6 +41,8 @@ export interface PrCreateOutput {
 }
 
 export interface PrCreateConfig {
+  /** Selected repository (`owner/name`); undefined keeps the default. */
+  repo?: string;
   workingDir: string;
   branchPrefix: string;
   baseBranch: string;
@@ -103,7 +105,7 @@ export async function prCreate(
     }>(
       { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
       "/v1/write/pr_create",
-      { head, base, title: input.title, body: input.body, draft },
+      { head, base, title: input.title, body: input.body, draft, repo: cfg.repo },
       { timeoutMs: 90_000 }
     );
     const url = typeof result.url === "string" ? result.url : "";

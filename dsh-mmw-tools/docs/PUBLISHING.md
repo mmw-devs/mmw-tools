@@ -127,7 +127,7 @@ The list is a curated README; an entry is a single markdown line plus a `dsh-plu
 2. Open a PR against [`awesome-dsh-plugin/awesome-dsh-plugin`](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) adding one line under the matching category — **Identity & Communication** for the repository-operation plugins, or **GitOps & Code Review** if you consider it a code-review tool. The line format is:
 
    ```markdown
-   - [mmw-devs/mmw-tools](https://github.com/mmw-devs/mmw-tools) - Single-repository GitHub engineer for DeepSeek Harness: reads the repository's AGENTS.md, edits only allowlisted paths, runs a pre-flight check before every commit, and opens a draft PR on a `content/*` branch. OAuth Device Flow, no auto-merge.
+   - [mmw-devs/mmw-tools](https://github.com/mmw-devs/mmw-tools) - Repository-scoped GitHub engineer for DeepSeek Harness: each session selects one repository, reads its AGENTS.md, edits only allowlisted paths, runs a pre-flight check before every commit, and opens a draft PR on a `content/*` branch. OAuth Device Flow or Feishu login, no auto-merge.
    ```
 
 3. Every claim in that line is checked against the source before merge — "edits only allowlisted paths" and "no auto-merge" are both literally true here (the merge tool does not exist).

@@ -187,7 +187,8 @@ console.log("\n--- Test 1: high-level agent tools ---");
   ]) {
     eq(names.includes(gone), false, `${gone} is not exposed to the agent`);
   }
-  eq(names.length, 2, "exactly 2 high-level tools registered");
+  eq(names.length, 3, "exactly 3 high-level tools registered");
+  truthy(names.includes("mcp__mmw-tools__select_repo"), "select_repo is registered");
 }
 
 /* ============================================================== */

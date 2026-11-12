@@ -1,6 +1,6 @@
 {
   "contractVersion": 2,
-  "catalogRevision": "sha256:39629e0cc8e15e27a4f496f678dd7395b800033790fb911ccd23252d3cb92f0e",
+  "catalogRevision": "sha256:b366edb81d5f59f2d73ca04013e6444bcb1112bc220d406121bda9c6561c8119",
   "policyRevision": 42,
   "ttlSeconds": 60,
   "allowed": [
@@ -15,7 +15,8 @@
     "race-ops.repo_pull",
     "race-ops.repo_read",
     "race-ops.repo_search",
-    "race-ops.repo_status"
+    "race-ops.repo_status",
+    "race-ops.select_repo"
   ],
   "denied": []
 }

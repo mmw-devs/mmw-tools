@@ -17,9 +17,11 @@ A **run id** is created when the gate is about to decide a call to an
    the tool's `next()`, so anything executed inside the call can ask for the
    current id without threading a parameter through every function.
 2. **Into the MCP child** — the plugin adds `_meta.mmwRunId` to the `tools/call`
-   request. The MCP server validates its shape and appends ` [runId]` to error
-   results and stderr lines, which is what makes a failing tool call traceable to
-   the decision that allowed it.
+   request; since the multi-repo change it also adds `_meta.mmwRepo` with the
+   session's selected `owner/name`. The MCP server validates the shape, resolves
+   that repository's config, and appends ` [runId]` to error results and stderr
+   lines, which is what makes a failing tool call traceable to the decision that
+   allowed it and to the workspace it touched.
 3. **Into the local audit log** — the gate emits one `gate_decision` event per
    decision (`allow`, `deny` or `ask`), including the id, the public tool name and
    a short reason. Since the O1.2 change, a denial reason starts with its stable
@@ -63,6 +65,10 @@ without parsing tool arguments.
 
 ## What is not covered yet
 
+- The `gate_decision` event identifies the tool and decision but does not record
+  the session's selected repository; that value travels in `_meta.mmwRepo` and in
+  the broker write audit for routed writes. Joining the two requires the run id,
+  which the broker does not receive yet (point above).
 - The broker (GitHub App session exchange, installation tokens, the Feishu
   `/v1/me` + `/v1/agent/routes` checks, and the `/v1/write/*` proxy) does not
   receive the run id, so broker-side events cannot be joined to a gate decision.

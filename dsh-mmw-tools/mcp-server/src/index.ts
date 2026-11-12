@@ -47,7 +47,40 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  call: (input: Record<string, unknown>) => Promise<unknown>;
+  call: (input: Record<string, unknown>, cfg: McpConfig) => Promise<unknown>;
+}
+
+/** Every repository the host made selectable, plus its resolved env. */
+interface RepoEnv {
+  key: string;
+  owner: string;
+  name: string;
+  repoUrl: string;
+  workingDir: string;
+  tokenFile: string;
+  baseBranch: string;
+  branchPrefix: string;
+  allowlistPaths: string[];
+  denylistPaths: string[];
+  preflight: { cmd: string; timeoutSeconds: number };
+  bootstrap: { cmd: string; whenMissing: string; timeoutSeconds: number };
+}
+
+export interface McpConfig {
+  repo?: string;
+  workingDir: string;
+  repoUrl: string;
+  repoOwner: string;
+  repoName: string;
+  baseBranch: string;
+  branchPrefix: string;
+  allowlistPaths: string[];
+  denylistPaths: string[];
+  preflight: { cmd: string; timeoutSeconds: number };
+  bootstrap: { cmd: string; whenMissing: string; timeoutSeconds: number };
+  githubToken: string | null;
+  brokerUrl: string;
+  writeAuthFile: string;
 }
 
 /**
@@ -60,8 +93,7 @@ interface ToolDef {
  * without restarting the child. `GHOST_TOKEN` remains supported as a
  * static fallback for tests.
  */
-function readTokenFromStore(): string | null {
-  const file = process.env.GHOST_TOKEN_FILE;
+function readTokenFromStore(file = process.env.GHOST_TOKEN_FILE): string | null {
   if (!file) return null;
   try {
     const raw = JSON.parse(readFileSync(file, "utf8")) as { accessToken?: unknown };
@@ -73,7 +105,7 @@ function readTokenFromStore(): string | null {
   }
 }
 
-function config() {
+function config(): McpConfig {
   return {
     workingDir: process.env.GHOST_WORKING_DIR ?? "",
     repoUrl: process.env.GHOST_REPO_URL ?? "",
@@ -102,13 +134,94 @@ function config() {
   };
 }
 
+/**
+ * Parse the host's `MMW_REPOS` table once per process.
+ *
+ * The child has no session state: the gate already decided, and forwards the
+ * selected `owner/name` in `_meta`. An entry that does not resolve stays
+ * absent, so `configFor` can refuse instead of falling back to the default.
+ */
+function parseRepoTable(): Map<string, RepoEnv> {
+  const table = new Map<string, RepoEnv>();
+  const raw = process.env.MMW_REPOS;
+  if (!raw) return table;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return table;
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const r = item as Record<string, unknown>;
+      if (typeof r.key !== "string" || typeof r.owner !== "string" || typeof r.name !== "string") continue;
+      const preflight = (r.preflight ?? {}) as Record<string, unknown>;
+      const bootstrap = (r.bootstrap ?? {}) as Record<string, unknown>;
+      table.set(r.key.toLowerCase(), {
+        key: r.key.toLowerCase(),
+        owner: r.owner,
+        name: r.name,
+        repoUrl: typeof r.repoUrl === "string" ? r.repoUrl : "",
+        workingDir: typeof r.workingDir === "string" ? r.workingDir : "",
+        tokenFile: typeof r.tokenFile === "string" ? r.tokenFile : "",
+        baseBranch: typeof r.baseBranch === "string" ? r.baseBranch : "main",
+        branchPrefix: typeof r.branchPrefix === "string" ? r.branchPrefix : "content/",
+        allowlistPaths: Array.isArray(r.allowlist) ? (r.allowlist as string[]) : [],
+        denylistPaths: Array.isArray(r.denylist) ? (r.denylist as string[]) : [],
+        preflight: {
+          cmd: typeof preflight.cmd === "string" ? preflight.cmd : "npm run validate",
+          timeoutSeconds:
+            typeof preflight.timeoutSeconds === "number" ? preflight.timeoutSeconds : 60,
+        },
+        bootstrap: {
+          cmd: typeof bootstrap.cmd === "string" ? bootstrap.cmd : "",
+          whenMissing:
+            typeof bootstrap.whenMissing === "string" ? bootstrap.whenMissing : "node_modules",
+          timeoutSeconds:
+            typeof bootstrap.timeoutSeconds === "number" ? bootstrap.timeoutSeconds : 300,
+        },
+      });
+    }
+  } catch {
+    /* malformed table: every explicit repo is refused below */
+  }
+  return table;
+}
+
+const REPO_TABLE = parseRepoTable();
+
+/** Resolve the selected repository; unknown names are refused, not defaulted. */
+function configFor(repoKey?: string): McpConfig {
+  const base = config();
+  if (!repoKey) return base;
+  const entry = REPO_TABLE.get(repoKey);
+  if (!entry) {
+    throw new GithubRefusedError(
+      "mmw_route_denied",
+      `未知仓库 ${repoKey}；可用仓库：${[...REPO_TABLE.keys()].join(", ") || "（未配置）"}`
+    );
+  }
+  return {
+    ...base,
+    repo: entry.key,
+    workingDir: entry.workingDir,
+    repoUrl: entry.repoUrl,
+    repoOwner: entry.owner,
+    repoName: entry.name,
+    baseBranch: entry.baseBranch,
+    branchPrefix: entry.branchPrefix,
+    allowlistPaths: entry.allowlistPaths,
+    denylistPaths: entry.denylistPaths,
+    preflight: entry.preflight,
+    bootstrap: entry.bootstrap,
+    githubToken: readTokenFromStore(entry.tokenFile) ?? base.githubToken,
+  };
+}
+
 const TOOLS: ToolDef[] = [
   {
     name: "repo_status",
     description:
       "报告已克隆工作副本的当前状态：分支、是否有未提交变更、HEAD SHA、未提交文件列表。",
     inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
-    call: () => repoStatus({}),
+    call: (_input, cfg) => repoStatus({}, cfg),
   },
   {
     name: "repo_clone",
@@ -120,7 +233,7 @@ const TOOLS: ToolDef[] = [
       required: [],
       additionalProperties: false,
     },
-    call: (input) => repoClone({ force: input.force as boolean | undefined }, config()),
+    call: (input, cfg) => repoClone({ force: input.force as boolean | undefined }, cfg),
   },
   {
     name: "repo_pull",
@@ -135,13 +248,13 @@ const TOOLS: ToolDef[] = [
       required: [],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       repoPull(
         {
           branch: input.branch as string | undefined,
           rebase: input.rebase as boolean | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -157,13 +270,13 @@ const TOOLS: ToolDef[] = [
       required: ["path"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       repoRead(
         {
           path: input.path as string,
           max_bytes: input.max_bytes as number | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -180,14 +293,14 @@ const TOOLS: ToolDef[] = [
       required: ["query"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       repoSearch(
         {
           query: input.query as string,
           glob: input.glob as string | undefined,
           max_results: input.max_results as number | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -219,14 +332,14 @@ const TOOLS: ToolDef[] = [
       required: ["branch", "edits", "commit_message"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       repoEdit(
         {
           branch: input.branch as string,
           edits: input.edits as Parameters<typeof repoEdit>[0]["edits"],
           commit_message: input.commit_message as string,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -245,7 +358,7 @@ const TOOLS: ToolDef[] = [
       required: ["head_branch", "title", "body"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       prCreate(
         {
           head_branch: input.head_branch as string,
@@ -254,7 +367,7 @@ const TOOLS: ToolDef[] = [
           draft: input.draft as boolean | undefined,
           base: input.base as string | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -270,12 +383,12 @@ const TOOLS: ToolDef[] = [
       required: ["pr_number"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       prClose(
         {
           pr_number: input.pr_number as number,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -291,13 +404,13 @@ const TOOLS: ToolDef[] = [
       required: [],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       prList(
         {
           state: input.state as "open" | "closed" | "all" | undefined,
           base: input.base as string | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -315,13 +428,13 @@ const TOOLS: ToolDef[] = [
       required: ["pr_number"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       prPreview(
         {
           pr_number: input.pr_number as number,
           wait_seconds: input.wait_seconds as number | undefined,
         },
-        config()
+        cfg
       ),
   },
   {
@@ -340,14 +453,14 @@ const TOOLS: ToolDef[] = [
       required: ["pr_number"],
       additionalProperties: false,
     },
-    call: (input) =>
+    call: (input, cfg) =>
       prMerge(
         {
           pr_number: input.pr_number as number,
           merge_method: input.merge_method as undefined,
           commit_title: input.commit_title as string | undefined,
         },
-        config()
+        cfg
       ),
   },
 ];
@@ -364,10 +477,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   // The host passes the gate's run id in `_meta`; keep it only if it looks
   // like one of ours so a malformed id cannot inject into logs or output.
-  const meta = (request.params as { _meta?: { mmwRunId?: unknown } })._meta;
+  const meta = (request.params as { _meta?: { mmwRunId?: unknown; mmwRepo?: unknown } })._meta;
   const runId =
     typeof meta?.mmwRunId === "string" && /^run_[A-Za-z0-9-]{1,80}$/.test(meta.mmwRunId)
       ? meta.mmwRunId
+      : undefined;
+  const repoKey =
+    typeof meta?.mmwRepo === "string" &&
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(meta.mmwRepo)
+      ? meta.mmwRepo.toLowerCase()
       : undefined;
   const runSuffix = runId ? ` [${runId}]` : "";
   const tool = TOOLS.find((t) => t.name === name);
@@ -375,7 +493,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error(`Unknown tool: ${name}`);
   }
   try {
-    const result = await tool.call((args ?? {}) as Record<string, unknown>);
+    const result = await tool.call((args ?? {}) as Record<string, unknown>, configFor(repoKey));
     return {
       content: [
         { type: "text", text: JSON.stringify(result, null, 2) },

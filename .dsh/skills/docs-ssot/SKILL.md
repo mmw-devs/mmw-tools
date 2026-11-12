@@ -15,6 +15,7 @@ description: 当源码改动触发文档影响检查、需要修改 AGENTS.md �
 - 你要新增、删除、重命名或移动文档。
 - 你发现文档与代码不一致，即使这次没有改源码。
 - 你要判断某条 `Doc-Impact: ... — 无语义变更` 是否成立。
+- 你要调整文档状态标签（`living` / `target design` / `historical`），或把 `target design` 的某部分标为已实现：同步检查 `docs/DOCUMENTATION.md` 的表格与正文里的“尚未实现”清单。
 - 你要为跨模块的产品决策写一份 `docs/ADR-*.md` 提案：用 `target design`，写明被否的选项与尚未实现的部分。
 - 你要新增或重命名工具、operation：命名是契约的一部分，先看 [`docs/TOOL-NAMING.md`](../../../docs/TOOL-NAMING.md)。
 
