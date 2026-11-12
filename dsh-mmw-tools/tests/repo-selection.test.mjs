@@ -5,7 +5,11 @@ import assert from "node:assert/strict";
 
 import { PolicyGate } from "../lib/gate/gate.js";
 import { RepoRegistry, repoKey } from "../lib/gate/repo-registry.js";
-import { buildRepoEntries, mcpBindingEnv, normalizeBinding } from "../lib/index.js";
+import { buildRepoEntries, mcpBindingEnv, mergeRepoCacheEntries, normalizeBinding } from "../lib/index.js";
+import { readRepoRegistryCache, writeRepoRegistryCache } from "../lib/gate/repo-cache.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 let pass = 0;
 let fail = 0;
@@ -135,6 +139,68 @@ const fakeAuth = { routes: async () => routes };
   eq(table.length, 2, "MMW_REPOS carries every entry");
   eq(table[1].key, "mmw-devs/xivstrat-relay", "MMW_REPOS keeps the full key");
   eq(table[1].preflight.cmd, "npm run validate", "MMW_REPOS carries preflight defaults");
+}
+
+// ---- Registry cache overlay -------------------------------------------
+{
+  const binding = normalizeBinding({ owner: "mmw-devs", name: "ffxiv-race-ops" });
+  const entries = buildRepoEntries(binding, "/work/race-ops", [
+    { owner: "mmw-devs", name: "xivstrat-relay", baseBranch: "master" },
+  ]);
+  const merged = mergeRepoCacheEntries(entries, [
+    {
+      key: "mmw-devs/xivstrat-relay",
+      owner: "mmw-devs",
+      name: "xivstrat-relay",
+      baseBranch: "develop",
+      branchPrefix: "content/",
+      allowlistPaths: ["src/data/**"],
+      denylistPaths: ["AGENTS.md"],
+    },
+  ]);
+  eq(merged.length, 1, "the registry is authoritative over the profile list");
+  eq(merged[0].baseBranch, "develop", "registry base branch wins");
+  eq(merged[0].workingDir, entries[1].workingDir, "local working directory is preserved");
+  eq(merged[0].bootstrap.cmd, "", "unconfigured bootstrap falls back to a no-op");
+
+  const added = mergeRepoCacheEntries(entries, [
+    {
+      key: "mmw-devs/new-repo",
+      owner: "mmw-devs",
+      name: "new-repo",
+      baseBranch: "main",
+      branchPrefix: "content/",
+      allowlistPaths: [],
+      denylistPaths: [],
+    },
+  ]);
+  truthy(added[0].workingDir.includes("new-repo"), "new registry repo gets a derived working directory");
+  truthy(added[0].tokenFile.includes("new-repo"), "new registry repo gets its own token file");
+
+  const dir = mkdtempSync(path.join(tmpdir(), "mmw-repo-cache-"));
+  const file = path.join(dir, "repos.json");
+  writeRepoRegistryCache(
+    {
+      fetchedAt: 1,
+      policyRevision: 9,
+      defaultRepo: "mmw-devs/xivstrat-relay",
+      repos: [
+        {
+          key: "mmw-devs/xivstrat-relay",
+          owner: "mmw-devs",
+          name: "xivstrat-relay",
+          baseBranch: "master",
+          branchPrefix: "content/",
+          allowlistPaths: ["src/data/**"],
+          denylistPaths: [],
+        },
+      ],
+    },
+    file
+  );
+  const loaded = readRepoRegistryCache(file);
+  eq(loaded?.defaultRepo, "mmw-devs/xivstrat-relay", "cache round-trips the default repo");
+  eq(loaded?.repos[0].baseBranch, "master", "cache round-trips registry fields");
 }
 
 console.log(`\nrepo-selection: ${pass} passed, ${fail} failed`);

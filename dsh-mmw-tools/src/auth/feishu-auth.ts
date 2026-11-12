@@ -57,6 +57,22 @@ export interface FeishuRouteTable {
   denied: Array<{ toolId: string; requiredRoles: string[] }>;
 }
 
+export interface FeishuRepo {
+  key: string;
+  owner: string;
+  name: string;
+  baseBranch: string;
+  branchPrefix: string;
+  allowlistPaths: string[];
+  denylistPaths: string[];
+}
+
+export interface FeishuRepoTable {
+  defaultRepo: string | null;
+  policyRevision: number;
+  repos: FeishuRepo[];
+}
+
 export interface PendingLogin {
   loginId: string;
   pollSecret: string;
@@ -444,6 +460,45 @@ export class FeishuAuth {
       }
       this.routesCache = { data, at: this.now() };
       return data;
+    } catch (err) {
+      if (err instanceof FeishuAuthError && (err.code === "mmw_auth_required" || err.code === "mmw_session_expired")) {
+        await this.clearIfTokenCurrent(record);
+      }
+      throw err;
+    }
+  }
+
+  async repos(): Promise<FeishuRepoTable> {
+    const record = await this.readRecord();
+    if (!record || record.expiresAt <= this.now()) {
+      throw new FeishuAuthError("auth-required", "请先使用飞书登录");
+    }
+    try {
+      const body = await this.request("/v1/agent/repos", {
+        headers: { authorization: `Bearer ${record.pluginToken}` },
+      });
+      if (!Array.isArray(body.repos)) {
+        throw new FeishuAuthError("invalid-response", "授权服务返回的仓库注册表不完整");
+      }
+      const repos: FeishuRepo[] = body.repos
+        .filter((repo: any) => repo && repo.enabled !== false)
+        .map((repo: any) => ({
+          key: String(repo.key ?? "").toLowerCase(),
+          owner: String(repo.owner ?? "").toLowerCase(),
+          name: String(repo.name ?? "").toLowerCase(),
+          baseBranch: String(repo.baseBranch ?? "main"),
+          branchPrefix: String(repo.branchPrefix ?? "content/"),
+          allowlistPaths: Array.isArray(repo.allowlistPaths) ? repo.allowlistPaths.map(String) : [],
+          denylistPaths: Array.isArray(repo.denylistPaths) ? repo.denylistPaths.map(String) : [],
+        }))
+        .filter((repo: FeishuRepo) => repo.key.length > 0);
+      return {
+        defaultRepo: typeof body.defaultRepo === "string" && body.defaultRepo.length > 0
+          ? body.defaultRepo.toLowerCase()
+          : null,
+        policyRevision: Number(body.policyRevision ?? 0),
+        repos,
+      };
     } catch (err) {
       if (err instanceof FeishuAuthError && (err.code === "mmw_auth_required" || err.code === "mmw_session_expired")) {
         await this.clearIfTokenCurrent(record);

@@ -163,11 +163,13 @@ PR 不算安全修复。
 4. **MCP server 在插件启动时就拉起**：与目标状态机的“未授权不启动 Transport”
    不一致；当前靠 gate 在调用时拒绝。
 5. **无 rate limiting**：单仓库、单用户场景暂时可接受，多用户前必须补。
-6. **多仓库只完成了执行侧与注册表**：`select_repo`、会话锁定、`_meta.mmwRepo`、
+6. **多仓库已打通注册表读取**：`select_repo`、会话锁定、`_meta.mmwRepo`、
    每仓库工作副本/令牌与 broker 路由已实现；auth core 的 `repos` 表、管理 UI 与
-   `GET /v1/agent/repos` 已落地。仍未实现的是插件从 auth core 读取注册表（当前
-   仍读插件配置 `repos`）、`grants(member, repo, role)` 与 `.dsh-mmw-tools.yaml`
-   运行时规则；账号级 operation 集合仍未按仓库收窄。
+   `GET /v1/agent/repos` 已落地；插件启动读本地缓存
+   `~/.dsh/mmw-tools-repos.json`，`select_repo` 时刷新注册表并以服务端为准。
+   仍未实现的是 `grants(member, repo, role)` 与 `.dsh-mmw-tools.yaml`
+   运行时规则；账号级 operation 集合仍未按仓库收窄。缓存意味着管理端新增仓库
+   要到下一次插件加载才出现在本机可用集合中。
 7. **approval 不绑定“人真的点了确认”**：一次性的 approval 绑定 member、PR、
    head SHA，且 5 分钟过期；但能读 `0600` 写认证文件并直接发 HTTP 的本地进程
    可以自调用 approval + merge。宿主对 `pr_merge` 的确认只是 UI 门，关闭这个
@@ -214,6 +216,11 @@ PR 不算安全修复。
   `PUT /api/admin/repos`、管理 UI、插件只读的 `GET /v1/agent/repos`）。
   注册表是仓库事实的服务端源；插件尚未改为从它读取，`grants` 与运行时
   规则文件仍待实现。
+- **v10（2026-11-13）**：插件接入注册表。启动时同步读
+  `~/.dsh/mmw-tools-repos.json` 并覆盖 profile `repos`；`select_repo` 先调
+  `GET /v1/agent/repos`，未启用/未知仓库拒绝，成功后写回缓存。未启用飞书的
+  profile 仍只读本地 `repos`。剩余：`grants(member, repo, role)`、
+  `.dsh-mmw-tools.yaml`、按仓库收窄账号级 operation 集合。
 
 ## 9. 相关文档
 

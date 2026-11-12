@@ -370,4 +370,43 @@ export class FeishuAuth {
             throw err;
         }
     }
+    async repos() {
+        const record = await this.readRecord();
+        if (!record || record.expiresAt <= this.now()) {
+            throw new FeishuAuthError("auth-required", "请先使用飞书登录");
+        }
+        try {
+            const body = await this.request("/v1/agent/repos", {
+                headers: { authorization: `Bearer ${record.pluginToken}` },
+            });
+            if (!Array.isArray(body.repos)) {
+                throw new FeishuAuthError("invalid-response", "授权服务返回的仓库注册表不完整");
+            }
+            const repos = body.repos
+                .filter((repo) => repo && repo.enabled !== false)
+                .map((repo) => ({
+                key: String(repo.key ?? "").toLowerCase(),
+                owner: String(repo.owner ?? "").toLowerCase(),
+                name: String(repo.name ?? "").toLowerCase(),
+                baseBranch: String(repo.baseBranch ?? "main"),
+                branchPrefix: String(repo.branchPrefix ?? "content/"),
+                allowlistPaths: Array.isArray(repo.allowlistPaths) ? repo.allowlistPaths.map(String) : [],
+                denylistPaths: Array.isArray(repo.denylistPaths) ? repo.denylistPaths.map(String) : [],
+            }))
+                .filter((repo) => repo.key.length > 0);
+            return {
+                defaultRepo: typeof body.defaultRepo === "string" && body.defaultRepo.length > 0
+                    ? body.defaultRepo.toLowerCase()
+                    : null,
+                policyRevision: Number(body.policyRevision ?? 0),
+                repos,
+            };
+        }
+        catch (err) {
+            if (err instanceof FeishuAuthError && (err.code === "mmw_auth_required" || err.code === "mmw_session_expired")) {
+                await this.clearIfTokenCurrent(record);
+            }
+            throw err;
+        }
+    }
 }

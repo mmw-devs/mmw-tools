@@ -32,6 +32,12 @@ A **run id** is created when the gate is about to decide a call to an
    `select_repo` is decided from local session state before the route table is
    fetched (the table may lag a deployment); it still emits one
    `gate_decision`, and business tools continue to require the table.
+   Before binding, `select_repo` also refreshes the auth-core repository
+   registry (`GET /v1/agent/repos`) and writes the last good answer to
+   `~/.dsh/mmw-tools-repos.json` (0600). That cache holds repository
+   coordinates and path rules, never a credential, and it is not an audit
+   sink; a failed refresh is reported in the tool error, not appended as an
+   event.
 
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not

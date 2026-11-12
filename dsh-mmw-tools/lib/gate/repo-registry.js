@@ -54,6 +54,13 @@ export class RepoRegistry {
         this.selected.set(sessionId, key);
         return { ok: true, key };
     }
+    /** Replace the registry after a successful auth-core refresh. */
+    replace(entries, defaultKey) {
+        this.byKey.clear();
+        for (const entry of entries)
+            this.byKey.set(entry.key, entry);
+        this.defaultKey = defaultKey;
+    }
     /** Test seam: forget every binding. */
     clear() {
         this.selected.clear();
