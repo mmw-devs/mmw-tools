@@ -271,7 +271,13 @@
     {
       "path": "docs/MULTI-REPO-ROUTING.md",
       "status": "target design",
-      "defines": "多仓库授权的 A/B/C 方案对比与推荐；均未实现。",
+      "defines": "多仓库授权的 A/B/C 方案对比；推荐部分已由 ADR-0001 取代。",
+      "sources": []
+    },
+    {
+      "path": "docs/ADR-0001-MULTI-REPO.md",
+      "status": "target design",
+      "defines": "多仓库注册表、工具别名与会话绑定的决策提案；未实现。",
       "sources": []
     },
     {

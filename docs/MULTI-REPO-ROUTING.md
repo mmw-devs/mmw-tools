@@ -2,6 +2,9 @@
 
 Status: target design
 
+2026-11-12 的决策提案见 [`ADR-0001-MULTI-REPO.md`](ADR-0001-MULTI-REPO.md)；
+本文保留 A/B/C 比较，第 4 节的 B+ 推荐已被该 ADR 取代。
+
 本文是比较方案，不是已交付行为。**当前实现仍然是单仓库绑定**：
 [`dsh-mmw-tools/cordis.patch.yml`](../dsh-mmw-tools/cordis.patch.yml) 的
 `repoBinding` 注释写明是唯一仓库，`dsh-mmw-tools/src/gate/workspace-guard.ts`
