@@ -168,8 +168,10 @@ PR 不算安全修复。
    `GET /v1/agent/repos` 已落地；插件启动读本地缓存
    `~/.dsh/mmw-tools-repos.json`，`select_repo` 时刷新注册表并以服务端为准。
    `grants(member, repo, role)` 与 `GET /v1/agent/routes?repo=` 已落地：无授予返回
-   空 operation 表，不回退全局角色。仍未实现的是 `.dsh-mmw-tools.yaml` 运行时规则；
-   缓存意味着管理端新增仓库要到下一次插件加载才出现在本机可用集合中。
+   空 operation 表，不回退全局角色。`.dsh-mmw-tools.yaml` 运行时规则已落地：
+   `select_repo` 经 broker 的 `GET /repo-policy?repo=` 读取仓库根文件，缺失或非法时
+   失败关闭，不退回 profile 副本；规则随注册表一起写入本地缓存，供 MCP 每次调用
+   覆盖。缓存意味着管理端新增仓库要到下一次插件加载才出现在本机可用集合中。
    部署 grants 前必须先给现有维护者账号按仓库授权，否则会被全拒。
 7. **approval 不绑定“人真的点了确认”**：一次性的 approval 绑定 member、PR、
    head SHA，且 5 分钟过期；但能读 `0600` 写认证文件并直接发 HTTP 的本地进程
@@ -228,6 +230,11 @@ PR 不算安全修复。
   `select_repo` 在绑定前读取该仓库授权，没有 `select_repo` 角色即拒绝；
   业务调用也带同一 `repo` 取表，仓库不一致按 `[mmw_contract_mismatch]` 拒绝。
   剩余：`.dsh-mmw-tools.yaml`。
+- **v12（2026-11-13）**：运行时规则文件落地。broker 从 base 分支读取并校验
+  `.dsh-mmw-tools.yaml`（`GET /repo-policy?repo=`），写路径与 `pr_create` 默认
+  draft 用它；文件缺失/非法/不可达一律 503 且不退回 profile。`select_repo`
+  读取规则后覆盖内存 entry 与缓存，MCP 每次调用从缓存覆盖路径与 preflight。
+  本次没有改变“本地进程可自调用 approval”的边界。
 
 ## 9. 相关文档
 

@@ -54,6 +54,130 @@ const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const MAX_EDITS_PER_COMMIT = 50;
 const MAX_EDIT_BYTES = 1024 * 1024;
 const MAX_EDIT_TOTAL_BYTES = 4 * 1024 * 1024;
+const REPO_POLICY_PATH = ".dsh-mmw-tools.yaml";
+const REPO_POLICY_TTL_MS = 60 * 1000;
+
+/**
+ * Parse the small YAML subset a repository policy file uses: scalar fields,
+ * block lists of strings, and one-level maps for preflight/bootstrap. Keeping
+ * this local avoids adding a YAML dependency to a file that is deployed as a
+ * single unit on the broker host.
+ */
+export function parseRepoPolicy(text) {
+  const root = {};
+  const stack = [{ indent: -1, target: root }];
+  const lines = String(text).split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const rawLine = lines[index];
+    const trimmed = rawLine.trim();
+    if (trimmed === "" || trimmed === "---" || trimmed.startsWith("#")) continue;
+    const indent = rawLine.length - rawLine.trimStart().length;
+    const line = trimmed.replace(/\s+#.*$/, "");
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+    const parent = stack[stack.length - 1].target;
+    if (line.startsWith("- ")) {
+      if (!Array.isArray(parent)) {
+        throw new BrokerRefused("repo-policy-invalid", `unexpected list item: ${trimmed}`, 503);
+      }
+      parent.push(unquote(line.slice(2).trim()));
+      continue;
+    }
+    const match = /^([A-Za-z][A-Za-z0-9_-]*):(?:\s*(.*))?$/.exec(line);
+    if (!match) {
+      throw new BrokerRefused("repo-policy-invalid", `cannot parse line: ${trimmed}`, 503);
+    }
+    const key = match[1];
+    const value = match[2] ?? "";
+    if (value === "") {
+      const next = lines[index + 1];
+      const nextTrimmed = next ? next.trim() : "";
+      if (nextTrimmed.startsWith("- ")) {
+        parent[key] = [];
+        stack.push({ indent, target: parent[key] });
+      } else {
+        parent[key] = {};
+        stack.push({ indent, target: parent[key] });
+      }
+    } else {
+      parent[key] = unquote(value);
+    }
+  }
+  return root;
+}
+
+function unquote(value) {
+  const text = String(value).trim();
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    return text.slice(1, -1);
+  }
+  if (text === "[]") return [];
+  if (text.startsWith("[") && text.endsWith("]")) {
+    return text
+      .slice(1, -1)
+      .split(",")
+      .map((item) => unquote(item))
+      .filter((item) => item !== "");
+  }
+  if (text === "true") return true;
+  if (text === "false") return false;
+  if (/^-?\d+$/.test(text)) return Number(text);
+  return text;
+}
+
+export function validateRepoPolicy(parsed) {
+  const fail = (message) => {
+    throw new BrokerRefused("repo-policy-invalid", message, 503);
+  };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) fail("policy must be a map");
+  if (parsed.version !== 1) fail("version must be 1");
+  const stringList = (value, name) => {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+      fail(`${name} must be a list of non-empty strings`);
+    }
+    return value.map((item) => item.trim());
+  };
+  const allowlistPaths = stringList(parsed.allowlistPaths, "allowlistPaths");
+  const denylistPaths = stringList(parsed.denylistPaths, "denylistPaths");
+  const branchPrefix = String(parsed.branchPrefix ?? "");
+  if (!branchPrefix.endsWith("/")) fail("branchPrefix must end with /");
+  const mapField = (value, name, fields) => {
+    if (value === undefined) return {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${name} must be a map`);
+    for (const key of Object.keys(value)) {
+      if (!fields.includes(key)) fail(`${name}.${key} is not supported`);
+    }
+    return value;
+  };
+  const preflight = mapField(parsed.preflight, "preflight", ["cmd", "timeoutSeconds"]);
+  const bootstrap = mapField(parsed.bootstrap, "bootstrap", [
+    "cmd",
+    "whenMissing",
+    "timeoutSeconds",
+  ]);
+  const normalizeCommand = (value, name) => {
+    if (!value || typeof value !== "object") return { cmd: "", timeoutSeconds: 300 };
+    if (value.cmd !== undefined && typeof value.cmd !== "string") fail(`${name}.cmd must be a string`);
+    const timeout = value.timeoutSeconds ?? 300;
+    if (!Number.isInteger(timeout) || timeout <= 0) fail(`${name}.timeoutSeconds must be positive`);
+    return { cmd: value.cmd ?? "", timeoutSeconds: timeout };
+  };
+  const prDefaultDraft = parsed.prDefaultDraft ?? true;
+  if (typeof prDefaultDraft !== "boolean") fail("prDefaultDraft must be a boolean");
+  return {
+    allowlistPaths,
+    denylistPaths,
+    branchPrefix,
+    preflight: normalizeCommand(preflight, "preflight"),
+    bootstrap: {
+      ...normalizeCommand(bootstrap, "bootstrap"),
+      whenMissing: typeof bootstrap.whenMissing === "string" ? bootstrap.whenMissing : "",
+    },
+    prDefaultDraft,
+  };
+}
 
 export class BrokerRefused extends Error {
   constructor(code, message, status = 403) {
@@ -95,6 +219,7 @@ export class BrokerCore {
   #writeMintCache = new Map(); // repo key -> installation token used by the write proxy only
   #idempotency = new Map(); // key -> { value, expiresAt }
   #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
+  #repoPolicies = new Map(); // repo key -> { rules, sha, at }
 
   constructor(opts) {
     const required = [
@@ -709,6 +834,90 @@ export class BrokerCore {
     };
   }
 
+  /* ---------------- repository policy file ---------------- */
+
+  /**
+   * Read `.dsh-mmw-tools.yaml` from the repository's base branch. Write
+   * operations fail closed when it is missing or invalid; the plugin also
+   * asks for it through `repoPolicy()` so its local cache matches.
+   */
+  async #policyFor(rc, { fresh = false } = {}) {
+    const key = rc.key.toLowerCase();
+    const now = this.now();
+    const hit = this.#repoPolicies.get(key);
+    if (!fresh && hit && now - hit.at < REPO_POLICY_TTL_MS) return hit;
+
+    const issued = await this.#mintFor(rc, { permissions: { contents: "read" } });
+    let res;
+    try {
+      const signal =
+        typeof AbortSignal.timeout === "function"
+          ? AbortSignal.timeout(this.githubTimeoutMs)
+          : undefined;
+      res = await this.fetchImpl(
+        `${GITHUB_API}/repos/${encodeURIComponent(rc.owner)}/${encodeURIComponent(rc.name)}` +
+          `/contents/${encodeURIComponent(REPO_POLICY_PATH)}?ref=${encodeURIComponent(rc.baseBranch)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${issued.token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "dsh-race-ops-broker",
+          },
+          signal,
+        }
+      );
+    } catch (err) {
+      throw new BrokerRefused(
+        "repo-policy-unavailable",
+        `cannot read ${REPO_POLICY_PATH} (${err?.name ?? "network error"})`,
+        503
+      );
+    }
+    if (res.status === 404) {
+      throw new BrokerRefused(
+        "repo-policy-missing",
+        `${rc.key} has no ${REPO_POLICY_PATH} on ${rc.baseBranch}`,
+        503
+      );
+    }
+    const text = await res.text().catch(() => "");
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!res.ok || !parsed || typeof parsed.content !== "string") {
+      throw new BrokerRefused(
+        "repo-policy-unavailable",
+        `cannot read ${REPO_POLICY_PATH} (HTTP ${res.status})`,
+        503
+      );
+    }
+    const rules = validateRepoPolicy(
+      parseRepoPolicy(Buffer.from(parsed.content, "base64").toString("utf8"))
+    );
+    const entry = { rules, sha: String(parsed.sha ?? ""), at: now };
+    this.#repoPolicies.set(key, entry);
+    return entry;
+  }
+
+  /** Plugin-facing read of the repository policy, after identity check. */
+  async repoPolicy(repoKey, { feishuToken } = {}) {
+    const token = String(feishuToken ?? "").trim();
+    if (!token) throw new BrokerRefused("repo-policy-credential-required", "no Feishu credential", 401);
+    await this.#feishuIdentity(token);
+    const rc = this.#repoConfig(repoKey);
+    const entry = await this.#policyFor(rc, { fresh: true });
+    return {
+      repository: rc.key,
+      path: REPO_POLICY_PATH,
+      sha: entry.sha,
+      rules: entry.rules,
+    };
+  }
+
   /* ---------------- write proxy ---------------- */
 
   /**
@@ -809,11 +1018,11 @@ export class BrokerCore {
     );
   }
 
-  #assertBranch(branch, rc = this.defaultRepo) {
-    if (typeof branch !== "string" || !branch.startsWith(rc.branchPrefix)) {
+  #assertBranch(branch, rc = this.defaultRepo, rules = rc) {
+    if (typeof branch !== "string" || !branch.startsWith(rules.branchPrefix)) {
       throw new BrokerRefused(
         "branch-prefix",
-        `branch must start with ${rc.branchPrefix}`,
+        `branch must start with ${rules.branchPrefix}`,
         400
       );
     }
@@ -822,12 +1031,12 @@ export class BrokerCore {
     }
   }
 
-  #normalizePath(raw, rc = this.defaultRepo) {
+  #normalizePath(raw, rc = this.defaultRepo, rules = rc) {
     const normalized = normalizeRepoPath(raw);
-    if (!rc.allowlistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+    if (!rules.allowlistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
       throw new BrokerRefused("path-not-allowed", `${normalized} is not in the write allowlist`, 403);
     }
-    if (rc.denylistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
+    if (rules.denylistPaths.some((glob) => globToRegExp(glob).test(normalized))) {
       throw new BrokerRefused("path-denied", `${normalized} is on the write denylist`, 403);
     }
     return normalized;
@@ -935,12 +1144,13 @@ export class BrokerCore {
   async writeRepoEdit(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_EDIT_OPERATION, args);
     const rc = this.#repoConfig(args.repo);
+    const rules = (await this.#policyFor(rc)).rules;
     const branch = String(args.branch ?? "");
     const baseSha = String(args.baseSha ?? args.base_sha ?? "");
     const message = String(args.message ?? args.commit_message ?? "");
     const edits = Array.isArray(args.edits) ? args.edits : [];
 
-    this.#assertBranch(branch, rc);
+    this.#assertBranch(branch, rc, rules);
     if (!/^[0-9a-f]{40}$/i.test(baseSha)) {
       throw new BrokerRefused("base-sha-invalid", "base_sha must be a 40-character commit SHA", 400);
     }
@@ -956,7 +1166,7 @@ export class BrokerCore {
       if (!raw || typeof raw !== "object") {
         throw new BrokerRefused("edit-invalid", "every edit must be an object", 400);
       }
-      const pathname = this.#normalizePath(raw.path, rc);
+      const pathname = this.#normalizePath(raw.path, rc, rules);
       if (seen.has(pathname)) {
         throw new BrokerRefused("edit-duplicate-path", `${pathname} appears twice`, 400);
       }
@@ -1079,13 +1289,14 @@ export class BrokerCore {
   async writePrCreate(args = {}) {
     const who = await this.#authorizeWrite(FEISHU_PR_OPERATION, args);
     const rc = this.#repoConfig(args.repo);
+    const rules = (await this.#policyFor(rc)).rules;
     const head = String(args.head ?? args.head_branch ?? "");
     const base = String(args.base ?? rc.baseBranch);
     const title = String(args.title ?? "");
     const body = String(args.body ?? "");
-    const draft = args.draft !== false;
+    const draft = args.draft === undefined ? rules.prDefaultDraft !== false : args.draft !== false;
 
-    this.#assertBranch(head, rc);
+    this.#assertBranch(head, rc, rules);
     if (base !== rc.baseBranch) {
       throw new BrokerRefused("base-not-allowed", `PRs may only target ${rc.baseBranch}`, 400);
     }

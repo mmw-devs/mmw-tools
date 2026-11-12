@@ -1066,8 +1066,28 @@ export function apply(ctx, config) {
                     if (!grantTable.allowedOperations.includes("race-ops.select_repo")) {
                         throw new Error(`[mmw_route_denied] 当前账号在仓库 ${known} 没有可用角色，请联系管理员授予 viewer 或更高角色`);
                     }
+                    // The repository's own rule file is authoritative for paths and
+                    // branches. Read it before binding so a missing/invalid file fails
+                    // closed instead of falling back to the profile copy.
+                    let repoPolicy;
+                    try {
+                        repoPolicy = await authFor(known).repoPolicy();
+                    }
+                    catch (err) {
+                        throw new Error(`[mmw_policy_unavailable] 无法读取仓库规则：${err instanceof Error ? err.message : String(err)}`);
+                    }
                     const current = repos.keys().map((key) => repos.entry(key)).filter(Boolean);
-                    const merged = mergeRepoCacheEntries(current, table.repos);
+                    const merged = mergeRepoCacheEntries(current, table.repos).map((entry) => entry.key === known
+                        ? {
+                            ...entry,
+                            branchPrefix: repoPolicy.rules.branchPrefix,
+                            allowlistPaths: [...repoPolicy.rules.allowlistPaths],
+                            denylistPaths: [...repoPolicy.rules.denylistPaths],
+                            preflight: { ...repoPolicy.rules.preflight },
+                            bootstrap: { ...repoPolicy.rules.bootstrap },
+                            prDefaultDraft: repoPolicy.rules.prDefaultDraft,
+                        }
+                        : entry);
                     const nextDefault = table.defaultRepo && merged.some((entry) => entry.key === table.defaultRepo)
                         ? table.defaultRepo
                         : merged[0].key;
@@ -1076,7 +1096,7 @@ export function apply(ctx, config) {
                         fetchedAt: Date.now(),
                         policyRevision: table.policyRevision,
                         defaultRepo: table.defaultRepo,
-                        repos: table.repos,
+                        repos: merged,
                     });
                 }
                 const selected = repos.select(sessionId, requested);

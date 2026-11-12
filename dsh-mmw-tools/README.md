@@ -191,13 +191,20 @@ scoped to that repository rather than the default one.
 
 When Feishu is enabled, the auth core's repository registry
 (`GET /v1/agent/repos`, managed at **Admin → 仓库注册表**) is authoritative
-for repository coordinates and write rules. `select_repo` refreshes the
-registry before binding and refuses a repository that is not enabled there.
-It then reads that repository's grants (`GET /v1/agent/routes?repo=`) and
-refuses to bind if the member has no `select_repo` role there; business calls
-use the same repository-scoped table, so a member with no grant for the
-selected repository gets an empty operation table rather than the global role
-set. Grants are edited per member at **Admin → 成员 → 仓库授权**.
+for repository coordinates, while write rules come from that repository's own
+`.dsh-mmw-tools.yaml` at the base branch. `select_repo` refreshes the registry
+before binding and refuses a repository that is not enabled there. It then
+reads that repository's grants (`GET /v1/agent/routes?repo=`) and refuses to
+bind if the member has no `select_repo` role there; business calls use the
+same repository-scoped table, so a member with no grant for the selected
+repository gets an empty operation table rather than the global role set.
+Grants are edited per member at **Admin → 成员 → 仓库授权**.
+The rule file is read through the broker (`GET /repo-policy?repo=`), never
+directly from GitHub. A missing, invalid or unreachable file fails the
+selection with `[mmw_policy_unavailable]`; it never falls back to the profile
+copy. The parsed allow/deny lists, `branchPrefix`, `preflight` and
+`bootstrap` overlay the in-memory entry and are cached for MCP, which re-reads
+the cache on every call.
 Because DSH registers tools synchronously at load, the last successful
 refresh is cached at `~/.dsh/mmw-tools-repos.json` (0600) and overlaid on the
 profile at the next start; a repository added in the admin UI therefore
@@ -400,7 +407,7 @@ the plugin at all.
 
 | Tool | Purpose |
 |---|---|
-| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry is refreshed first, then the repository-scoped grants are read, and a member without a `select_repo` role there is refused. The registry answer is cached for the next plugin load |
+| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry is refreshed first, then the repository-scoped grants are read, and a member without a `select_repo` role there is refused. It also reads `.dsh-mmw-tools.yaml` through the broker and fails closed if that file is missing or invalid. The registry and rule answer are cached for the next plugin load and per-call MCP use |
 | `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files; credentials in the remote URL are redacted |
 | `repo_clone` | Shallow clone of the base branch into `workingDir` |
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |

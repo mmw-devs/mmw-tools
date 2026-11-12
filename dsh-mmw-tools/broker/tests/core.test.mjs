@@ -16,7 +16,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CORE = path.resolve(__dirname, "..", "core.mjs");
-const { BrokerCore, BrokerRefused, safeEqual } = await import(pathToFileURL(CORE).href);
+const { BrokerCore, BrokerRefused, safeEqual, parseRepoPolicy, validateRepoPolicy } = await import(
+  pathToFileURL(CORE).href
+);
 
 let pass = 0;
 let fail = 0;
@@ -671,6 +673,25 @@ function fakeWriteGithub({ head = BASE_SHA, openPr = true, draft = false } = {})
     }
     if (method === "GET" && p.startsWith("/contents/")) {
       const path = decodeURIComponent(p.slice("/contents/".length).split("?")[0]);
+      if (path === ".dsh-mmw-tools.yaml") {
+        const policy = [
+          "version: 1",
+          "branchPrefix: content/",
+          "allowlistPaths:",
+          "  - src/**",
+          "  - AGENTS.md",
+          "denylistPaths:",
+          "  - AGENTS.md",
+          "prDefaultDraft: true",
+          "",
+        ].join("\n");
+        return json({
+          type: "file",
+          encoding: "base64",
+          sha: "policy-sha",
+          content: Buffer.from(policy).toString("base64"),
+        });
+      }
       if (path === "src/a.txt") {
         return json({ type: "file", encoding: "base64", content: Buffer.from("hello world").toString("base64") });
       }
@@ -799,8 +820,9 @@ console.log("\n--- write proxy: repo_edit ---");
   eq(res.base_sha, BASE_SHA, "the base is echoed");
   eq(res.files_changed[0], "src/a.txt", "the changed file is listed");
   eq(res.idempotent, false, "the first call is not idempotent");
-  eq(minted[0].permissions?.contents, "write", "the write token carries contents:write");
-  eq(minted[0].permissions?.pull_requests, "write", "the write token carries pull_requests:write");
+  const writeMint = minted.find((mint) => mint.permissions?.contents === "write");
+  eq(writeMint?.permissions?.contents, "write", "the write token carries contents:write");
+  eq(writeMint?.permissions?.pull_requests, "write", "the write token carries pull_requests:write");
   eq(audits.at(-1)?.op, "repo_edit", "the write is audited");
   truthy(gh.calls.some((c) => c.method === "POST" && c.url.endsWith("/git/commits")), "a commit is created");
 }
@@ -1095,6 +1117,50 @@ console.log("\n--- write proxy: repository selection ---");
     "repo-denied",
     "a write to an unknown repository is refused"
   );
+}
+
+console.log("\n--- repo policy ---");
+{
+  const yaml = [
+    "version: 1",
+    "allowlistPaths:",
+    '  - "src/data/**"',
+    "  - docs/**",
+    "denylistPaths: [AGENTS.md, .github/**]",
+    'branchPrefix: "content/"',
+    "preflight:",
+    '  cmd: "pnpm build"',
+    "  timeoutSeconds: 120",
+    "bootstrap:",
+    '  cmd: "pnpm install --frozen-lockfile"',
+    '  whenMissing: "node_modules"',
+    "prDefaultDraft: false",
+  ].join("\n");
+  const parsed = parseRepoPolicy(yaml);
+  eq(parsed.allowlistPaths[0], "src/data/**", "quoted list item is unquoted");
+  eq(parsed.allowlistPaths[1], "docs/**", "bare list item is kept");
+  eq(parsed.denylistPaths[1], ".github/**", "inline list is parsed");
+  eq(parsed.branchPrefix, "content/", "branch prefix is parsed");
+  eq(parsed.preflight.cmd, "pnpm build", "preflight command is parsed");
+  eq(parsed.preflight.timeoutSeconds, 120, "preflight timeout is parsed");
+  eq(parsed.bootstrap.whenMissing, "node_modules", "bootstrap whenMissing is parsed");
+  eq(parsed.prDefaultDraft, false, "prDefaultDraft false is parsed");
+
+  const bad = parseRepoPolicy("version: 2\nallowlistPaths: []\nbranchPrefix: content");
+  let versionError = "";
+  try {
+    validateRepoPolicy(bad);
+  } catch (err) {
+    versionError = err.code;
+  }
+  eq(versionError, "repo-policy-invalid", "a non-v1 file is invalid");
+  let prefixError = "";
+  try {
+    validateRepoPolicy(parseRepoPolicy('version: 1\nallowlistPaths: ["src/**"]\nbranchPrefix: content'));
+  } catch (err) {
+    prefixError = err.code;
+  }
+  eq(prefixError, "repo-policy-invalid", "a branch prefix without / is invalid");
 }
 
 console.log("\n--- safeEqual ---");

@@ -32,7 +32,7 @@ import { homedir } from "node:os";
 import { BrokerClient, BrokerError } from "./broker-client.js";
 import { SessionStore, maskToken } from "./session-store.js";
 import type { SessionRecord } from "./session-store.js";
-import type { InstallationTokenResult } from "./broker-client.js";
+import type { InstallationTokenResult, RepoPolicy } from "./broker-client.js";
 
 /** Same union the status schema and the panel already render. */
 export type AuthStatus = "no_token" | "device_pending" | "authorized" | "reauth_needed";
@@ -375,6 +375,22 @@ export class BrokerAuth {
     await this.writeTokenFile(issued);
     await this.writeWriteAuth(issued, session, feishuToken);
     return issued.token;
+  }
+
+  /**
+   * The repository's own rule file, read through the broker. Only the Feishu
+   * plugin token is presented: the broker mints the installation token and
+   * never hands it to this call.
+   */
+  async repoPolicy(): Promise<RepoPolicy> {
+    const credential = this.feishu ? await this.feishu.credential() : null;
+    if (!credential) {
+      throw new BrokerError("session-required", "no Feishu credential; sign in first");
+    }
+    if (!this.repository) {
+      throw new BrokerError("repo-mismatch", "this plugin has no repository binding");
+    }
+    return this.broker.getRepoPolicy(credential, this.repository);
   }
 
   /**

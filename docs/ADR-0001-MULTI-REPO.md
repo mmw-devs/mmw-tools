@@ -49,10 +49,11 @@ Status: target design
 - auth core 的 `repos` 表、管理 UI 与 `GET /v1/agent/repos`；
 - 插件从 auth core 刷新注册表并生成本地缓存（`~/.dsh/mmw-tools-repos.json`，0600，不含凭据）；
 - `grants(member, repo, role)` 表、管理 UI 按仓库授权；`GET /v1/agent/routes?repo=` 只按该仓库 grants 派生，无授予返回空表。
+- `.dsh-mmw-tools.yaml` 运行时规则：broker 从 base 分支读取并校验，`GET /repo-policy?repo=` 供插件读取；`select_repo` 覆盖内存 entry 与缓存，MCP 每次调用从缓存覆盖 allow/deny、分支前缀与 preflight/bootstrap。缺失或非法时失败关闭，不退回 profile。
 
 仍未实现：
 
-- `.dsh-mmw-tools.yaml` 作为运行时规则 authority。
+- 仓库规则文件的漂移检测与状态展示（缺失/非法目前只体现为选择失败）。
 
 ## 1. 约束与现状
 
