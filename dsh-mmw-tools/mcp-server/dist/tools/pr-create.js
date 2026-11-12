@@ -45,7 +45,7 @@ export async function prCreate(input, cfg) {
         brokerUrl: cfg.brokerUrl ?? "",
         writeAuthFile: cfg.writeAuthFile ?? "",
     })) {
-        const result = await brokerWrite({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/write/pr_create", { head, base, title: input.title, body: input.body, draft }, { timeoutMs: 90_000 });
+        const result = await brokerWrite({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/write/pr_create", { head, base, title: input.title, body: input.body, draft, repo: cfg.repo }, { timeoutMs: 90_000 });
         const url = typeof result.url === "string" ? result.url : "";
         if (!PR_URL_RE.test(url)) {
             throw new GithubRefusedError("pr-url-malformed", `broker returned an unexpected PR URL: ${url || String(result.url)}`);

@@ -150,7 +150,7 @@ most operational weight.
 | [`docs/CONFORMANCE.md`](CONFORMANCE.md) | historical | 2026-11-11 claims-vs-evidence snapshot; not current behaviour. |
 | [`docs/MULTI-REPO-ROUTING.md`](MULTI-REPO-ROUTING.md) | target design | Multi-repo authorization options; none implemented. |
 | [`docs/ADR-0001-MULTI-REPO.md`](ADR-0001-MULTI-REPO.md) | target design | Multi-repo registry, tool identity, and session binding decision; unimplemented. |
-| [`docs/TOOL-NAMING.md`](TOOL-NAMING.md) | target design | Tool/operation naming rules; repositories never appear in names; CI enforcement. |
+| [`docs/TOOL-NAMING.md`](TOOL-NAMING.md) | living | Tool/operation naming rules; repositories never appear in names; CI enforcement. |
 | [`scripts/doc-map.json`](../scripts/doc-map.json) | manifest | Document-to-source map used by the impact check. |
 
 ## When in doubt

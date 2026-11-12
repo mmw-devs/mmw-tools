@@ -38,6 +38,11 @@ the current shape:
   operations, `editor` adds worktree/pull/edit/PR creation and closing, and
   `operator` / `admin` get everything, including `pr_merge` and `mmw_tools_run`.
   The exact matrix is generated in [`REFERENCE.md`](REFERENCE.md).
+- `select_repo` is the one operation every role may call before a repository is
+  chosen: it is `read`, declares all four roles, and the plugin gate exempts it
+  from the session-repository check. Business tools in a session without a
+  selection are refused with `[mmw_route_denied]`; the operation itself never
+  carries a repository in its name.
 - `pr_merge` and `pr_close` still have host confirmation behind them; `pr_merge`
   also has GitHub branch protection. The Feishu role is the first of several
   gates, not the last one.

@@ -35,7 +35,7 @@
 | `operations[].publicName` | 是 | agent 看到的工具名；MCP 为 `mcp__...`，原生为 `mmw_tools_*`。 |
 | `operations[].description` | 是 | 给 agent 的说明；也会写进运行时行为提示，例如 `pr_merge` 在目标仓库声明了 `agentMerge: false` 时拒绝合并。 |
 | `operations[].risk` | 是 | `read` 或 `write`；`write` 在授权表不新鲜时 fail closed。 |
-| `operations[].roles` | 否 | 未来 operation-level 角色覆盖；未设置时继承 `tools[].roles`。 |
+| `operations[].roles` | 否 | operation-level 角色覆盖；例如 `select_repo` 显式声明四个角色，使其在选仓库前可被调用。未设置时继承 `tools[].roles`。 |
 
 ## 4. `roles.json`
 
@@ -85,7 +85,7 @@
           "id": "pr_merge",
           "publicName": "mcp__mmw-tools__pr_merge",
           "risk": "write"
-          // 未来可加 "roles": ["admin"] 做 operation-level 覆盖
+          // 可选：加 "roles": ["admin"] 做 operation-level 覆盖
         }
       ]
     }

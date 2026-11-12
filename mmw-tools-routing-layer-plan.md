@@ -93,6 +93,8 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
    （绑定 PR、head SHA，5 分钟、单次使用）；`pr_close` 同样要宿主确认，但
    不需要 approval nonce（关闭不合并，且 broker 会拒绝非 `content/*` 或
    错误 base 的 PR）。
+6. 业务工具还要求当前会话已经用 `mcp__mmw-tools__select_repo` 选定仓库；未选
+   即拒绝，`select_repo` 本身豁免。选定后不能在同一会话改选其他仓库。
 
 “先拒绝、再询问”保证确认框不会成为绕过策略的入口。
 
@@ -107,8 +109,8 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 ```
 DSH agent
   → workspace guard（工作区边界，防误改）
-  → Feishu gate（token、路由表、operation 级判定）
-  → MCP transport（stdio，独立子进程）
+  → Feishu gate（token、路由表、operation 级判定、会话仓库选择）
+  → MCP transport（stdio，独立子进程；`_meta.mmwRepo` 选工作副本与仓库配置）
   → race-ops tool（读走本地 git；写请求转发到 broker）
   → GitHub broker（读 token 只读；写操作逐次校验 operation，GitHub session
     另过允许名单；按 operation 使用内存中的 write token）/ git
@@ -148,9 +150,9 @@ PR 不算安全修复。
 
 按影响排序：
 
-1. **角色阶梯尚未做真实账号冒烟**：契约、policy、gate、契约校验都已支持并在
-   `tools.json` 落地 viewer/editor/operator/admin 阶梯；还缺一次用真实飞书账号
-   走完“viewer 只读、editor 不能 merge、operator 可 merge”的手工验证。
+1. **角色阶梯还缺完整账号冒烟**：viewer 的越权拒绝已由维护者于 2026-11-12
+   在线验证（`mmw_route_denied`）；editor 不能 merge、operator 可 merge 仍缺
+   一次真实账号手工验证。
 2. **路由表刷新仍然简单**：有内存缓存、过期重拉、写操作 15s 上限、进程内
    policyRevision 单调；没有 STALE 宽限期、退避、single-flight。读失败也立即拒绝。
 3. **runId 只贯穿插件侧**：gate、MCP、audit 已串起来；broker 与 auth core 尚未接收，
@@ -158,7 +160,10 @@ PR 不算安全修复。
 4. **MCP server 在插件启动时就拉起**：与目标状态机的“未授权不启动 Transport”
    不一致；当前靠 gate 在调用时拒绝。
 5. **无 rate limiting**：单仓库、单用户场景暂时可接受，多用户前必须补。
-6. **无多仓库**：repo binding 仍是单仓库；第二 feature 要等单仓库闭环稳定。
+6. **多仓库只完成了执行侧**：`select_repo`、会话锁定、`_meta.mmwRepo`、每仓库
+   工作副本/令牌与 broker 路由已实现；auth core 的 `repos` 表、管理 UI、
+   `grants(member, repo, role)` 与 `.dsh-mmw-tools.yaml` 运行时规则仍未实现，
+   当前靠插件配置 `repos` 注册仓库、靠账号级 operation 集合授权。
 7. **approval 不绑定“人真的点了确认”**：一次性的 approval 绑定 member、PR、
    head SHA，且 5 分钟过期；但能读 `0600` 写认证文件并直接发 HTTP 的本地进程
    可以自调用 approval + merge。宿主对 `pr_merge` 的确认只是 UI 门，关闭这个
@@ -195,6 +200,10 @@ PR 不算安全修复。
   逐次校验 operation，write token 不出 broker；merge 增加一次性 approval，
   close 只要求宿主确认（不合并、不删分支）。
   残留是“本地进程可自调用 approval”，见 §6。
+- **v8（2026-11-13）**：多仓库执行侧落地。新增 `select_repo` 与门禁的会话级
+  仓库绑定；插件经 `_meta.mmwRepo` 把选择传给 MCP 子进程，按 `MMW_REPOS`
+  解析每仓库工作副本/基线/令牌；broker 读令牌与写代理均按 `repo` 路由。
+  仓库注册表、按仓库授权与运行时规则文件仍是目标设计，见 ADR-0001。
 
 ## 9. 相关文档
 

@@ -20,6 +20,7 @@ export interface PrMergeInput {
 }
 
 export interface PrMergeConfig {
+  repo?: string;
   workingDir: string;
   repoOwner: string;
   repoName: string;
@@ -214,6 +215,7 @@ export async function prMerge(
         pr_number: number,
         merge_method: method,
         commit_title: input.commit_title,
+        repo: cfg.repo,
       },
       { timeoutMs: 90_000 }
     );
@@ -235,6 +237,7 @@ export async function prMerge(
         head_sha: headSha,
         merge_method: method,
         commit_title: input.commit_title,
+        repo: cfg.repo,
       },
       { timeoutMs: 120_000 }
     );

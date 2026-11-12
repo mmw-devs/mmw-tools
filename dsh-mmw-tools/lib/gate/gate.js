@@ -13,6 +13,10 @@ function authErrorCode(err) {
     // the policy layer has no answer, so the operation is denied as unavailable.
     return "mmw_policy_unavailable";
 }
+function sessionIdOf(exec) {
+    const id = exec.agent?.id;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+}
 /**
  * Call-time enforcement. Model A authorizes the parent tool; the operation
  * id is still checked against allowedOperations first so an operation-level
@@ -27,10 +31,12 @@ export class PolicyGate {
     auth;
     enabled;
     wide;
+    repos;
     constructor(opts) {
         this.auth = opts.auth;
         this.enabled = opts.enabled;
         this.wide = opts.sessionWide === true;
+        this.repos = opts.repos;
     }
     get isEnabled() {
         return this.enabled;
@@ -39,7 +45,7 @@ export class PolicyGate {
     get sessionWide() {
         return this.wide;
     }
-    async check(publicName) {
+    async check(publicName, sessionId) {
         const ref = TOOL_MAP[publicName];
         if (!ref) {
             // Not in the contract. If it is not even ours, it belongs to the host
@@ -66,16 +72,39 @@ export class PolicyGate {
             }
             return deny("mmw_policy_unavailable", "飞书授权不可用，已拒绝调用");
         }
-        if (routes.allowedOperations.includes(ref.operationId))
-            return { ok: true };
+        if (routes.allowedOperations.includes(ref.operationId)) {
+            return this.repoDecision(ref, sessionId);
+        }
         // Contract v1 had no operation-level table; keep the old tool-level
         // fallback for it. From v2 on, allowedOperations is authoritative, so a
         // future operation-level denial cannot be bypassed by the parent tool.
-        if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId))
-            return { ok: true };
+        if (routes.contractVersion < 2 && routes.allowed.includes(ref.toolId)) {
+            return this.repoDecision(ref, sessionId);
+        }
         const required = routes.denied.find((entry) => entry.toolId === ref.toolId)?.requiredRoles ?? [];
         return deny("mmw_route_denied", `当前账号的角色不能消费 ${ref.toolId}` +
             (required.length > 0 ? `；需要 ${required.join(" / ")} 角色` : ""));
+    }
+    /**
+     * The operation-level check passed; now enforce the session's repository.
+     *
+     * `select_repo` itself must be callable before a repository exists. Every
+     * other business tool needs one: an unselected session is refused instead
+     * of silently falling back to the default repository.
+     */
+    repoDecision(ref, sessionId) {
+        if (!this.enabled || !this.repos)
+            return { ok: true };
+        if (ref.operationId === "race-ops.select_repo")
+            return { ok: true };
+        if (!sessionId) {
+            return deny("mmw_route_denied", "无法识别当前会话，不能确定要操作哪个仓库");
+        }
+        const key = this.repos.selectedBy(sessionId);
+        if (!key) {
+            return deny("mmw_route_denied", '本会话尚未选择仓库；请先调用 mcp__mmw-tools__select_repo，参数 repo 为 "owner/name"');
+        }
+        return { ok: true };
     }
     operation(publicName) {
         return TOOL_MAP[publicName];
@@ -107,7 +136,7 @@ export function installToolGate(ctx, opts) {
                 // the MCP bridge inside it — sees the same id via AsyncLocalStorage.
                 const runId = newRunId();
                 return runWithRunId(runId, async () => {
-                    const decision = await opts.gate.check(name);
+                    const decision = await opts.gate.check(name, sessionIdOf(exec));
                     if (!decision.ok) {
                         opts.onEvent?.({
                             kind: "gate_decision",

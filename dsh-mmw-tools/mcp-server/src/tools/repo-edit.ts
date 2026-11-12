@@ -79,6 +79,7 @@ export interface RepoEditOutput {
 }
 
 export interface RepoEditConfig {
+  repo?: string;
   workingDir: string;
   allowlistPaths: string[];
   denylistPaths: string[];
@@ -349,6 +350,7 @@ async function editThroughBroker(
       base_sha: baseSha,
       message: input.commit_message,
       edits: input.edits,
+      repo: cfg.repo,
     }
   );
 

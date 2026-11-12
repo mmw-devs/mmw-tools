@@ -25,6 +25,7 @@ and it is what a contributor should run before every commit.
 | `tests/client-bundle.test.mjs` | the `__ModuleLoader__` shape of `lib/client.js` |
 | `tests/bundle-apply.test.mjs` | `apply()` registers its tools, routes and prompt section; disposers; idempotence |
 | `tests/feishu-gate.test.mjs` | authorization tables, gate decisions (including `pr_merge` / `pr_close` asks), refusal-code prefixes, token rotation and refresh |
+| `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table |
 | `tests/workspace-guard.test.mjs` | the checkout fence, status exemption, and `repo_clone` bootstrap |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |

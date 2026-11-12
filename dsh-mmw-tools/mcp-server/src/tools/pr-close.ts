@@ -11,6 +11,7 @@ export interface PrCloseInput {
 }
 
 export interface PrCloseConfig {
+  repo?: string;
   workingDir: string;
   repoOwner: string;
   repoName: string;
@@ -63,7 +64,7 @@ export async function prClose(
       number: number;
       closed: boolean;
       already?: boolean;
-    }>(brokerCfg, "/v1/write/pr_close", { pr_number: number });
+    }>(brokerCfg, "/v1/write/pr_close", { pr_number: number, repo: cfg.repo });
     return {
       number: result.number ?? number,
       closed: true,

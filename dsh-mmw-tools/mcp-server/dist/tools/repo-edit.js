@@ -212,6 +212,7 @@ async function editThroughBroker(input, cfg, branch) {
         base_sha: baseSha,
         message: input.commit_message,
         edits: input.edits,
+        repo: cfg.repo,
     });
     return {
         branch: typeof result.branch === "string" ? result.branch : branch,

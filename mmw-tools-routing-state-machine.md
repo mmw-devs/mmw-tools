@@ -328,12 +328,13 @@ v2 的核心变化：
      ┌────┼──────────────┬──────────────┐
      │ALLOWED              │NEED_REFRESH   │DENIED
      ▼                     ▼              ▼
-  CHECK_TRANSPORT      FETCHING ──▶ CHECK_POLICY（最多 1 次）  DENIED
+  CHECK_REPO           FETCHING ──▶ CHECK_POLICY（最多 1 次）  DENIED
      │
-     ├──READY──▶ EXECUTING ──OK──▶ SUCCEEDED
-     │                │
-     │                └──ERROR/CANCELLED──▶ FAILED
-     └──UNAVAILABLE──▶ DENIED
+     ├──SELECTED──▶ CHECK_TRANSPORT
+     │                   ├──READY──▶ EXECUTING ──OK──▶ SUCCEEDED
+     │                   │                └──ERROR/CANCELLED──▶ FAILED
+     │                   └──UNAVAILABLE──▶ DENIED
+     └──NOT_SELECTED / OTHER_REPO──▶ DENIED
 ```
 
 ### 7.2 迁移表
@@ -343,9 +344,12 @@ v2 的核心变化：
 | `RECEIVED` | `CALL` | — | 记录 toolId；不启动 MCP | `CHECK_AUTH` |
 | `CHECK_AUTH` | `VALID` | Auth ∈ {`AUTHENTICATED`, `REFRESHING`} | — | `CHECK_POLICY` |
 | `CHECK_AUTH` | `INVALID` | — | 返回 `mmw_auth_required` / `mmw_session_expired` | `DENIED` |
-| `CHECK_POLICY` | `ALLOWED` | `operationId ∈ allowedOperations`（v2）；读工具在 `READY/STALE(grace)`；写工具在 `READY` 且新鲜 | 记录 `policyRevision` | `CHECK_TRANSPORT` |
+| `CHECK_POLICY` | `ALLOWED` | `operationId ∈ allowedOperations`（v2）；读工具在 `READY/STALE(grace)`；写工具在 `READY` 且新鲜 | 记录 `policyRevision` | `CHECK_REPO` |
 | `CHECK_POLICY` | `NEED_REFRESH` | 写工具表不新鲜；或读表过 TTL 且可刷新 | 同步刷新（≤2s）；成功后重试 | `CHECK_POLICY`（最多 1 次） |
 | `CHECK_POLICY` | `DENIED` | tool 不在 allowed / 无表 / grace 过期 | 返回 `mmw_route_denied` / `mmw_policy_unavailable` | `DENIED` |
+| `CHECK_REPO` | `SELECTED` | `operationId = race-ops.select_repo`（绑定到参数仓库），或本会话已选定仓库 | 记录 `sessionId → repo`；select_repo 同时预热该仓库令牌 | `CHECK_TRANSPORT` |
+| `CHECK_REPO` | `NOT_SELECTED` | 业务工具且本会话尚无选择 | 返回 `[mmw_route_denied]` 并提示调用 `select_repo` | `DENIED` |
+| `CHECK_REPO` | `OTHER_REPO` | 本会话已选定 X，再次 select_repo 选 Y（Y ≠ X） | 返回 `[mmw_route_denied] 本会话已选择 X`；不可切换 | `DENIED` |
 | `CHECK_TRANSPORT` | `READY` | — | — | `EXECUTING` |
 | `CHECK_TRANSPORT` | `STARTING` | — | 等待启动（有超时） | `CHECK_TRANSPORT` |
 | `CHECK_TRANSPORT` | `UNAVAILABLE` | 启动失败/重试耗尽 | 返回 `mmw_tool_unavailable` | `DENIED` |
@@ -359,9 +363,14 @@ v2 的核心变化：
 > `CHECK_TRANSPORT` 的 `mmw_tool_unavailable` 仍是目标状态，传输层尚未包装；
 > `READY/STALE(grace)` 与同步刷新上限也尚未实现。已实现部分见
 > `dsh-mmw-tools/src/gate/gate.ts`，逐条差异见 `docs/CONFORMANCE.md`。
+>
+> 2026-11-13 补记：`CHECK_REPO` 已实现（`src/gate/repo-registry.ts` 与
+> `gate.ts`）；`select_repo`、未选择拒绝、选定后不可切换均有单测。选择结果经
+> `_meta.mmwRepo` 交给 MCP 子进程，由 `MMW_REPOS` 解析该仓库的工作副本与令牌。
 
 ### 7.3 关键规则
-- **检查顺序固定**：Auth → Policy → Transport。未登录/无权限不能启动 MCP。
+- **检查顺序固定**：Auth → Policy → Repo → Transport。未登录/无权限/未选仓库不能启动 MCP。
+- **仓库显式选择**：业务工具要求会话已 `select_repo`；未选择不落默认仓库。同一会话不可改选；`select_repo` 本身豁免仓库检查。
 - **最多刷新一次**：`NEED_REFRESH` 只允许一次；刷新后仍不允许就拒绝。
 - **写工具 fail closed**：授权表不新鲜且刷新失败，直接拒绝；不允许用旧表写。
 - **读工具 grace**：核心不可达时，读工具在 grace 内可用旧表；超过 grace 拒绝。

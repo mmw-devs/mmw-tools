@@ -171,14 +171,28 @@ repoBinding:
     cmd: npm ci
     whenMissing: node_modules
     timeoutSeconds: 300
+repos:                               # optional; additional repositories
+  - owner: mmw-devs
+    name: xivstrat-relay
+    baseBranch: master
+    branchPrefix: content/
 ```
+
+`repoBinding` is always the first (default) repository. Each `repos` entry is
+merged with the same fields; omitted fields fall back to the defaults. A
+session must call `mcp__mmw-tools__select_repo` before any business tool and
+cannot switch repositories afterwards. The plugin passes the chosen
+`owner/name` to the MCP child in `_meta.mmwRepo` and as `MMW_REPOS`; each
+repository gets its own working copy and installation-token file
+(`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`).
 
 | Field | Meaning |
 |---|---|
 | `feishu.enabled` | Enforce the Feishu role gate at call time. Default off; the shipped file turns it on. |
 | `feishu.authServiceUrl` | Auth core origin. Env `MMW_TOOLS_AUTH_URL` wins. |
 | `feishu.gateScope` | `mmw-tools` (default) gates only this plugin's tools; `session` makes the gate an exclusive allowlist for the whole session. See **Scope of the Feishu gate**. |
-| `workingDir` | Where `repo_clone` puts the checkout and where `mmw_tools_run` reads `AGENTS.md`. Falls back to `GHOST_WORKING_DIR`. |
+| `workingDir` | Where `repo_clone` puts the checkout and where `mmw_tools_run` reads `AGENTS.md`. Falls back to `GHOST_WORKING_DIR`; a `repos[]` entry may override it. |
+| `repos` | Optional list of additional repositories. Same fields as `repoBinding`; duplicate or malformed keys are skipped. |
 | `allowlistPaths` | The only paths `repo_edit` may write. Glob, forward-slash, `**` and `*` supported. |
 | `denylistPaths` | Always refused, even if also allowlisted. |
 | `preflight.cmd` | Run before every commit; non-zero exit rolls the tree back. |
@@ -368,6 +382,7 @@ the plugin at all.
 
 | Tool | Purpose |
 |---|---|
+| `select_repo` | Bind this session to one registered repository. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused |
 | `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files |
 | `repo_clone` | Shallow clone of the base branch into `workingDir` |
 | `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |

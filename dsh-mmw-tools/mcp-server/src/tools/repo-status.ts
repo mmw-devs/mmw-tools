@@ -25,11 +25,14 @@ export interface RepoStatusOutput {
   remote_url: string | null;
 }
 
-export async function repoStatus(input: RepoStatusInput): Promise<RepoStatusOutput> {
+export async function repoStatus(
+  input: RepoStatusInput,
+  cfg?: { workingDir?: string }
+): Promise<RepoStatusOutput> {
   // Probe whether a .git exists.
-  // Caller passes working_dir via the MCP framework env (GHOST_WORKING_DIR)
-  // but we read it via env here for simplicity.
-  const workingDir = process.env.GHOST_WORKING_DIR ?? "";
+  // The dispatcher resolves the selected repository and passes its working
+  // directory; the env fallback keeps stand-alone use working.
+  const workingDir = cfg?.workingDir ?? process.env.GHOST_WORKING_DIR ?? "";
   if (!workingDir) {
     return {
       cloned: false,

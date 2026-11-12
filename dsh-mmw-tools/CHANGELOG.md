@@ -4,6 +4,14 @@
 
 ### Added
 
+- **One session can select one repository explicitly.** The new
+  `mcp__mmw-tools__select_repo` tool (contract `race-ops.select_repo`) binds the
+  session to a registered `owner/name`. Business tools refuse an unselected
+  session with `[mmw_route_denied]`, and a second selection in the same session
+  is refused rather than switched. The plugin sends the choice to the MCP child
+  as `_meta.mmwRepo` and `MMW_REPOS`; each repository gets its own working copy,
+  base branch, path lists, and installation-token file. Repository names never
+  enter tool names; see `docs/TOOL-NAMING.md`.
 - **The broker can mint read tokens for more than one repository.**
   `BROKER_REPOS` registers extra `owner/name` entries (each may override
   `baseBranch`, `branchPrefix`, and the path lists), and
