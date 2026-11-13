@@ -97,9 +97,10 @@ pnpm build:all
 
 # 3. Verify.
 pnpm check
-#    `pnpm check` includes the workspace relevance suites and the broker
-#    base-branch contract/ownership cases, so a release that only passes
-#    the old tool tests is not enough.
+#    `pnpm check` includes the workspace relevance suites, the broker
+#    base-branch contract/ownership cases, and the read-cache mirror
+#    (which needs git on PATH). A release that only passes the old tool
+#    tests is not enough. Broker tests are not packed into the tarball.
 (cd mcp-server && pnpm test)
 
 # 4. Confirm the tarball contains what the manifest promises.

@@ -12,11 +12,13 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { statfs } from "node:fs/promises";
 
 import { GithubRefusedError } from "../guard.js";
+import { brokerReadBundle, brokerReadEnabled } from "../broker-read.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,6 +37,10 @@ export interface RepoCloneConfig {
   baseBranch: string;
   /** GitHub PAT for private-repo authentication. */
   githubToken: string | null;
+  brokerUrl?: string;
+  writeAuthFile?: string;
+  repoOwner?: string;
+  repoName?: string;
 }
 
 const MIN_FREE_BYTES = 100 * 1024 * 1024;
@@ -74,6 +80,10 @@ export async function repoClone(
   }
 
   mkdirSync(cfg.workingDir, { recursive: true });
+
+  if (brokerReadEnabled({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" })) {
+    return cloneThroughBroker(cfg);
+  }
 
   // Build clone args. We pass the token via a temporary URL rewrite
   // for https://github.com URLs to authenticate private clones.
@@ -132,6 +142,60 @@ export async function repoClone(
     cloned_to: cfg.workingDir,
     branch: cfg.baseBranch,
   };
+}
+
+/**
+ * Clone from a broker-produced bundle. The bundle is a local file, so the
+ * client needs neither a GitHub credential nor a route to github.com. After
+ * the clone the origin is reset to the clean GitHub URL: it is the identity
+ * used by the workspace guard and by humans reading `git remote -v`, not a
+ * URL this tool will fetch from.
+ */
+async function cloneThroughBroker(cfg: RepoCloneConfig): Promise<RepoCloneOutput> {
+  const owner = cfg.repoOwner ?? "";
+  const name = cfg.repoName ?? "";
+  if (!owner || !name) {
+    throw new GithubRefusedError("repo-missing", "broker read proxy needs owner/name");
+  }
+  const tmp = mkdtempSync(path.join(tmpdir(), "mmw-read-bundle-"));
+  const bundle = path.join(tmp, "repo.bundle");
+  try {
+    await brokerReadBundle(
+      { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+      "/v1/read/bundle",
+      { repo: `${owner}/${name}`, ref: cfg.baseBranch },
+      bundle
+    );
+    await execFileAsync(
+      "git",
+      ["clone", "--branch", cfg.baseBranch, "--single-branch", bundle, cfg.workingDir],
+      {
+        cwd: path.dirname(cfg.workingDir),
+        timeout: 120_000,
+        maxBuffer: 8 * 1024 * 1024,
+      }
+    );
+    try {
+      await execFileAsync("git", ["remote", "set-url", "origin", cfg.repoUrl], {
+        cwd: cfg.workingDir,
+        timeout: 15_000,
+      });
+    } catch (err) {
+      throw new GithubRefusedError(
+        "clone-cleanup-failed",
+        `cloned, but could not set the clean origin: ${(err as Error).message}`
+      );
+    }
+    return { cloned_to: cfg.workingDir, branch: cfg.baseBranch };
+  } catch (err) {
+    if (err instanceof GithubRefusedError) throw err;
+    throw new GithubRefusedError(
+      "clone-failed",
+      `clone from broker bundle failed: ${(err as Error).message ?? String(err)}`
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /**

@@ -30,6 +30,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { assertSafeRepoPath, assertAllowlisted, assertBranchPrefix, assertWithinLimit, assertNoTokens, runPreflight, GithubRefusedError, LIMITS, } from "../guard.js";
 import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
+import { brokerRead, brokerReadEnabled } from "../broker-read.js";
 const execFileAsync = promisify(execFile);
 /* ============================================================== */
 /*  State machine                                                  */
@@ -181,6 +182,17 @@ export async function repoEdit(input, cfg) {
 async function resolveBranchHead(cfg, branch) {
     const owner = cfg.repoOwner ?? "";
     const repo = cfg.repoName ?? "";
+    if (brokerReadEnabled({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" })) {
+        try {
+            const data = await brokerRead({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/read/base-sha", { repo: `${owner}/${repo}`, ref: branch });
+            return typeof data.sha === "string" ? data.sha : null;
+        }
+        catch (err) {
+            if (err instanceof GithubRefusedError && err.code === "ref-not-found")
+                return null;
+            throw err;
+        }
+    }
     const token = cfg.githubToken ?? "";
     if (!owner || !repo || !token) {
         throw new GithubRefusedError("broker-read-credential-missing", "broker 写模式需要只读仓库令牌来确认分支基点");

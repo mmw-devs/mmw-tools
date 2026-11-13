@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { GithubRefusedError } from "../guard.js";
+import { brokerRead, brokerReadEnabled } from "../broker-read.js";
 const execFileAsync = promisify(execFile);
 /** The hosting integration that publishes previews for this repository. */
 const PREVIEW_CHECK_NAME = "Cloudflare Pages";
@@ -63,10 +64,13 @@ async function readChecks(repo, sha, cwd) {
     catch {
         parsed = [];
     }
+    return summarizeCheckRuns(parsed);
+}
+function summarizeCheckRuns(runs) {
     const checks = [];
     let previewUrl = null;
     let branchPreviewUrl = null;
-    for (const run of parsed ?? []) {
+    for (const run of runs ?? []) {
         checks.push({
             name: run.name ?? "",
             status: run.status ?? "unknown",
@@ -79,6 +83,24 @@ async function readChecks(repo, sha, cwd) {
         }
     }
     return { checks, previewUrl, branchPreviewUrl };
+}
+async function readChecksThroughBroker(cfg, repo, number) {
+    const data = await brokerRead({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/read/checks", { repo, number: String(number) });
+    return summarizeCheckRuns(data.check_runs);
+}
+async function viewPrThroughBroker(cfg, repo, number) {
+    const data = await brokerRead({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" }, "/v1/read/pr", { repo, number: String(number) });
+    const pr = (data.pr ?? {});
+    const head = (pr.head ?? {});
+    return {
+        number: typeof pr.number === "number" ? pr.number : number,
+        state: typeof pr.state === "string" ? pr.state : "UNKNOWN",
+        isDraft: pr.draft === true,
+        mergeStateStatus: typeof pr.mergeable_state === "string" ? pr.mergeable_state : "UNKNOWN",
+        headRefOid: typeof head.sha === "string" ? head.sha : "",
+        headRefName: typeof head.ref === "string" ? head.ref : "",
+        url: typeof pr.html_url === "string" ? pr.html_url : "",
+    };
 }
 /**
  * Read a PR's preview links and check states.
@@ -95,18 +117,29 @@ export async function prPreview(input, cfg) {
     }
     const requested = Number.isFinite(input.wait_seconds) ? Number(input.wait_seconds) : 0;
     const waitSeconds = Math.max(0, Math.min(MAX_WAIT_SECONDS, Math.floor(requested)));
+    const useBroker = brokerReadEnabled({
+        brokerUrl: cfg.brokerUrl ?? "",
+        writeAuthFile: cfg.writeAuthFile ?? "",
+    });
     let view;
     try {
-        view = JSON.parse(await gh(["pr", "view", String(number), "--repo", repo, "--json", "number,state,isDraft,mergeStateStatus,headRefOid,headRefName,url"], cfg.workingDir));
+        view = useBroker
+            ? await viewPrThroughBroker(cfg, repo, number)
+            : JSON.parse(await gh(["pr", "view", String(number), "--repo", repo, "--json", "number,state,isDraft,mergeStateStatus,headRefOid,headRefName,url"], cfg.workingDir));
     }
     catch (err) {
+        if (err instanceof GithubRefusedError)
+            throw err;
         throw new GithubRefusedError("pr-not-found", `无法读取 PR #${number}：${err instanceof Error ? err.message : String(err)}`);
     }
     const startedAt = Date.now();
-    let snapshot = await readChecks(repo, view.headRefOid, cfg.workingDir);
+    const snapshotOf = () => useBroker
+        ? readChecksThroughBroker(cfg, repo, number)
+        : readChecks(repo, view.headRefOid, cfg.workingDir);
+    let snapshot = await snapshotOf();
     while (!snapshot.branchPreviewUrl && !snapshot.previewUrl && Date.now() - startedAt < waitSeconds * 1000) {
         await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, waitSeconds * 1000 - (Date.now() - startedAt))));
-        snapshot = await readChecks(repo, view.headRefOid, cfg.workingDir);
+        snapshot = await snapshotOf();
     }
     const waited = Math.round((Date.now() - startedAt) / 1000);
     const hasPreview = Boolean(snapshot.branchPreviewUrl ?? snapshot.previewUrl);

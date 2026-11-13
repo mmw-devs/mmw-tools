@@ -397,5 +397,17 @@ await withServer({ writeEnabled: true }, async ({ base }) => {
   eq((await res.json()).error, "not-found", "the 404 is machine-readable");
 });
 
+console.log("\n--- read proxy over HTTP ---");
+await withServer({}, async ({ base }) => {
+  const res = await get(base, "/v1/read/base-sha?ref=main");
+  eq(res.status, 503, "the read proxy is off by default");
+  eq((await res.json()).error, "read-disabled", "the refusal is machine-readable");
+});
+await withServer({ readEnabled: true, readCache: { baseSha: async () => "a".repeat(40) } }, async ({ base }) => {
+  const res = await get(base, "/v1/read/base-sha?ref=main");
+  eq(res.status, 401, "a read without a credential is refused");
+  eq((await res.json()).error, "read-credential-required", "the read refusal is machine-readable");
+});
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

@@ -42,9 +42,9 @@ agent 对运维仓库的修改通常以两种方式失败：改了不该改的�
 | DSH | `>= 0.1.5-rc.1` |
 | Node | `^22.19.0 \|\| >= 24.0.0`（DSH 桌面版自带一个） |
 | `git` | 在 `PATH` 中——安装和插件自己的 clone 都需要 |
-| `gh` | 在 `PATH` 中——`pr_list` 使用，以及没有 broker 写凭据时 `pr_create` / `pr_merge` 的本地回退路径使用 |
+| `gh` | 仅在没有 broker 读/写凭据的本地回退路径中使用。正常飞书路径不需要 `gh` |
 | GitHub 账号 | **不需要。** broker 用自己的 App installation 认证到 GitHub。用户只需要一个飞书身份，其角色覆盖要用的 operation：编辑工作用 `repo_read` / `repo_edit` / `pr_create` / `pr_close`，合并用 `pr_merge` |
-| 网络 | 能访问 `https://race-ops-broker.mmw-team.icu` 和 `https://mmw-tools.mmw-team.icu` |
+| 网络 | 运行时只需访问 `https://race-ops-broker.mmw-team.icu` 和 `https://mmw-tools.mmw-team.icu`。`repo_clone` / `repo_pull` / base SHA / `pr_list` / `pr_preview` 都由 broker 代做，客户端不需要 `github.com` 或 `api.github.com`；只有浏览器里的飞书登录仍会跳转 GitHub |
 
 操作者机器上不需要 OAuth App、client id 或 client secret：认证走 broker（见 `docs/AUTH-BROKER.md`），登录 token 在 broker 那里换成短期 installation token。
 
@@ -73,6 +73,22 @@ git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools
 如果面板拒绝这个地址，就克隆仓库，把同一个对话框指向本地目录 `<clone>/dsh-mmw-tools`——构建产物（`lib/`、`mcp-server/dist/`）已经提交，操作者机器上不需要构建。
 
 然后打开 **Settings → MMW Tools**，点击 **使用飞书登录**。这是唯一的登录方式：完成前门禁会拒绝所有业务工具（`mmw_tools_status` 例外），broker 根据飞书身份签发仓库 token。不涉及 GitHub 账号、OAuth 授权或 client secret。仓库访问由 broker 的 GitHub App 身份完成；写代理见 `docs/AUTH-BROKER.md` §13。
+
+### 网络到不了 GitHub 的机器
+
+如果操作者机器只能访问 broker 和 auth core，不能访问 `github.com` /
+`api.github.com`，运行时仍然可用：
+
+- `repo_clone` 从 broker 下载 git bundle，不执行 `git clone https://github.com/...`；
+- `repo_pull` 下载同一个 bundle，fetch 后重置本地分支；
+- `repo_edit` 的 base SHA、`pr_list`、`pr_preview` 都走 broker；
+- `repo_read` / `repo_search` / `repo_status` 只读本地 checkout，完全离线；
+- `pr_create` / `pr_close` / `pr_merge` 本来就是 broker 写代理。
+
+broker 侧需要开启读代理（`BROKER_READ_ENABLED=true` 与
+`BROKER_READ_CACHE_DIR`），并在磁盘上保留每个仓库的 bare mirror。端点、缓存与
+部署见 `docs/AUTH-BROKER.md` §14。浏览器里的飞书登录仍会跳转 GitHub；如果连
+这一步也不可达，需要单独的登录中转，不在这条读代理的范围内。
 
 ### 安装到哪个 profile
 
@@ -302,18 +318,21 @@ plugin token 进入最后一天后会自动轮换：一个六小时一次的 wat
 |---|---|
 | `select_repo` | 把本会话绑定到 auth-core 注册表中启用的一个仓库。业务工具之前必须调用；未选择的会话会收到 `[mmw_route_denied]`，切换到另一个仓库会被拒绝。它在路由表之前由本地会话状态决定，所以滞后的角色表不会阻塞选择；先刷新注册表，再读按仓库的 grants，成员没有 `select_repo` 角色会被拒绝。它还通过 broker 读 `.dsh-mmw-tools.yaml`，文件缺失或非法时失败关闭。注册表和规则结果会缓存，供下次插件加载和 MCP 逐次调用使用 |
 | `repo_status` | 分支、dirty 标记、HEAD SHA、未提交文件；remote URL 里的凭据会被脱敏 |
-| `repo_clone` | 把 base 分支浅克隆到 `workingDir` |
-| `repo_pull` | `git pull --rebase origin <branch>`；工作树 dirty 时拒绝 |
+| `repo_clone` | 有 broker 读凭据时，下载 broker 生成的 bundle 并在本地 clone；否则把 base 分支浅克隆到 `workingDir` |
+| `repo_pull` | 有 broker 读凭据时，下载 bundle 后 fetch 并重置本地分支；否则 `git pull --rebase origin <branch>`。工作树 dirty 时都拒绝 |
 | `repo_read` | 读一个文件（默认 100 KiB，硬上限 500 KiB，拒绝二进制） |
 | `repo_search` | `git grep`，结果有上限，片段脱敏 |
 | `repo_edit` | 校验 → 原子应用编辑 → preflight → commit。有 broker 写凭据时，commit 由 broker 创建（不 push） |
 | `pr_create` | 开 PR（默认 draft；传 `draft: false` 直接 ready）。有 broker 写凭据时，由 broker push 并创建 |
 | `pr_close` | 关闭 PR，不合并。分支作者可以关自己的 PR；`operator` / `admin` 可以关任何 PR。宿主先询问；已关闭或已合并返回 `already: true` |
-| `pr_preview` | 从托管 check 取预览 URL，以及 check 状态和 draft/merge 状态；只读，可选等待部署 |
-| `pr_list` | 列出 PR（标题和正文脱敏） |
+| `pr_preview` | 有 broker 读凭据时，从 broker 取 PR 与 check 数据并解析托管预览 URL；否则用 `gh`。只读，可选等待部署 |
+| `pr_list` | 有 broker 读凭据时从 broker 列出 PR，否则用 `gh`；标题和正文脱敏 |
 | `pr_merge` | 必要时把 draft 标为 ready，然后合并。有 broker 写凭据时，先取绑定 head SHA 的一次性 approval，再合并；broker 拒绝 `agentMerge: false` 的级别和修改契约的 PR；宿主仍然会询问 |
 
-当 `MMW_BROKER_URL` 存在且 write-auth 文件可读时，这四个写工具调用 broker 的 `/v1/write/*` 端点；否则保留本地 git/`gh` 行为，供独立使用。
+当 `MMW_BROKER_URL` 存在且 write-auth 文件可读时，四个写工具调用 broker 的
+`/v1/write/*`，五个读路径（`repo_clone`、`repo_pull`、base SHA、`pr_list`、
+`pr_preview`）调用 `/v1/read/*`；否则保留本地 git/`gh` 行为，供独立使用。
+读路径也使用同一个飞书 plugin token，因此不需要额外的 GitHub 凭据。
 
 ## 安全模型
 
@@ -325,7 +344,7 @@ plugin token 进入最后一天后会自动轮换：一个六小时一次的 wat
 
 **已知取舍**，明确写出而不是隐藏：
 
-- 不使用 broker 写代理时，`repo_clone` 和 `pr_create` 会把 token 放在 git 命令行上，因此它会在进程列表中短暂可见。它从不写入 `.git/config`：`repo_clone` 在克隆后立即把 `origin` 重置为无凭据 URL，`pr_create` 向显式 URL push 且不加 `-u`，因为 `-u <url>` 会把该 URL（含 token）存成 `branch.<name>.remote`。未来版本应该用 `GIT_ASKPASS`，把 argv 暴露也去掉。
+- 只有本地回退路径才会把 token 放在 git 命令行上（正常飞书路径的 `repo_clone` / `repo_pull` 用的是 broker bundle，不接触 GitHub）；因此它可能在进程列表中短暂可见。它从不写入 `.git/config`：`repo_clone` 在克隆后立即把 `origin` 重置为无凭据 URL，`pr_create` 向显式 URL push 且不加 `-u`，因为 `-u <url>` 会把该 URL（含 token）存成 `branch.<name>.remote`。未来版本应该用 `GIT_ASKPASS`，把 argv 暴露也去掉。
 - broker approval nonce 绑定成员、PR 和 head SHA，且只能使用一次。它不能证明有人点了宿主提示：能读 write-auth 文件并发送 HTTP 的本地进程可以自己请求 approval 并合并。宿主 `pr_merge` / `pr_close` 的确认是 UI 门，不是安全边界；要关闭这个缺口需要宿主持有的 secret。
 - `repo_edit` 的 `find` 是逐字节匹配。在启用 `core.autocrlf` 的 Windows checkout 上，工作树里是 CRLF，所以用 LF 写的多行 `find` 不会匹配；编辑会被拒绝为 `find-not-found`，而不是应用一半。先用 `repo_read` 读文件，并复用它的精确字节。
 - Windows 上 `preflight` 和 `bootstrap` 命令通过 shell 运行，因为那里的 `npm` 是 `npm.cmd`，而 `execFile` 不查询 `PATHEXT`。没有这一点，所有基于 npm 的 pre-flight 在这个插件最常用的平台上都会以 `ENOENT` 失败。命令字符串来自你自己的插件配置，从不来自 agent。

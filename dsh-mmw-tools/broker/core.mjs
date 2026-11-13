@@ -24,6 +24,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { GitReadCache } from "./read-cache.mjs";
 
 const GITHUB_OAUTH = "https://github.com/login/oauth";
 const GITHUB_API = "https://api.github.com";
@@ -279,6 +280,7 @@ export class BrokerCore {
   #allowCache = new Map(); // login -> { allowed, checkedAt }
   #mintCache = new Map(); // repo key -> installation token reused for membership checks
   #writeMintCache = new Map(); // repo key -> installation token used by the write proxy only
+  #readMintCache = new Map(); // repo key -> read-only installation token for the read proxy
   #idempotency = new Map(); // key -> { value, expiresAt }
   #approvals = new Map(); // approvalId -> { member, pr, headSha, ..., expiresAt }
   #repoPolicies = new Map(); // repo key -> { rules, sha, at }
@@ -333,6 +335,13 @@ export class BrokerCore {
     this.denylistPaths = (opts.denylistPaths ?? []).map((p) => String(p).trim()).filter(Boolean);
     this.baseBranch = String(opts.baseBranch ?? "main");
     this.branchPrefix = String(opts.branchPrefix ?? "content/");
+
+    // Read proxy. Off by default for the same reason as writes: deploying
+    // the binary and enabling the capability are separate operations.
+    this.readEnabled = opts.readEnabled === true;
+    this.readCache =
+      opts.readCache ??
+      (this.readEnabled ? new GitReadCache({ dir: opts.readCacheDir }) : null);
 
     // Repository registry. The configured repo stays the default; extra
     // entries let one broker mint tokens for several repositories without
@@ -1022,6 +1031,69 @@ export class BrokerCore {
     return issued.token;
   }
 
+  /**
+   * The read-only installation token used by the read proxy. It never
+   * leaves the broker either: clients receive bundles and JSON, not tokens.
+   */
+  async #readToken(rc = this.defaultRepo) {
+    const key = rc.key.toLowerCase();
+    const cached = this.#readMintCache.get(key);
+    if (cached && cached.expiresAt - 60_000 > this.now()) return cached.token;
+    const issued = await this.#mintFor(rc, {
+      permissions: { contents: "read", pull_requests: "read" },
+    });
+    this.#readMintCache.set(key, { token: issued.token, expiresAt: issued.expiresAt });
+    return issued.token;
+  }
+
+  /** One GitHub API call with the broker's read token, scoped to one repo. */
+  async #readApi(pathname, { repo, allow404 = true } = {}) {
+    const rc = this.#repoConfig(repo);
+    const token = await this.#readToken(rc);
+    let res;
+    try {
+      const signal =
+        typeof AbortSignal.timeout === "function"
+          ? AbortSignal.timeout(this.githubTimeoutMs)
+          : undefined;
+      res = await this.fetchImpl(
+        `${GITHUB_API}/repos/${encodeURIComponent(rc.owner)}/${encodeURIComponent(rc.name)}${pathname}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "dsh-race-ops-broker",
+          },
+          signal,
+        }
+      );
+    } catch (err) {
+      throw new BrokerRefused(
+        "github-unreachable",
+        `GitHub did not answer within ${this.githubTimeoutMs / 1000}s (${err?.name ?? "network error"})`,
+        502
+      );
+    }
+    if (res.status === 404 && allow404) return null;
+    const text = await res.text().catch(() => "");
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = null;
+    }
+    if (!res.ok) {
+      const message =
+        parsed && typeof parsed.message === "string"
+          ? parsed.message
+          : `GitHub answered HTTP ${res.status}`;
+      throw new BrokerRefused("github-read-failed", message, res.status === 403 ? 403 : 502);
+    }
+    return parsed;
+  }
+
   /** One GitHub API call with the broker's write token, scoped to one repo. */
   async #api(method, pathname, { body, allow404 = false, repo } = {}) {
     const rc = this.#repoConfig(repo);
@@ -1099,6 +1171,41 @@ export class BrokerCore {
       "no Feishu or GitHub credential",
       401
     );
+  }
+
+  /** Read credentials use the same identities but a separate capability flag. */
+  async #authorizeRead(operation, { feishuToken, sessionToken } = {}) {
+    if (!this.readEnabled) {
+      throw new BrokerRefused("read-disabled", "the read proxy is not enabled on this broker", 503);
+    }
+    const feishu = String(feishuToken ?? "").trim();
+    if (feishu) {
+      const who = await this.#requireFeishuOperation(feishu, operation);
+      return { login: who.login, kind: "feishu", operations: who.operations };
+    }
+    const session = String(sessionToken ?? "").trim();
+    if (session) {
+      const { record } = this.#sessionFor(session);
+      const verdict = await this.#checkAllowlist(record.login);
+      if (!verdict.allowed) {
+        this.#revokeByLogin(record.login);
+        throw new BrokerRefused("not-allowed", `no longer allowed: ${verdict.reason}`, 403);
+      }
+      return { login: record.login, kind: "github" };
+    }
+    throw new BrokerRefused(
+      "read-credential-required",
+      "no Feishu or GitHub credential",
+      401
+    );
+  }
+
+  #readRef(value, fallback) {
+    const ref = String(value ?? fallback ?? "").trim();
+    if (!ref || ref.length > 256 || /[\s~^:?*[\\]|\.\./.test(ref)) {
+      throw new BrokerRefused("ref-invalid", "ref is not a valid branch name", 400);
+    }
+    return ref;
   }
 
   #assertBranch(branch, rc = this.defaultRepo, rules = rc) {
@@ -1606,6 +1713,76 @@ export class BrokerCore {
     return result;
   }
 
+  /* ---------------- read proxy ---------------- */
+
+  /**
+   * Resolve a branch head for the client. Used by repo_edit before it builds
+   * a commit, so a client that cannot reach api.github.com can still supply
+   * the base_sha the broker requires.
+   */
+  async readBaseSha({ repo, ref, feishuToken, sessionToken } = {}) {
+    const who = await this.#authorizeRead("race-ops.repo_read", { feishuToken, sessionToken });
+    const rc = this.#repoConfig(repo);
+    const wanted = this.#readRef(ref, rc.baseBranch);
+    const token = await this.#readToken(rc);
+    const sha = await this.readCache.baseSha(rc, token, wanted);
+    if (!sha) throw new BrokerRefused("ref-not-found", `branch ${wanted} does not exist`, 404);
+    return { repository: rc.key, ref: wanted, sha, login: who.login };
+  }
+
+  /**
+   * Stream a bundle for every branch. The client clones or fetches this
+   * local file; its `origin` stays the clean GitHub URL for identity only.
+   */
+  async readBundle({ repo, ref, operation = "race-ops.repo_clone", feishuToken, sessionToken } = {}) {
+    await this.#authorizeRead(operation, { feishuToken, sessionToken });
+    const rc = this.#repoConfig(repo);
+    const wanted = this.#readRef(ref, rc.baseBranch);
+    const token = await this.#readToken(rc);
+    const sha = await this.readCache.baseSha(rc, token, wanted);
+    if (!sha) throw new BrokerRefused("ref-not-found", `branch ${wanted} does not exist`, 404);
+    const bundle = await this.readCache.bundle(rc, token);
+    return { repository: rc.key, ref: wanted, sha, ...bundle };
+  }
+
+  async readPulls({ repo, state = "open", base, feishuToken, sessionToken } = {}) {
+    await this.#authorizeRead("race-ops.pr_list", { feishuToken, sessionToken });
+    const rc = this.#repoConfig(repo);
+    const wantedState = ["open", "closed", "all"].includes(String(state)) ? String(state) : "open";
+    const wantedBase = this.#readRef(base, rc.baseBranch);
+    const rows = await this.#readApi(
+      `/pulls?state=${wantedState}&base=${encodeURIComponent(wantedBase)}&per_page=100&sort=updated&direction=desc`,
+      { repo: rc.key }
+    );
+    return { repository: rc.key, items: Array.isArray(rows) ? rows : [] };
+  }
+
+  async readPr({ repo, number, feishuToken, sessionToken } = {}) {
+    await this.#authorizeRead("race-ops.pr_preview", { feishuToken, sessionToken });
+    const prNumber = Number(number);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
+    }
+    const rc = this.#repoConfig(repo);
+    const pr = await this.#readApi(`/pulls/${prNumber}`, { repo: rc.key });
+    if (!pr) throw new BrokerRefused("pr-not-found", `PR #${prNumber} does not exist`, 404);
+    return { repository: rc.key, pr };
+  }
+
+  async readChecks({ repo, number, feishuToken, sessionToken } = {}) {
+    const { pr } = await this.readPr({ repo, number, feishuToken, sessionToken });
+    const rc = this.#repoConfig(repo);
+    const checks = await this.#readApi(
+      `/commits/${encodeURIComponent(pr.head.sha)}/check-runs?per_page=100`,
+      { repo: rc.key }
+    );
+    return {
+      repository: rc.key,
+      head_sha: pr.head.sha,
+      check_runs: Array.isArray(checks?.check_runs) ? checks.check_runs : [],
+    };
+  }
+
   async #fetchMergeablePr(prNumber, rc = this.defaultRepo) {
     if (!Number.isInteger(prNumber) || prNumber <= 0) {
       throw new BrokerRefused("pr-number-invalid", "pr_number must be a positive integer", 400);
@@ -1831,6 +2008,9 @@ export class BrokerCore {
       feishuEnabled: Boolean(this.authUrl),
       // The write proxy is a separate switch from Feishu login.
       writeEnabled: this.writeEnabled,
+      // The read proxy keeps clone/read/PR metadata off github.com for
+      // clients that cannot reach GitHub at all.
+      readEnabled: this.readEnabled,
       pendingApprovals: this.#approvals.size,
       idempotencyEntries: this.#idempotency.size,
     };

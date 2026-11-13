@@ -14,6 +14,16 @@
 
 ### Added
 
+- **A broker read proxy keeps clone/pull/base-SHA/PR metadata off GitHub.**
+  `repo_clone` and `repo_pull` download a git bundle from
+  `/v1/read/bundle` / `/v1/read/pull`; `repo_edit` resolves its base SHA at
+  `/v1/read/base-sha`; `pr_list` and `pr_preview` use `/v1/read/pulls`,
+  `/v1/read/pr`, and `/v1/read/checks`. The broker keeps one bare mirror per
+  registered repository, fetches on a 15-second TTL, and streams a one-shot
+  bundle. Runtime clients therefore need only the broker and auth core, not
+  `github.com`, `api.github.com`, or `gh`. Enable it with
+  `BROKER_READ_ENABLED=true` and `BROKER_READ_CACHE_DIR`; see
+  `docs/AUTH-BROKER.md` §14.
 - **Tools are scoped by workspace relevance, not by a profile-wide switch.**
   The guard now compares the session's working directory against three facts:
   the auth-core repository registry, the checkout's `origin` remote, and the

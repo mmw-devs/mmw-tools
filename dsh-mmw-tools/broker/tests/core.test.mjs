@@ -759,6 +759,27 @@ function fakeWriteGithub({
   return { impl, calls, state };
 }
 
+function fakeReadCache() {
+  const calls = [];
+  return {
+    calls,
+    async baseSha(rc, _token, branch) {
+      calls.push({ op: "baseSha", repo: rc.key, branch });
+      return branch === "main" ? "a".repeat(40) : null;
+    },
+    async bundle(rc, _token) {
+      calls.push({ op: "bundle", repo: rc.key });
+      return {
+        path: "/tmp/read.bundle",
+        size: 42,
+        cleanup() {
+          calls.push({ op: "cleanup" });
+        },
+      };
+    },
+  };
+}
+
 function makeWriteCore(overrides = {}) {
   const gh = fakeWriteGithub({
     ...(overrides.head ? { head: overrides.head } : {}),
@@ -770,6 +791,10 @@ function makeWriteCore(overrides = {}) {
     name: overrides.authName ?? "张三",
     operations: overrides.operations ?? [
       "race-ops.repo_read",
+      "race-ops.repo_clone",
+      "race-ops.repo_pull",
+      "race-ops.pr_list",
+      "race-ops.pr_preview",
       "race-ops.repo_edit",
       "race-ops.pr_create",
       "race-ops.pr_close",
@@ -1308,6 +1333,51 @@ console.log("\n--- repo policy ---");
     prefixError = err.code;
   }
   eq(prefixError, "repo-policy-invalid", "a branch prefix without / is invalid");
+}
+
+console.log("\n--- read proxy ---");
+{
+  const cache = fakeReadCache();
+  const { core } = makeWriteCore({ readEnabled: true, readCache: cache });
+  const result = await core.readBaseSha({ feishuToken: "fs", ref: "main" });
+  eq(result.sha, "a".repeat(40), "baseSha returns the head");
+  eq(result.login, "张三", "baseSha returns the Feishu identity");
+  eq(cache.calls[0]?.op, "baseSha", "the read cache was asked for a SHA");
+
+  const bundle = await core.readBundle({ feishuToken: "fs", ref: "main" });
+  eq(bundle.path, "/tmp/read.bundle", "bundle path is returned");
+  eq(bundle.size, 42, "bundle size is returned");
+  bundle.cleanup();
+  eq(cache.calls.some((call) => call.op === "cleanup"), true, "bundle cleanup is callable");
+}
+{
+  const { core } = makeWriteCore({ readEnabled: true, readCache: fakeReadCache() });
+  await rejectsWith(
+    () => core.readBaseSha({ feishuToken: "fs", ref: "does-not-exist" }),
+    "ref-not-found",
+    "a missing branch is a 404"
+  );
+  await rejectsWith(
+    () => core.readBaseSha({ feishuToken: "fs", ref: "a..b" }),
+    "ref-invalid",
+    "an invalid ref is refused"
+  );
+}
+{
+  const { core } = makeCore({ readEnabled: false });
+  await rejectsWith(
+    () => core.readBaseSha({ feishuToken: "fs", ref: "main" }),
+    "read-disabled",
+    "a broker without the read flag refuses reads"
+  );
+}
+{
+  const { core } = makeWriteCore({ readEnabled: true, readCache: fakeReadCache() });
+  await rejectsWith(
+    () => core.readBaseSha({ ref: "main" }),
+    "read-credential-required",
+    "no credential is refused"
+  );
 }
 
 console.log("\n--- safeEqual ---");

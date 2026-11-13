@@ -11,6 +11,7 @@ import {
   redactTokens,
   GithubRefusedError,
 } from "../guard.js";
+import { brokerRead, brokerReadEnabled } from "../broker-read.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -38,6 +39,8 @@ export interface PrListConfig {
   baseBranch: string;
   repoOwner: string;
   repoName: string;
+  brokerUrl?: string;
+  writeAuthFile?: string;
 }
 
 export async function prList(
@@ -46,6 +49,19 @@ export async function prList(
 ): Promise<PrListOutput> {
   const state = input.state ?? "open";
   const base = input.base ?? cfg.baseBranch;
+
+  if (brokerReadEnabled({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" })) {
+    const data = await brokerRead<{ items?: unknown }>(
+      { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+      "/v1/read/pulls",
+      {
+        repo: `${cfg.repoOwner}/${cfg.repoName}`,
+        state,
+        base,
+      }
+    );
+    return { items: mapBrokerRows(Array.isArray(data.items) ? data.items : []) };
+  }
 
   const args = [
     "pr", "list",
@@ -99,4 +115,25 @@ export async function prList(
   }
 
   return { items };
+}
+
+/** GitHub REST rows, mapped to the same shape as the `gh` path. */
+function mapBrokerRows(rows: unknown[]): PrListItem[] {
+  const items: PrListItem[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const r = row as Record<string, unknown>;
+    const head = (r.head ?? {}) as Record<string, unknown>;
+    const base = (r.base ?? {}) as Record<string, unknown>;
+    items.push({
+      number: typeof r.number === "number" ? r.number : 0,
+      title: redactTokens(typeof r.title === "string" ? r.title : ""),
+      state: typeof r.state === "string" ? r.state : "UNKNOWN",
+      head_branch: typeof head.ref === "string" ? head.ref : "",
+      base_branch: typeof base.ref === "string" ? base.ref : "",
+      url: typeof r.html_url === "string" ? r.html_url : "",
+      created_at: typeof r.created_at === "string" ? r.created_at : "",
+    });
+  }
+  return items;
 }

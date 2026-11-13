@@ -8,7 +8,7 @@ subprocess, which not every sandbox permits.
 
 | Layer | Command | Needs | Runs where |
 |---|---|---|---|
-| Pure logic and shape | `pnpm check` | nothing | anywhere |
+| Pure logic and shape | `pnpm check` | `git` on `PATH` for the read-cache mirror test | anywhere with git |
 | MCP server handshake | `pnpm test:smoke` | `child_process.spawn` with piped stdio | CI, normal terminal |
 | Real git | `pnpm test:integration` | `git` on `PATH`, spawn with piped stdio | CI, normal terminal |
 | Real GitHub | none | a scratch repository, a Feishu login, and the broker | manual, see below |
@@ -16,7 +16,8 @@ subprocess, which not every sandbox permits.
 ### `pnpm check`
 
 Typecheck, namespace consistency, the in-process suites, and a pack-contents
-assertion. No subprocess, no network, no repository. Package metadata changes
+assertion. No network; the read-cache suite creates a temporary local git
+repository to exercise the broker mirror, so `git` must be on `PATH`. Package metadata changes
 are covered by `check:namespace` (id/name/version) and `check:pack` (shipped
 file list); no runtime suite asserts `description` or `keywords`. Safe to run anywhere,
 and it is what a contributor should run before every commit.
@@ -45,8 +46,9 @@ host validation.
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior, including repo-scoped installation-token queries |
 | `tests/broker-auth.test.mjs` | Feishu-only credential exchange, repo mismatch, cache-hit write-auth refresh |
-| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, base-branch contract gate, close ownership, path allow/deny |
-| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge |
+| `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, base-branch contract gate, close ownership, path allow/deny, read-proxy authorization and ref checks |
+| `broker/tests/read-cache.test.mjs` | the server-side git mirror and one-shot bundle: `baseSha`, missing branch, bundle clone, cleanup, TTL refetch, unsafe path rejection |
+| `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge, and `/v1/read/*` routing/refusals |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
 | `scripts/check-pack-contents.mjs` | the npm tarball contains `lib/`, `mcp-server/dist/`, and `LICENSE`, and excludes `src/`, `tests/` |
 

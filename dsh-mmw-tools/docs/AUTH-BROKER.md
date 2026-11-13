@@ -812,3 +812,67 @@ base 分支的 open PR 才会被 `PATCH state: closed`。关闭不合并，也
 - 写 token 仍是仓库级 `contents/pull_requests: write`，没有按文件/PR 的 GitHub
   侧细粒度；broker 的路径与分支检查是唯一收窄点。
 - 审计文件不自动轮转；生产上应交给 logrotate 或定期归档。
+
+## 14. 读代理（2026-11-14）
+
+目标：客户端只需要访问 `race-ops-broker.mmw-team.icu`。`repo_clone`、
+`repo_pull`、`repo_edit` 的 base SHA、`pr_list`、`pr_preview` 不再访问
+`github.com`、`api.github.com` 或 `gh` CLI；broker 用 GitHub App 身份代做。
+已登录用户的浏览器仍然需要访问 GitHub；这里解决的是**运行时**的仓库访问。
+
+### 端点
+
+| 端点 | operation | 返回 |
+|---|---|---|
+| `GET /v1/read/base-sha?repo=&ref=` | `race-ops.repo_read` | `{repository, ref, sha, login}`；分支不存在 `ref-not-found`（404） |
+| `GET /v1/read/bundle?repo=&ref=` | `race-ops.repo_clone` | `application/x-git-bundle`，头带 `x-commit-sha`、`x-repository` |
+| `GET /v1/read/pull?repo=&ref=` | `race-ops.repo_pull` | 同上；客户端 fetch 后重置本地分支 |
+| `GET /v1/read/pulls?repo=&state=&base=` | `race-ops.pr_list` | GitHub PR 列表原样返回 |
+| `GET /v1/read/pr?repo=&number=` | `race-ops.pr_preview` | 单个 PR；不存在 `pr-not-found` |
+| `GET /v1/read/checks?repo=&number=` | `race-ops.pr_preview` | `{head_sha, check_runs}` |
+
+凭据与写代理相同：`X-MMW-Feishu-Token` 或 legacy `Authorization: Bearer`。
+每个请求按 operation 检查飞书路由表；GitHub 允许名单是人工 break-glass。
+未开启读代理返回 `read-disabled`（503），无凭据返回
+`read-credential-required`（401）。
+
+### bundle 与缓存
+
+broker 为每个注册仓库维护一个 bare mirror，首次 `git clone --mirror`，之后
+`git fetch --prune --tags`；同一个仓库的 clone/fetch 单飞，fetch TTL 15 秒。
+installation token 通过 git 的 `GIT_CONFIG_*` 传给子进程，不进入 argv。
+`bundle --all` 生成一次性文件，HTTP 响应结束后立即删除。
+
+客户端 `repo_clone` 下载 bundle 后 `git clone <bundle>`，再把 `origin` 改回
+干净的 GitHub URL（只用于工作区身份识别，不再 fetch）；`repo_pull` 下载
+bundle 后 fetch 到 `refs/remotes/broker/<branch>` 并重置本地分支。`repo_read`
+与 `repo_search` 仍读本地 checkout，因此 clone 之后完全离线可用。
+
+### 配置与部署
+
+`.env` 增加：
+
+```sh
+BROKER_READ_ENABLED=true
+BROKER_READ_CACHE_DIR=/opt/race-ops-broker/read-cache
+```
+
+创建目录并交给服务用户：
+
+```sh
+sudo install -d -o raceops -g raceops -m 0750 /opt/race-ops-broker/read-cache
+sudo systemctl restart race-ops-broker
+curl -fsS http://127.0.0.1:8787/health | jq .readEnabled
+```
+
+`/health` 的 `readEnabled` 为 `true` 才说明新代码已加载。磁盘占用约等于各仓库
+bare mirror + 一次性 bundle；当前仓库在几十 MB 量级，25 GB 磁盘足够，但仍应
+用定时任务清理异常残留的 `read-*.bundle`。
+
+### 残留边界
+
+- 读代理只解决“客户端到 GitHub”的网络问题；飞书授权、auth core 与 broker
+  仍必须可达。
+- 读 token 仍是仓库级 `contents: read`；bundle 包含仓库全部历史与分支，因此
+  能 clone 的成员可以看到仓库所有分支的内容。
+- 浏览器登录 GitHub 的旧路径仍存在（legacy/manual），插件客户端不再调用。
