@@ -50,6 +50,9 @@ mcp__mmw-tools__pr_merge
 - operation ID：snake_case，例如 `repo_read`、`select_repo`。
 - `operation.publicName` 就是模型看到的完整字符串，不再二次拼接。
 - 授权与审计的稳定键是 `toolId.operationId`，不是公开名。
+- 输出 schema 与 MCP 结果信封（`{content: ContentBlock[]}`）不参与命名；它们只约束返回形状，不改变 `publicName` 或 operation ID。
+- 输出 schema 和 MCP 结果信封不属于命名规则：工具名只由 server/operation
+  决定，结果统一收敛为 `{ content: ContentBlock[] }`，不因 schema 收紧而改名。
 
 ## 3. 仓库是会话状态
 

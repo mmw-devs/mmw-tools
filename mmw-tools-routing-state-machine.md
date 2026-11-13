@@ -374,7 +374,7 @@ v2 的核心变化：
 | `CHECK_TRANSPORT` | `READY` | — | — | `EXECUTING` |
 | `CHECK_TRANSPORT` | `STARTING` | — | 等待启动（有超时） | `CHECK_TRANSPORT` |
 | `CHECK_TRANSPORT` | `UNAVAILABLE` | 启动失败/重试耗尽 | 返回 `mmw_tool_unavailable` | `DENIED` |
-| `EXECUTING` | `OK` | — | 返回结果 | `SUCCEEDED` |
+| `EXECUTING` | `OK` | — | 结果经 MCP bridge 收敛为 `{ content: ContentBlock[] }`；严格输出 schema 拒绝额外顶层字段 | `SUCCEEDED` |
 | `EXECUTING` | `ERROR` | — | 返回错误 | `FAILED` |
 | `EXECUTING` | `CANCELLED` | 调用方取消 | 转发 abort signal | `FAILED` |
 | `EXECUTING` | `AUTH_REVOKED` | 执行中收到撤销 | 不杀在途；记录；新调用拒绝 | `SUCCEEDED` / `FAILED` |
@@ -392,6 +392,10 @@ v2 的核心变化：
 > 2026-11-13 修正：`select_repo` 在 `CHECK_POLICY` 之前用本地会话状态判定
 > （授权表可能滞后于插件部署），因此对它的顺序是 Auth → Repo；业务工具仍是
 > Auth → Policy → Repo。
+>
+> 2026-11-14 结果信封：MCP 包装工具的输出 schema 是严格对象（`content` 数组、
+> `additionalProperties:false`）；`EXECUTING` 成功后先收敛为
+> `{content: ContentBlock[]}`，工具错误直接抛出，不把 `isError` 交给宿主。
 >
 > 2026-11-13 注册表接入：`select_repo` 在绑定前刷新 `GET /v1/agent/repos`，
 > 未启用/未知仓库返回 `[mmw_route_denied]`，刷新失败返回

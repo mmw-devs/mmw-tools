@@ -2,7 +2,7 @@
   "name": "dsh-mmw-tools",
   "version": "0.10.0",
   "private": true,
-  "description": "DeepSeek Harness plugin: lets the DSH agent read AGENTS.md, edit a single configured repo under allowlist, run pre-flight, and open a draft PR on a content/* branch. OAuth Device Flow with the user's GitHub identity.",
+  "description": "DeepSeek Harness plugin: workspace-scoped repository and PR tools. The user signs in with Feishu only; the broker uses a GitHub App identity to mint repository tokens, and gates merge/close on server-side role and ownership checks.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -91,9 +91,9 @@
     "dsh-plugin",
     "deepseek-harness",
     "github",
+    "feishu",
     "mcp",
     "model-context-protocol",
-    "oauth-device-flow",
     "pull-request",
     "agents-md"
   ],

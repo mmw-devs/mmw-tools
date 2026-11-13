@@ -1,57 +1,66 @@
 # dsh-mmw-tools
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge or close it.
+这是一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件，让 DSH agent 在**一个已注册的 GitHub 仓库**里，按仓库自己发布的规则工作：读 `AGENTS.md`，只改 allowlist 中的路径，每次提交前跑 pre-flight，开 pull request，展示托管预览，并且只有操作者确认后才合并或关闭。一个 profile 可以服务多个已注册仓库；每个会话用 `select_repo` 绑定其中一个。
 
-Authentication is broker-mediated: a **Feishu login** is the only user credential (no GitHub account needed). The broker verifies the Feishu identity, then uses its own GitHub App installation to mint a short-lived, **read-only** token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging and closing happen through `pr_merge` / `pr_close`, which ask the host and require a one-time broker approval bound to the PR head SHA.
+认证由 broker 中介：**飞书登录是唯一的用户凭据**，不需要 GitHub 账号。broker 验证飞书身份后，用自己的 GitHub App installation 签出一个短期、**只读**的 token；写操作走 broker 的 `/v1/write/*` 代理，代理会逐次重新校验 operation，并把写 token 留在 broker 内存里。不需要 webhook，操作者机器也不需要公网 IP。`pr_merge` 会请求宿主确认，并要求一次性 broker approval 绑定 PR head SHA；`pr_close` 会请求宿主确认并检查分支归属，但不需要这个 approval nonce。
 
 ```
-agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
-       ──▶ repo_read / repo_search ──▶ understand the current state
-       ──▶ repo_edit ──▶ allowlist check + preflight + commit
-       ──▶ pr_create ──▶ push content/* + open the PR
-       ──▶ pr_preview ──▶ the preview URL the operator reviews
-       ──▶ pr_merge ──▶ merge, after the operator confirms in the UI
-       ──▶ pr_close ──▶ close without merging, after the same confirmation
+agent ──▶ select_repo ──▶ 把会话绑定到一个已注册仓库
+       ──▶ mmw_tools_run ──▶ 读取 AGENTS.md / README.md，返回操作规则
+       ──▶ repo_read / repo_search ──▶ 理解当前状态
+       ──▶ repo_edit ──▶ allowlist 校验 + preflight + commit
+       ──▶ pr_create ──▶ push content/* + 开 PR
+       ──▶ pr_preview ──▶ 操作者审阅的预览 URL
+       ──▶ pr_merge ──▶ 操作者在 UI 确认后合并
+       ──▶ pr_close ──▶ 同样确认后关闭，不合并
 ```
 
-## Why
+## 为什么需要它
 
-Agent-written changes to an operations repository usually fail in one of two ways: the agent edits files it should not touch, or it ships something that the repository's own validation would have rejected. Both are preventable if the rules are machine-checkable and enforced before the write, not after the review.
+agent 对运维仓库的修改通常以两种方式失败：改了不该改的文件，或者提交了仓库自己的校验本来就会拒绝的内容。只要规则可以被机器检查，并且在写入前执行，而不是等 review 后才发现，这两种失败都可以避免。
 
-This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a checked-in binding so it can be enforced without an LLM parse), and enforces them at the tool boundary:
+这个插件从仓库的 `AGENTS.md` 取规则（镜像到 checked-in binding，从而不依赖 LLM 解析），并在工具边界执行：
 
-- **Allowlist** — an empty allowlist means nothing is writable.
-- **Denylist beats allowlist** — a path matching both is refused.
-- **Branch prefix** — a commit lands on `content/*` or it does not land.
-- **Pre-flight** — `repo_edit` runs the configured command and rolls the working tree back if it fails.
-- **Merge and close are gated, not automatic.** `pr_merge` and `pr_close` ask the operator to confirm in the UI before they run; `mergeStateStatus` — GitHub's own verdict — still decides whether merging is allowed.
+- **Allowlist** —— allowlist 为空表示任何文件都不能写。
+- **Denylist 优先于 allowlist** —— 同时命中两者的路径会被拒绝。
+- **分支前缀** —— 提交只能落在 `content/*`，否则不会落地。
+- **Pre-flight** —— `repo_edit` 运行配置里的命令，失败就回滚工作树。
+- **合并和关闭是受门禁的，不自动执行。** `pr_merge` 和 `pr_close` 在运行前请求操作者在 UI 中确认；`mergeStateStatus`（GitHub 自己的判断）仍然决定是否允许合并。
 
-## What it does not do
+## 它不做什么
 
-- Does not drive an LLM. `mmw_tools_run` prepares context; the DSH agent runs the loop.
-- Does not merge without the operator confirming the host's prompt, and never bypasses branch protection.
-- Does not push to the base branch.
-- Does not switch repositories inside a session: `select_repo` binds once, and the binding cannot change until the session ends.
-- Does not receive webhooks, and needs no public IP.
+- 不驱动 LLM。`mmw_tools_run` 只准备上下文；循环由 DSH agent 执行。
+- 不在操作者确认宿主提示之前合并，也绝不绕过分支保护。
+- 不向 base 分支推送。
+- 不在会话内切换仓库：`select_repo` 只绑定一次，会话结束前绑定不能改变。
+- 不接收 webhook，也不需要公网 IP。
 
-## Requirements
+## 环境要求
 
 | | |
 |---|---|
 | DSH | `>= 0.1.5-rc.1` |
-| Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
-| `git` | on `PATH` — both for the install and for the plugin's own clones |
-| `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub account | **not required.** The broker authenticates to GitHub with its own App installation. Users only need a Feishu identity whose roles cover this repository's `repo_read` / `repo_edit` / `pr_create` / `pr_close` operations |
-| Network | `https://race-ops-broker.mmw-team.icu` and `https://mmw-tools.mmw-team.icu` reachable |
+| Node | `^22.19.0 \|\| >= 24.0.0`（DSH 桌面版自带一个） |
+| `git` | 在 `PATH` 中——安装和插件自己的 clone 都需要 |
+| `gh` | 在 `PATH` 中——`pr_list` 使用，以及没有 broker 写凭据时 `pr_create` / `pr_merge` 的本地回退路径使用 |
+| GitHub 账号 | **不需要。** broker 用自己的 App installation 认证到 GitHub。用户只需要一个飞书身份，其角色覆盖要用的 operation：编辑工作用 `repo_read` / `repo_edit` / `pr_create` / `pr_close`，合并用 `pr_merge` |
+| 网络 | 能访问 `https://race-ops-broker.mmw-team.icu` 和 `https://mmw-tools.mmw-team.icu` |
 
-No OAuth App, client id or client secret is needed on the operator's machine:
-authentication goes through the broker (docs/AUTH-BROKER.md), and the login
-token is exchanged there for a short-lived installation token.
+操作者机器上不需要 OAuth App、client id 或 client secret：认证走 broker（见 `docs/AUTH-BROKER.md`），登录 token 在 broker 那里换成短期 installation token。
 
-## Install
+### 第一次调用之前
 
-### From the plugin panel (recommended)
+只安装插件还不够。管理员必须先：
+
+1. 在 auth core 注册仓库（**Admin → 仓库注册表**）；
+2. 给飞书成员授予 `select_repo` 以及该仓库需要的 operations（**Admin → 成员 → 仓库授权**）；
+3. 在仓库的 base 分支放一个 `.dsh-mmw-tools.yaml`。
+
+会话必须运行在 `origin` remote 匹配某个已注册仓库的 clone 里，或者从一个 `repo_clone` 能创建 checkout 的目录开始。不确定时调用 `mmw_tools_status`：它的 `workspace` 段会报告 `managed`、`unmanaged`、`mismatch`、`bootstrap` 或 `unknown`，并说明原因。
+
+## 安装
+
+### 从插件面板安装（推荐）
 
 DSH 侧边栏 → **插件（Plugins）** → **添加插件** → **安装第三方插件**：
 
@@ -59,100 +68,86 @@ DSH 侧边栏 → **插件（Plugins）** → **添加插件** → **安装第�
 git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools
 ```
 
-The panel accepts npm package names, git repositories and local directories;
-this one is a subdirectory of a monorepo, hence the `#path:` selector. Install,
-enable it, then **restart DSH** (the host bundle and the MCP child are loaded
-at startup).
+面板接受 npm 包名、git 仓库和本地目录；本插件是 monorepo 的子目录，所以要用 `#path:` 选择器。安装、启用，然后**重启 DSH**（host bundle 和 MCP 子进程都在启动时加载）。
 
-If the panel rejects the address, clone the repository and point the same
-dialog at the local directory `<clone>/dsh-mmw-tools` instead — the build
-output (`lib/`, `mcp-server/dist/`) is committed, so no build step is needed
-on the operator's machine.
+如果面板拒绝这个地址，就克隆仓库，把同一个对话框指向本地目录 `<clone>/dsh-mmw-tools`——构建产物（`lib/`、`mcp-server/dist/`）已经提交，操作者机器上不需要构建。
 
-Then open **Settings → MMW Tools** and press **使用飞书登录**. This is the only
-login: the gate denies every business tool until it completes
-(`mmw_tools_status` is the exception), and the broker mints the repository token
-from the Feishu identity. No GitHub account, OAuth grant, or client secret is
-involved. The broker's GitHub App identity performs the repository access; see
-`docs/AUTH-BROKER.md` §13 for the write proxy.
+然后打开 **Settings → MMW Tools**，点击 **使用飞书登录**。这是唯一的登录方式：完成前门禁会拒绝所有业务工具（`mmw_tools_status` 例外），broker 根据飞书身份签发仓库 token。不涉及 GitHub 账号、OAuth 授权或 client secret。仓库访问由 broker 的 GitHub App 身份完成；写代理见 `docs/AUTH-BROKER.md` §13。
 
-### Which profile to install into
+### 安装到哪个 profile
 
-A DSH **profile** is the unit of plugin installation — there is no per-workspace
-plugin installation. A plugin installed into a profile is loaded in **every**
-workspace that profile hosts, and it is the plugin's tools that appear in
-those sessions. A profile may host several registered repositories, but each
-session binds to exactly one with `select_repo`, and the workspace guard decides
-per call whether the current workspace is one of them; for a single-repository
-deployment a dedicated profile is still the cleanest boundary.
+DSH 的 **profile** 是插件安装单位——不存在按工作区安装插件这回事。安装进一个 profile 的插件会在该 profile 托管的**每一个**工作区加载，这些会话里都会出现插件的工具。一个 profile 可以托管多个已注册仓库，但每个会话用 `select_repo` 只绑定一个；workspace guard 每次调用判断当前工作区是否属于它。单仓库部署仍然建议使用专用 profile，边界最干净。
 
 ```sh
-# a dedicated profile for this repository
+# 为这个仓库建一个专用 profile
 dsh --profile race-ops --from-default-profile web --dump-config
 dsh plugin --profile race-ops add dsh-mmw-tools
 dsh web --profile race-ops
 ```
 
-Keep the general-purpose profile (the one your other workspaces use) free of
-this plugin. See [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) for the full
-setup.
+让通用 profile（你其他工作区用的那个）不装这个插件。完整设置见 [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md)。
 
-Installing it into a shared profile is supported: the Feishu gate only governs
-this plugin's own tools, so the host's `read`, `pwsh`, `glob` and the rest keep
-working everywhere, and the **workspace guard** refuses the mmw-tools calls
-made outside the bound checkout. What a shared profile still gives you is the
-tools showing up in unrelated sessions' schema lists. A dedicated profile is
-the only way to get a session with no trace of the plugin at all. See **Scope
-of the Feishu gate** and **Scope of the tools: the workspace guard** below.
+也支持装进共享 profile：飞书门禁只管本插件自己的工具，宿主的 `read`、`pwsh`、`glob` 等在所有地方照常工作，**workspace guard** 会拒绝绑定 checkout 之外的 mmw-tools 调用。共享 profile 仍然会让工具出现在无关会话的 schema 列表里。只有专用 profile 才能得到一个完全看不到该插件的会话。见下文 **飞书门禁的范围** 和 **工具范围：工作区相关性**。
 
-### From the command line
+### 从命令行安装
 
 ```sh
 dsh plugin --profile <profile> add "git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools"
-# restart DSH
+# 重启 DSH
 ```
 
-### From a local checkout (development)
+### 从本地 checkout 安装（开发）
 
 ```sh
 git clone https://github.com/mmw-devs/mmw-tools.git
 cd mmw-tools/dsh-mmw-tools
 pnpm install
-pnpm --filter dsh-mmw-tools-mcp build   # MCP child
+pnpm --filter dsh-mmw-tools-mcp build   # MCP 子进程
 pnpm build:all                          # host bundle + client bundle
 
-dsh plugin --profile <profile> add file:$PWD   # `file:`, not `link:` — see below
-# restart `dsh web`
+dsh plugin --profile <profile> add file:$PWD   # 用 `file:`，不要用 `link:` —— 见下文
+# 重启 `dsh web`
 ```
 
-### From npm (once published)
+### 从 npm 安装（发布后）
 
 ```sh
 dsh plugin --profile <profile> add dsh-mmw-tools
 ```
 
-See [`docs/PUBLISHING.md`](docs/PUBLISHING.md) for the release checklist.
+发布清单见 [`docs/PUBLISHING.md`](docs/PUBLISHING.md)。
 
-### Updating
+### 更新
 
-There is no auto-update for third-party plugins: uninstall and install again
-from the new commit. Settings and the session live in `~/.dsh/`, so a
-reinstall keeps the login unless the package name or data-file names changed
-(they did in 0.9.0 — see [`CHANGELOG.md`](CHANGELOG.md)).
+第三方插件没有自动更新：卸载后从新的 commit 重新安装。设置和会话在 `~/.dsh/`，所以重装会保留登录，除非包名或数据文件名变了（0.9.0 变过——见 [`CHANGELOG.md`](CHANGELOG.md)）。
 
-### First run
+### 第一次运行
 
-`repo_clone` puts the checkout at
-`~/.dsh/workspaces/<owner>/<name>` unless `workingDir` is configured, and the
-first `repo_edit` bootstraps it with `npm ci` (up to 5 minutes) because the
-repo's own pre-flight runs through its dev dependencies.
+先调用 `select_repo`：它从 auth-core 注册表把会话绑定到一个仓库。然后 `repo_clone`（或已有的 clone）把 checkout 放到 `~/.dsh/workspaces/<owner>/<name>`，除非配置了 `workingDir`。第一次 `repo_edit` 会用 `npm ci` 做 bootstrap（最多 5 分钟），因为仓库自己的 pre-flight 依赖 devDependencies。
 
-## Configure
+## 使用
 
-Everything lives in [`cordis.patch.yml`](cordis.patch.yml). The shipped file is bound to `mmw-devs/ffxiv-race-ops`; change four things for your own repository.
+飞书登录并 `select_repo` 之后，正常和 agent 对话即可，它会选择工具。一次典型的往返：
+
+```text
+你：先读一下 mmw_tools_run 里的规则，再把 public/data.json 里的 X 改成 Y，
+    跑 validation，然后开一个 PR。
+
+agent：select_repo → mmw_tools_run → repo_read → repo_edit → pr_create
+```
+
+- `pr_create` 默认开 **draft** PR。如果你要 ready 的 PR，明确说出来。
+- “看一下 PR #12 的预览和检查”会走 `pr_preview`。
+- “合并 PR #12”会走 `pr_merge`：宿主先请你确认，然后 broker 检查 base 分支契约，并返回一个绑定 head SHA 的一次性 approval。
+- “关闭 PR #12”会走 `pr_close`：宿主先请你确认，broker 允许分支作者、`operator` 或 `admin` 关闭。
+- 如果调用因为工作区原因被拒，先运行 `mmw_tools_status` 看 `workspace` 模式，再决定是否换目录或换仓库。
+
+## 配置
+
+所有配置都在 [`cordis.patch.yml`](cordis.patch.yml)。随包文件绑定的是 `mmw-devs/ffxiv-race-ops`；为自己的仓库改这些字段。
 
 ```yaml
-workingDir: ~/.dsh/workspaces/you/your-repo   # where the clone lives
+workingDir: ~/.dsh/workspaces/you/your-repo   # clone 放在哪里
 feishu:
   enabled: true
   authServiceUrl: https://mmw-tools.mmw-team.icu
@@ -160,336 +155,237 @@ repoBinding:
   owner: you
   name: your-repo
   baseBranch: main
-  branchPrefix: content/            # every branch the plugin creates or pushes
+  branchPrefix: content/            # 插件创建或推送的每个分支
   allowlistPaths: [public/data.json]
   denylistPaths: [.github/workflows/**, schema/**, scripts/**, AGENTS.md, README.md, dist/**]
   preflight:
     cmd: npm run validate
     timeoutSeconds: 60
-  bootstrap:                         # optional; runs once per checkout
+  bootstrap:                         # 可选；每个 checkout 运行一次
     cmd: npm ci
     whenMissing: node_modules
     timeoutSeconds: 300
-repos:                               # optional; additional repositories
+repos:                               # 可选；额外的仓库
   - owner: mmw-devs
     name: xivstrat-relay
     baseBranch: master
     branchPrefix: content/
 ```
 
-`repoBinding` is always the first (default) repository. Each `repos` entry is
-merged with the same fields; omitted fields fall back to the defaults. A
-session must call `mcp__mmw-tools__select_repo` before any business tool and
-cannot switch repositories afterwards. The plugin passes the chosen
-`owner/name` to the MCP child in `_meta.mmwRepo` and as `MMW_REPOS`; each
-repository gets its own working copy and installation-token file
-(`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`). Broker token
-requests carry the selected repository as `?repo=`, so the minted token is
-scoped to that repository rather than the default one.
+`repoBinding` 永远是第一个（默认）仓库。每个 `repos` 条目用相同字段合并，省略的字段回退到默认值。会话必须先调用 `mcp__mmw-tools__select_repo`，之后不能再切换仓库。插件把选中的 `owner/name` 通过 `_meta.mmwRepo` 和 `MMW_REPOS` 传给 MCP 子进程；每个仓库有自己的工作副本和 installation-token 文件（`~/.dsh/dsh-mmw-tools-installation-<owner>-<name>.json`）。broker 的 token 请求带 `?repo=`，所以签出的 token 绑定所选仓库，而不是默认仓库。
 
-When Feishu is enabled, the auth core's repository registry
-(`GET /v1/agent/repos`, managed at **Admin → 仓库注册表**) is authoritative
-for repository coordinates, while write rules come from that repository's own
-`.dsh-mmw-tools.yaml` at the base branch. `select_repo` refreshes the registry
-before binding and refuses a repository that is not enabled there. It then
-reads that repository's grants (`GET /v1/agent/routes?repo=`) and refuses to
-bind if the member has no `select_repo` role there; business calls use the
-same repository-scoped table, so a member with no grant for the selected
-repository gets an empty operation table rather than the global role set.
-Grants are edited per member at **Admin → 成员 → 仓库授权**.
-The rule file is read through the broker (`GET /repo-policy?repo=`), never
-directly from GitHub. A missing, invalid or unreachable file fails the
-selection with `[mmw_policy_unavailable]`; it never falls back to the profile
-copy. The parsed allow/deny lists, `branchPrefix`, `preflight` and
-`bootstrap` overlay the in-memory entry and are cached for MCP, which re-reads
-the cache on every call.
-Because DSH registers tools synchronously at load, the last successful
-refresh is cached at `~/.dsh/mmw-tools-repos.json` (0600) and overlaid on the
-profile at the next start; a repository added in the admin UI therefore
-appears after a plugin reload. Profiles without Feishu keep using `repos`
-from the profile file.
+启用飞书后，auth core 的仓库注册表（`GET /v1/agent/repos`，在 **Admin → 仓库注册表** 管理）是仓库坐标的权威；写规则来自该仓库 base 分支上的 `.dsh-mmw-tools.yaml`。`select_repo` 绑定前先刷新注册表，拒绝没有启用的仓库。然后它读取该仓库的 grants（`GET /v1/agent/routes?repo=`），如果成员在那里没有 `select_repo` 角色就拒绝绑定；业务调用使用同一张按仓库的表，所以所选仓库没有授权的成员拿到的是空 operation 表，而不是全局角色集。Grants 在 **Admin → 成员 → 仓库授权** 按成员编辑。
+规则文件通过 broker 读取（`GET /repo-policy?repo=`），从不直接从 GitHub 读。文件缺失、非法或不可达都会让选择失败，返回 `[mmw_policy_unavailable]`；绝不会回退到 profile 里的副本。解析出的 allow/deny 列表、`branchPrefix`、`preflight` 和 `bootstrap` 会覆盖内存条目，并缓存给 MCP；MCP 每次调用重新读取缓存。
+因为 DSH 在加载时同步注册工具，最后一次成功刷新会缓存到 `~/.dsh/mmw-tools-repos.json`（0600），下次启动覆盖到 profile 上；因此在 admin UI 新增的仓库要等插件 reload 后才出现。没有启用飞书的 profile 继续使用 profile 文件里的 `repos`。
 
-| Field | Meaning |
+| 字段 | 含义 |
 |---|---|
-| `feishu.enabled` | Enforce the Feishu role gate at call time. Default off; the shipped file turns it on. |
-| `feishu.authServiceUrl` | Auth core origin. Env `MMW_TOOLS_AUTH_URL` wins. |
-| `feishu.gateScope` | `mmw-tools` (default) gates only this plugin's tools; `session` makes the gate an exclusive allowlist for the whole session. See **Scope of the Feishu gate**. |
-| `workingDir` | Where `repo_clone` puts the checkout and where `mmw_tools_run` reads `AGENTS.md`. Falls back to `GHOST_WORKING_DIR`; a `repos[]` entry may override it. |
-| `repos` | Optional list of additional repositories. Same fields as `repoBinding`; duplicate or malformed keys are skipped. |
-| `allowlistPaths` | The only paths `repo_edit` may write. Glob, forward-slash, `**` and `*` supported. |
-| `denylistPaths` | Always refused, even if also allowlisted. |
-| `preflight.cmd` | Run before every commit; non-zero exit rolls the tree back. |
-| `bootstrap.cmd` | Optional. Run before the first edit of a checkout when `whenMissing` is absent. Needed when `preflight` depends on devDependencies — a fresh clone has no `node_modules`, so without it every commit is refused by its own pre-flight (`tsx: not found`). |
+| `feishu.enabled` | 在调用时执行飞书角色门禁。默认关闭；随包文件打开。 |
+| `feishu.authServiceUrl` | Auth core 的 origin。环境变量 `MMW_TOOLS_AUTH_URL` 优先。 |
+| `feishu.gateScope` | `mmw-tools`（默认）只管本插件工具；`session` 把门禁变成整个会话的排他 allowlist。见 **飞书门禁的范围**。 |
+| `workingDir` | `repo_clone` 把 checkout 放在哪里，以及 `mmw_tools_run` 从哪里读 `AGENTS.md`。回退到 `GHOST_WORKING_DIR`；`repos[]` 条目可以覆盖。 |
+| `repos` | 可选的额外仓库列表。字段与 `repoBinding` 相同；重复或格式错误的 key 会被跳过。 |
+| `allowlistPaths` | `repo_edit` 唯一可写的路径。支持 glob、正斜杠、`**` 和 `*`。 |
+| `denylistPaths` | 永远拒绝，即使也在 allowlist 里。 |
+| `preflight.cmd` | 每次提交前运行；非零退出会回滚工作树。 |
+| `bootstrap.cmd` | 可选。checkout 第一次编辑前，当 `whenMissing` 不存在时运行。`preflight` 依赖 devDependencies 时需要它——新 clone 没有 `node_modules`，没有它每次提交都会被自己的 pre-flight 拒绝（`tsx: not found`）。 |
 
-### Keeping the binding honest
+### 让 binding 保持诚实
 
-`allowlistPaths`, `denylistPaths`, `branchPrefix`, and `preflight.cmd` **mirror rules that already live in the target repository's `AGENTS.md`**. That duplication is deliberate — parsing free-form Markdown to derive a security boundary is not a trade worth making — but it does mean the two can drift.
+`allowlistPaths`、`denylistPaths`、`branchPrefix` 和 `preflight.cmd` **镜像的是目标仓库 `AGENTS.md` 里已经存在的规则**。这种重复是故意的——为了推导安全边界去解析自由格式的 Markdown，不值得——但这也意味着两边会漂移。
 
-Three things keep it visible:
+有三件事让漂移可见：
 
-1. [`cordis.patch.yml`](cordis.patch.yml) carries a `SSOT WARNING — MIRRORED FACTS` block naming each mirrored field and its `AGENTS.md` source.
-2. At bundle apply, [`src/agents-md-check.ts`](src/agents-md-check.ts) fetches `AGENTS.md` from the bound repository and compares substring fingerprints against the binding, logging a warning on mismatch. It does not block; `AGENTS.md` is the authority.
-3. [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) states who updates which side.
+1. [`cordis.patch.yml`](cordis.patch.yml) 带一个 `SSOT WARNING — MIRRORED FACTS` 块，列出每个镜像字段及其 `AGENTS.md` 来源。
+2. bundle apply 时，[`src/agents-md-check.ts`](src/agents-md-check.ts) 从绑定仓库拉取 `AGENTS.md`，与 binding 做子串指纹比较，不匹配时记录警告。它不阻塞；`AGENTS.md` 是权威。
+3. [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) 说明谁负责更新哪一边。
 
-## Settings panel
+## 设置面板
 
-**Settings → MMW Tools** is the only settings section:
+**Settings → MMW Tools** 是唯一的设置 section：
 
-| Control | Effect |
+| 控件 | 效果 |
 |---|---|
-| **使用飞书登录** | Opens the auth core, then polls until the browser completes |
-| **退出飞书** | Revokes the plugin token and clears the local Feishu, write-auth, and installation-token files |
+| **使用飞书登录** | 打开 auth core，然后轮询直到浏览器完成 |
+| **退出飞书** | 撤销 plugin token，清理本地飞书、write-auth 和 installation-token 文件 |
 
-While signed in, the panel reports `已登录（飞书）· <member>`, labels the
-one-hour installation token as `仓库令牌剩余`, and shows the 7-day Feishu
-authorization as `飞书授权剩余`. It renders no GitHub login, refresh, or revoke
-control. `mmw_tools_status` reports the same `mode` (`feishu` or `none`).
+登录后，面板显示 `已登录（飞书）· <member>`，把 1 小时的 installation token 标为 `仓库令牌剩余`，把 7 天的飞书授权显示为 `飞书授权剩余`。它不渲染 GitHub 登录、刷新或撤销控件。`mmw_tools_status` 报告相同的 `mode`（`feishu` 或 `none`）。
 
-The panel is plain React with inline styles; `lib/client.js` registers the
-single section through the DSH web `__ModuleLoader__` factory contract.
+面板是纯 React + inline styles；`lib/client.js` 通过 DSH web 的 `__ModuleLoader__` factory 契约注册这个唯一的 section。
 
-## Feishu authorization
+## 飞书授权
 
-The tool catalog is tool-centric: each tool declares `roles` and
-`requiredPermissions`; there is no role → permission table. Operations may
-override the tool's roles, and `race-ops` uses that to expose a ladder: `viewer`
-reads, `editor` writes, opens, and closes its own PRs, `operator` / `admin` can
-also merge and close any PR. `pr_merge` and `pr_close` ask the host; `pr_merge`
-also requires a one-time broker approval bound to the PR head SHA. The host
-confirmation is a UI gate, not a security boundary: a local process that can
-read the write-auth file can call the approval endpoint itself.
-The broker reads `contract/operations.json` from the **base** branch before it
-issues an approval and again before it merges; a PR that changes that file is
-refused (`contract-changed`), and an op-log `command` on a level with
-`agentMerge: false` (L1/L3 in `race-ops`) is refused (`agent-merge-denied`).
-The same contract is generated from `COMMANDS.md`. Repositories without that
-file are unaffected. The legacy in-MCP merge path (used only when no broker
-write credential is present) still reads the contract at the PR head.
-`mmw-tools-status` is `always: true`.
+工具目录以工具为中心：每个工具声明 `roles` 和 `requiredPermissions`；没有 role → permission 表。Operation 可以覆盖工具的 roles，`race-ops` 用这个能力形成阶梯：`viewer` 读，`editor` 写、开 PR、关自己的 PR，`operator` / `admin` 还能合并和关闭任何 PR。`pr_merge` 和 `pr_close` 都会问宿主；`pr_merge` 还需要一次性 broker approval，绑定 PR head SHA。宿主确认是 UI 门，不是安全边界：能读 write-auth 文件的本地进程可以自己调用 approval endpoint。
+broker 在签发 approval 前，以及合并前，都从 **base** 分支读 `contract/operations.json`；修改这个文件的 PR 会被拒绝（`contract-changed`），op-log `command` 所在级别是 `agentMerge: false`（`race-ops` 的 L1/L3）也会被拒绝（`agent-merge-denied`）。同一份契约由 `COMMANDS.md` 生成。没有这个文件的仓库不受影响。旧的 in-MCP 合并路径（只在没有 broker 写凭据时使用）仍然读 PR head 的契约。`mmw_tools_status` 是 `always: true`。
 
-At call time the plugin:
+调用时插件会：
 
-1. maps `mcp__mmw-tools__*` / `mmw_tools_*` to the parent tool and operation;
-2. fetches `GET /v1/agent/routes` with the plugin token from
-   `~/.dsh/dsh-mmw-tools-feishu.json` (60 s cache; write operations cap the table
-   at 15 s so a revoked writer loses access quickly);
-3. allows the call only if `allowedOperations` contains the operation id; the
-   tool-level `allowed` list is a v1 compatibility fallback;
-4. otherwise returns a refusal whose message starts with the stable code in
-   brackets — `[mmw_route_denied]` for a missing operation, `[mmw_auth_required]`
-   / `[mmw_session_expired]` for the token, `[mmw_policy_unavailable]` when the
-   table cannot be fetched, and `[mmw_contract_mismatch]` for an unknown own tool;
-   the Chinese text after the prefix is for humans. `mmw_tool_unavailable` is a
-   transport-level code and is not emitted by this gate;
-5. for `pr_merge` and `pr_close`, only after the policy check, asks the operator.
+1. 把 `mcp__mmw-tools__*` / `mmw_tools_*` 映射到父工具和 operation；
+2. 用 `~/.dsh/dsh-mmw-tools-feishu.json` 里的 plugin token 拉取 `GET /v1/agent/routes`（缓存 60 秒；写操作把表的最长年龄压到 15 秒，让被撤销的写者尽快失效）；
+3. 只有 `allowedOperations` 包含 operation id 才放行；tool-level 的 `allowed` 列表是 v1 兼容回退；
+4. 否则返回拒绝，消息以括号里的稳定 code 开头——缺少 operation 是 `[mmw_route_denied]`，token 问题是 `[mmw_auth_required]` / `[mmw_session_expired]`，表拉不到是 `[mmw_policy_unavailable]`，未知自有工具是 `[mmw_contract_mismatch]`；前缀后的中文是给人看的。`mmw_tool_unavailable` 是 transport-level code，不由这个门禁发出；
+5. 对 `pr_merge` 和 `pr_close`，只在策略检查之后才问操作者。
 
-The plugin token is rotated automatically once it is inside its last day: a
-six-hour watchdog calls `POST /v1/session/refresh`, the auth core revokes the
-old token, and the local record is replaced with the rotated token. A
-rotation never deletes a replacement token written by a concurrent request.
+plugin token 进入最后一天后会自动轮换：一个六小时一次的 watchdog 调用 `POST /v1/session/refresh`，auth core 撤销旧 token，本地记录替换成轮换后的 token。轮换不会删除并发请求写入的替代 token。
 
-With `feishu.enabled: true`, a missing/expired token denies business tools.
-`mmw_tools_status` remains callable so the agent can report why.
+`feishu.enabled: true` 时，缺失或过期的 token 会拒绝业务工具。`mmw_tools_status` 仍可调用，让 agent 能报告原因。
 
-The Feishu token is also a **repository credential**, but only for the broker:
-the client never receives a GitHub write token. When a Git operation needs an
-installation token, the plugin sends the plugin token to the broker in
-`X-MMW-Feishu-Token`. The broker verifies it with `GET /v1/me` and
-`GET /v1/agent/routes`, then mints a **read-only** token:
+飞书 token 也是**仓库凭据**，但只对 broker 有效：客户端永远拿不到 GitHub 写 token。Git 操作需要 installation token 时，插件把 plugin token 放在 `X-MMW-Feishu-Token` 里发给 broker。broker 用 `GET /v1/me` 和 `GET /v1/agent/routes` 验证，然后签一个**只读** token：
 
-| Route-table operations | Client token |
+| 路由表中的 operations | 客户端 token |
 |---|---|
-| any of `repo_read` / `repo_edit` / `pr_create` / `pr_close` / `pr_merge` | `contents: read`, `pull_requests: read` |
-| none | refused (`feishu-no-access`) |
+| `repo_read` / `repo_edit` / `pr_create` / `pr_close` / `pr_merge` 中任意一个 | `contents: read`、`pull_requests: read` |
+| 都没有 | 拒绝（`feishu-no-access`） |
 
-Writes are proxied per call, never minted for the client: `repo_edit`,
-`pr_create`, `pr_close`, and `pr_merge` go to `POST /v1/write/*`, which re-checks
-the exact operation before using a write token that exists only in broker
-memory. The plugin stores the Feishu plugin token used for those calls in
-`~/.dsh/dsh-mmw-tools-write-auth.json` (mode `0600`); the MCP child reads it and
-sends `X-MMW-Feishu-Token`. See `docs/AUTH-BROKER.md` §13 for the request shapes
-and the approval nonce.
+写操作逐次代理，从不为客户端铸造：`repo_edit`、`pr_create`、`pr_close` 和 `pr_merge` 走 `POST /v1/write/*`，代理在使用只存在于 broker 内存里的写 token 之前，会重新校验确切的 operation。插件把用于这些调用的飞书 plugin token 存到 `~/.dsh/dsh-mmw-tools-write-auth.json`（权限 `0600`）；MCP 子进程读取它并发送 `X-MMW-Feishu-Token`。请求形状和 approval nonce 见 `docs/AUTH-BROKER.md` §13。
 
-The broker-side check is what makes the Feishu login a security boundary rather
-than just a client-side gate.
+正是 broker 侧的校验，让飞书登录成为安全边界，而不只是客户端门禁。
 
-### Scope of the Feishu gate
+### 飞书门禁的范围
 
-The gate is installed as a global `tools/pre-execute` listener, so it observes
-every tool call in the session. By default it **only governs this plugin's
-own tools** (`mcp__mmw-tools__*` and `mmw_tools_*`); every other tool — the
-host's `read`, `pwsh`, `glob`, `web_search`, another plugin's tools — passes
-through untouched.
+门禁安装为全局的 `tools/pre-execute` listener，因此能观察会话里的每次工具调用。默认它**只管本插件自己的工具**（`mcp__mmw-tools__*` 和 `mmw_tools_*`）；其他所有工具——宿主的 `read`、`pwsh`、`glob`、`web_search`，以及其他插件的工具——原样通过。
 
-`feishu.gateScope` widens or narrows that:
+`feishu.gateScope` 可以扩大或收窄这个范围：
 
-| Value | Effect |
+| 值 | 效果 |
 |---|---|
-| `mmw-tools` (default) | Only this plugin's tools are gated. The rest of the session is untouched. |
-| `session` | The gate becomes an exclusive allowlist for the **whole session**: any tool outside the MMW Tools contract is denied. |
+| `mmw-tools`（默认） | 只门禁本插件的工具，会话其余部分不受影响。 |
+| `session` | 门禁变成**整个会话**的排他 allowlist：任何不属于 MMW Tools 契约的工具都会被拒绝。 |
 
-`session` is a footgun. Because a DSH profile is shared by every workspace
-it hosts, setting it in a shared profile strips the file and shell tools out
-of all of them — a workspace with no `read` and no `pwsh` cannot work. Use it
-only in a profile dedicated to this repository.
+`session` 是一个陷阱。DSH profile 被它托管的所有工作区共享，在共享 profile 里设置它，会把所有工作区的文件和 shell 工具都剥掉——一个没有 `read` 和 `pwsh` 的工作区无法工作。只在专用于这个仓库的 profile 里使用。
 
-| Key | Default | Meaning |
+| Key | 默认值 | 含义 |
 |---|---|---|
-| `feishu.enabled` | off | Enforce the Feishu role gate at call time. The shipped file turns it on. |
-| `feishu.authServiceUrl` | — | The auth core that owns roles and the route table. |
-| `feishu.gateScope` | `mmw-tools` | `mmw-tools` or `session` — see above. |
+| `feishu.enabled` | 关闭 | 调用时执行飞书角色门禁。随包文件打开。 |
+| `feishu.authServiceUrl` | — | 拥有角色和路由表的 auth core。 |
+| `feishu.gateScope` | `mmw-tools` | `mmw-tools` 或 `session`——见上。 |
 
-### Scope of the tools: workspace relevance
+### 工具范围：工作区相关性
 
-A plugin is loaded per **profile**; a workspace is a **session** inside it. One
-profile hosts every workspace, so being installed is not the same as being
-relevant. The workspace guard answers one question per call: *is this workspace
-one of the repositories mmw-tools is serving?* It answers from two independent
-facts:
+插件按 **profile** 加载；工作区是 profile 里的一个 **session**。一个 profile 托管所有工作区，所以“安装了”不等于“相关”。workspace guard 每次调用回答一个问题：*这个工作区是不是 mmw-tools 正在服务的仓库之一？* 它依据两个独立事实：
 
-- the auth-core **repository registry** — which repositories this deployment
-  serves; and
-- the calling worktree's **`origin` remote** — which repository this workspace
-  actually is.
+- auth-core 的**仓库注册表**——这个部署服务哪些仓库；
+- 调用工作树的 **`origin` remote**——这个工作区实际是哪个仓库。
 
-`.dsh-mmw-tools.yaml` at the workspace root is the **rule marker**, not the
-identity. It says this checkout opted in; the remote says which repository it
-is. A marker without a matching remote, or a registered repository without a
-marker, is a `mismatch`, never a silent guess. The guard reads the session's
-working directory from the host's `workingDirectory` service and the remote
-from the worktree, per call, so a `cd` in or out of a managed checkout takes
-effect immediately.
+工作区根目录的 `.dsh-mmw-tools.yaml` 是**规则标记**，不是身份。它表示这个 checkout 选择接入；remote 才表示它是哪个仓库。有标记但 remote 不匹配，或者注册仓库没有标记，都是 `mismatch`，绝不静默猜测。guard 每次调用都从宿主的 `workingDirectory` 服务读会话工作目录，从 worktree 读 remote，所以 `cd` 进出受管 checkout 会立即生效。
 
-| Mode | What the guard observed | What the session may do |
+| 模式 | guard 观察到什么 | 会话可以做什么 |
 |---|---|---|
-| `managed` | remote and marker both name a registered repository | Use the operations this plugin declares; the route table still decides each one |
-| `unmanaged` | no marker and no registered remote | Do not call the plugin's business tools. No replacement tool is prescribed |
-| `mismatch` | marker, remote, registry, or the selected repository disagree | Stop and let the user confirm the repository and rule file |
-| `bootstrap` | registered checkout whose root has no `.git` yet | `select_repo` and `repo_clone` only; business tools stay refused until it is a checkout |
-| `unknown` | the host cannot report a working directory | Refuse; never fail open |
+| `managed` | remote 和标记都指向一个已注册仓库 | 使用本插件声明的 operations；路由表仍然逐项决定 |
+| `unmanaged` | 没有标记，也没有已注册的 remote | 不要调用插件的业务工具。不推荐任何替代工具 |
+| `mismatch` | 标记、remote、注册表或所选仓库互相不一致 | 停下来，让用户确认仓库和规则文件 |
+| `bootstrap` | 已注册 checkout，但根目录还没有 `.git` | 只能用 `select_repo` 和 `repo_clone`；变成 checkout 前业务工具保持拒绝 |
+| `unknown` | 宿主无法报告工作目录 | 拒绝；绝不 fail open |
 
-This is a **relevance filter**, not a security boundary. The Feishu gate,
-`select_repo`, and the broker's own authorization still decide what a call may
-do. It also does not hide the tools from a session's schema list, and the MCP
-child process still starts with the plugin — only a dedicated profile gives you
-a session with no trace of the plugin at all.
+这是**相关性过滤器**，不是安全边界。飞书门禁、`select_repo` 和 broker 自己的授权仍然决定一次调用能做什么。它也不会把工具从会话的 schema 列表里隐藏，MCP 子进程仍然随插件启动——只有专用 profile 才能给你一个完全看不到插件的会话。
 
-`mmw_tools_status` is always callable: it is the diagnostic surface that reports
-the current `workspace` mode and why the business tools are refused.
+`mmw_tools_status` 始终可调用：它是诊断界面，报告当前 `workspace` 模式以及业务工具被拒的原因。
 
-| Key | Default | Meaning |
+| Key | 默认值 | 含义 |
 |---|---|---|
-| `workspaceGuard.enabled` | on | Set `false` only in a profile dedicated to one repository. |
+| `workspaceGuard.enabled` | 开启 | 只在专用于一个仓库的 profile 里设为 `false`。 |
 
-The legacy `workspaceGuard.allowPaths` and `workspaceGuard.onUnavailable` remain
-for hosts that only have the older path-based guard; the registry + remote
-decision above does not use them.
+旧的 `workspaceGuard.allowPaths` 和 `workspaceGuard.onUnavailable` 仍保留给只有旧路径门禁的宿主；上面的“注册表 + remote”判定不使用它们。
 
-## Agent tools
+## Agent 工具
 
-### High-level
+### 高层工具
 
-| Tool | Purpose |
+| 工具 | 用途 |
 |---|---|
-| `mmw_tools_status` | Auth state, repo binding, `AGENTS.md` drift |
-| `mmw_tools_run` | Prepare project context + operating rules; the agent then drives the MCP tools |
+| `mmw_tools_status` | 认证状态、仓库绑定、`AGENTS.md` 漂移 |
+| `mmw_tools_run` | 准备项目上下文和操作规则；之后由 agent 驱动 MCP 工具 |
 
-### MCP (`mcp__mmw-tools__*`)
+### MCP 工具（`mcp__mmw-tools__*`）
 
-| Tool | Purpose |
+| 工具 | 用途 |
 |---|---|
-| `select_repo` | Bind this session to one repository enabled in the auth-core registry. Required before business tools; an unselected session gets `[mmw_route_denied]`, and switching to another repository is refused. It is decided from local session state before the route table, so a lagging role table does not block selection; the registry is refreshed first, then the repository-scoped grants are read, and a member without a `select_repo` role there is refused. It also reads `.dsh-mmw-tools.yaml` through the broker and fails closed if that file is missing or invalid. The registry and rule answer are cached for the next plugin load and per-call MCP use |
-| `repo_status` | Branch, dirty flag, HEAD SHA, uncommitted files; credentials in the remote URL are redacted |
-| `repo_clone` | Shallow clone of the base branch into `workingDir` |
-| `repo_pull` | `git pull --rebase origin <branch>`; refuses a dirty tree |
-| `repo_read` | Read one file (100 KiB default, 500 KiB hard cap, refuses binary) |
-| `repo_search` | `git grep`, capped results, redacted snippets |
-| `repo_edit` | Validate → apply edits atomically → preflight → commit. With a broker write credential, the commit is created by the broker instead (no push) |
-| `pr_create` | Open a PR (draft by default; pass `draft: false` to open it ready). With a broker write credential, the broker pushes and opens it |
-| `pr_close` | Close a PR without merging it. The branch owner may close their own PR; `operator` / `admin` may close any. The host asks first; already closed or merged returns `already: true` |
-| `pr_preview` | Preview URLs from the hosting check, plus check states and draft/merge state; read-only, optionally waits for the deployment |
-| `pr_list` | List PRs (titles and bodies redacted) |
-| `pr_merge` | Mark a draft ready if needed, then merge. With a broker write credential, first fetch a one-time approval bound to the head SHA, then merge; the broker refuses `agentMerge: false` levels and PRs that change the contract; the host still asks |
+| `select_repo` | 把本会话绑定到 auth-core 注册表中启用的一个仓库。业务工具之前必须调用；未选择的会话会收到 `[mmw_route_denied]`，切换到另一个仓库会被拒绝。它在路由表之前由本地会话状态决定，所以滞后的角色表不会阻塞选择；先刷新注册表，再读按仓库的 grants，成员没有 `select_repo` 角色会被拒绝。它还通过 broker 读 `.dsh-mmw-tools.yaml`，文件缺失或非法时失败关闭。注册表和规则结果会缓存，供下次插件加载和 MCP 逐次调用使用 |
+| `repo_status` | 分支、dirty 标记、HEAD SHA、未提交文件；remote URL 里的凭据会被脱敏 |
+| `repo_clone` | 把 base 分支浅克隆到 `workingDir` |
+| `repo_pull` | `git pull --rebase origin <branch>`；工作树 dirty 时拒绝 |
+| `repo_read` | 读一个文件（默认 100 KiB，硬上限 500 KiB，拒绝二进制） |
+| `repo_search` | `git grep`，结果有上限，片段脱敏 |
+| `repo_edit` | 校验 → 原子应用编辑 → preflight → commit。有 broker 写凭据时，commit 由 broker 创建（不 push） |
+| `pr_create` | 开 PR（默认 draft；传 `draft: false` 直接 ready）。有 broker 写凭据时，由 broker push 并创建 |
+| `pr_close` | 关闭 PR，不合并。分支作者可以关自己的 PR；`operator` / `admin` 可以关任何 PR。宿主先询问；已关闭或已合并返回 `already: true` |
+| `pr_preview` | 从托管 check 取预览 URL，以及 check 状态和 draft/merge 状态；只读，可选等待部署 |
+| `pr_list` | 列出 PR（标题和正文脱敏） |
+| `pr_merge` | 必要时把 draft 标为 ready，然后合并。有 broker 写凭据时，先取绑定 head SHA 的一次性 approval，再合并；broker 拒绝 `agentMerge: false` 的级别和修改契约的 PR；宿主仍然会询问 |
 
-When `MMW_BROKER_URL` and a readable write-auth file are present, these four
-write tools call the broker's `/v1/write/*` endpoints; otherwise they keep the
-local git/`gh` behavior for standalone use.
+当 `MMW_BROKER_URL` 存在且 write-auth 文件可读时，这四个写工具调用 broker 的 `/v1/write/*` 端点；否则保留本地 git/`gh` 行为，供独立使用。
 
-## Security model
+## 安全模型
 
-**Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
+**任何 I/O 之前应用的 guard。** 路径穿越和 symlink 逃逸；allowlist/denylist，deny 优先于 allow；分支前缀和 base 分支拒绝；commit message、PR 标题、PR 正文和 `user_request` 中的 token 形状字符串检测；单文件、单 commit 和 PR 正文的字节上限；pre-flight 命令通过 `execFile` 执行（不经 shell）。
 
-**Tokens.** The one-hour client installation token lives in `~/.dsh/dsh-mmw-tools-installation.json` (`0600`) because the MCP child reads it from disk. It is always read-only. Writes use `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`), which holds the Feishu pluginToken — never a GitHub token; the broker keeps the write token in memory. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. 退出飞书 wipes the local copies and tells the auth core to drop the session.
+**Token。** 1 小时的客户端 installation token 放在 `~/.dsh/dsh-mmw-tools-installation.json`（`0600`），因为 MCP 子进程从磁盘读它。它始终只读。写操作使用 `~/.dsh/dsh-mmw-tools-write-auth.json`（`0600`），里面是飞书 pluginToken——绝不是 GitHub token；broker 把写 token 留在内存。飞书 plugin token 放在 `~/.dsh/dsh-mmw-tools-feishu.json`（`0600`）。所有这些在 agent 能读到的视图里都会脱敏，也从不写入日志、commit message、PR 正文或审计轨迹。退出飞书会清除本地副本，并让 auth core 丢弃会话。
 
-**Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
+**审计。** `mmw_tools_run` 把 `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` 事件追加到 `~/.dsh/dsh-mmw-tools-audit.jsonl`（模式 `0600`，1 MiB 轮换）。每个字符串字段都会递归脱敏；请求正文本身从不记录，只记录字节长度。审计写入失败只警告一次，然后静默——绝不阻塞工作。
 
-**Known trade-offs**, stated rather than hidden:
+**已知取舍**，明确写出而不是隐藏：
 
-- When not using the broker's write proxy, `repo_clone` and `pr_create` pass the token on the git command line, so it is briefly visible in the process list. It is never written to `.git/config`: `repo_clone` resets `origin` to the credential-free URL immediately after cloning, and `pr_create` pushes to an explicit URL without `-u`, because `-u <url>` would store that URL — token included — as `branch.<name>.remote`. A future version should use `GIT_ASKPASS` and drop the argv exposure too.
-- The broker approval nonce binds the member, PR, and head SHA, and is single-use. It does not prove a human clicked the host prompt: a local process that can read the write-auth file and send HTTP can request the approval and merge by itself. The host `pr_merge` / `pr_close` confirmation is a UI gate, not the security
-boundary; closing this needs a host-held secret.
-- `repo_edit` matches `find` byte-for-byte. On a Windows checkout with `core.autocrlf` the working tree holds CRLF, so a multi-line `find` written with LF will not match; the edit is refused with `find-not-found` rather than applied half-way. Read the file with `repo_read` first and reuse its exact bytes.
-- `preflight` and `bootstrap` commands run through the shell on Windows, because `npm` there is `npm.cmd` and `execFile` does not consult `PATHEXT`. Without this every npm-based pre-flight failed with `ENOENT` on the platform this plugin is mostly used on. The command string comes from your own plugin config, never from the agent.
-- `repo_edit`'s `patch` mode is not implemented; use `replace` or `insert`.
-- Rate limiting is not implemented.
+- 不使用 broker 写代理时，`repo_clone` 和 `pr_create` 会把 token 放在 git 命令行上，因此它会在进程列表中短暂可见。它从不写入 `.git/config`：`repo_clone` 在克隆后立即把 `origin` 重置为无凭据 URL，`pr_create` 向显式 URL push 且不加 `-u`，因为 `-u <url>` 会把该 URL（含 token）存成 `branch.<name>.remote`。未来版本应该用 `GIT_ASKPASS`，把 argv 暴露也去掉。
+- broker approval nonce 绑定成员、PR 和 head SHA，且只能使用一次。它不能证明有人点了宿主提示：能读 write-auth 文件并发送 HTTP 的本地进程可以自己请求 approval 并合并。宿主 `pr_merge` / `pr_close` 的确认是 UI 门，不是安全边界；要关闭这个缺口需要宿主持有的 secret。
+- `repo_edit` 的 `find` 是逐字节匹配。在启用 `core.autocrlf` 的 Windows checkout 上，工作树里是 CRLF，所以用 LF 写的多行 `find` 不会匹配；编辑会被拒绝为 `find-not-found`，而不是应用一半。先用 `repo_read` 读文件，并复用它的精确字节。
+- Windows 上 `preflight` 和 `bootstrap` 命令通过 shell 运行，因为那里的 `npm` 是 `npm.cmd`，而 `execFile` 不查询 `PATHEXT`。没有这一点，所有基于 npm 的 pre-flight 在这个插件最常用的平台上都会以 `ENOENT` 失败。命令字符串来自你自己的插件配置，从不来自 agent。
+- `repo_edit` 的 `patch` 模式尚未实现；用 `replace` 或 `insert`。
+- 尚未实现限流。
 
-## Tests
+## 测试
 
-Three layers, split by what they need in order to run rather than by what they
-cover. Full rationale in [`docs/TESTING.md`](docs/TESTING.md).
+分三层，按运行所需条件而不是覆盖范围划分。完整理由见 [`docs/TESTING.md`](docs/TESTING.md)。
 
 ```sh
-pnpm check                 # typecheck + namespace + in-process suites + pack contents
-cd mcp-server && pnpm test # guard, schema and PR-preview assertions
-pnpm test:smoke            # MCP server handshake over real stdio
-pnpm test:integration      # the MCP tool bodies against a real git repo
+pnpm check                 # typecheck + namespace + 进程内套件 + 打包内容
+cd mcp-server && pnpm test # guard、schema 和 PR-preview 断言
+pnpm test:smoke            # 通过真实 stdio 做 MCP server handshake
+pnpm test:integration      # 针对真实 git 仓库运行 MCP 工具体
 ```
 
-| Suite | Covers | Needs |
+| 套件 | 覆盖 | 需要 |
 |---|---|---|
-| `tests/skills.test.mjs` | skill catalog and the `race-ops-ops` instructions | — |
-| `tests/client-bundle.test.mjs` | `__ModuleLoader__` shape of `lib/client.js` | — |
-| `tests/bundle-apply.test.mjs` | `apply()` registration, routes, prompts, disposers, idempotence | — |
-| `tests/feishu-gate.test.mjs` | authorization table, gate decisions, token refresh | — |
-| `tests/workspace-guard.test.mjs` | workspace relevance, status/`select_repo` exemptions, `repo_clone` bootstrap | — |
-| `tests/workspace-mode.test.mjs` | registry + `origin` remote + policy-file marker; managed/unmanaged/mismatch/bootstrap/unknown | — |
-| `tests/routes-integration.test.mjs` | real HTTP against the loopback routes | — |
-| `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation | — |
-| `tests/audit.test.mjs` | deep redaction, rotation, failure handling | — |
-| `tests/github-app.test.mjs` | installation-token flow and repository access | — |
-| `tests/session-store.test.mjs` | credential persistence, masking, clearing | — |
-| `tests/broker-client.test.mjs` | broker HTTP client behavior | — |
-| `tests/broker-auth.test.mjs` | Feishu-only credential exchange, repo mismatch, cache-hit write-auth refresh | — |
-| `broker/tests/core.test.mjs` | broker core, read-only client tokens, base-branch contract gate, close ownership | — |
-| `broker/tests/server.test.mjs` | broker HTTP surface and `/v1/write/*` routing | — |
-| `mcp-server/tests/guard.test.mjs` | every cross-cutting guard | — |
-| `mcp-server/tests/tools-list-schema.test.mjs` | all MCP tools registered with usable schemas | — |
-| `mcp-server/tests/pr-preview.test.mjs` | PR preview URL and check extraction | — |
-| `mcp-server/tests/tools-list.test.mjs` | MCP server starts and advertises its tools | `spawn` |
-| `tests/integration-git.test.mjs` | tool bodies against git, incl. `repo_edit` rollback | `git`, `spawn` |
+| `tests/skills.test.mjs` | skill 目录和 `race-ops-ops` 指令 | — |
+| `tests/client-bundle.test.mjs` | `lib/client.js` 的 `__ModuleLoader__` 形状 | — |
+| `tests/bundle-apply.test.mjs` | `apply()` 注册、路由、prompt、disposer、幂等 | — |
+| `tests/feishu-gate.test.mjs` | 授权表、门禁决策、token 刷新 | — |
+| `tests/workspace-guard.test.mjs` | 工作区相关性、status/`select_repo` 豁免、`repo_clone` bootstrap | — |
+| `tests/workspace-mode.test.mjs` | 注册表 + `origin` remote + 规则文件标记；managed/unmanaged/mismatch/bootstrap/unknown | — |
+| `tests/routes-integration.test.mjs` | 对 loopback 路由发起真实 HTTP | — |
+| `tests/mmw-tools-run.test.mjs` | 输入校验、分支 slug、摘录、脱敏、截断 | — |
+| `tests/audit.test.mjs` | 深度脱敏、轮换、失败处理 | — |
+| `tests/github-app.test.mjs` | installation-token 流程和仓库访问 | — |
+| `tests/session-store.test.mjs` | 凭据持久化、脱敏、清理 | — |
+| `tests/broker-client.test.mjs` | broker HTTP 客户端行为 | — |
+| `tests/broker-auth.test.mjs` | 仅飞书凭据交换、仓库不匹配、缓存命中时刷新 write-auth | — |
+| `broker/tests/core.test.mjs` | broker core、只读客户端 token、base 分支契约门、close 归属 | — |
+| `broker/tests/server.test.mjs` | broker HTTP 表面和 `/v1/write/*` 路由 | — |
+| `mcp-server/tests/guard.test.mjs` | 每个横切 guard | — |
+| `mcp-server/tests/tools-list-schema.test.mjs` | 所有 MCP 工具都注册了可用 schema | — |
+| `mcp-server/tests/pr-preview.test.mjs` | PR 预览 URL 和 check 提取 | — |
+| `mcp-server/tests/tools-list.test.mjs` | MCP server 启动并宣告工具 | `spawn` |
+| `tests/integration-git.test.mjs` | 针对 git 的工具体，包括 `repo_edit` 回滚 | `git`、`spawn` |
 
-The last two need `child_process.spawn` with piped stdio. Where a sandbox denies
-that they print a `SKIP` naming what was not verified and exit `0` — CI runs both
-on `ubuntu-latest` and `windows-latest`, so a local skip is not a coverage gap.
+最后两个需要带管道 stdio 的 `child_process.spawn`。沙箱拒绝时，它们会打印 `SKIP` 说明未验证什么，并以 `0` 退出——CI 在 `ubuntu-latest` 和 `windows-latest` 上都跑，所以本地 skip 不是覆盖缺口。
 
-## Docs
+## 文档
 
-| Document | Contents |
+| 文档 | 内容 |
 |---|---|
-| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | Broker topology, GitHub App setup, the Feishu direct path, the write proxy, threat model, deployment |
-| [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) | The panel's state machine: four phases, action matrix, acceptance checks |
-| [`docs/TESTING.md`](docs/TESTING.md) | The three test layers, why two self-skip, how to add a case |
-| [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | Step-by-step real round trip against the bound repo: gates, stop conditions, cleanup |
-| [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) | Who keeps `AGENTS.md` and the binding in step |
-| [`docs/INCREMENT-3-CHECKLIST.md`](docs/INCREMENT-3-CHECKLIST.md) | Per-tool hardening spec |
-| [`docs/INCREMENT-3-DESIGN.md`](docs/INCREMENT-3-DESIGN.md) | What the eight MCP tools actually do |
-| [`docs/INCREMENT-4-CHECKLIST.md`](docs/INCREMENT-4-CHECKLIST.md) | `mmw_tools_run` contract and why it does not drive an LLM |
-| [`docs/INCREMENT-5-DESIGN.md`](docs/INCREMENT-5-DESIGN.md) | Audit events, storage, and deliberate omissions |
-| [`docs/INCREMENT-2-VERIFICATION.md`](docs/INCREMENT-2-VERIFICATION.md) | The client-bundle build decisions, checked against DSH source |
-| [`docs/PUBLISHING.md`](docs/PUBLISHING.md) | Release checklist and the two distribution channels |
-| [`CHANGELOG.md`](CHANGELOG.md) | Per-increment history |
-| [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md) | What is not built yet, and why each omission is deliberate |
+| [`docs/AUTH-BROKER.md`](docs/AUTH-BROKER.md) | broker 拓扑、GitHub App 设置、飞书直连路径、写代理、威胁模型、部署 |
+| [`docs/PANEL-CONTRACT.md`](docs/PANEL-CONTRACT.md) | 面板状态机：一个飞书登录、两个状态加本地 authorizing、动作矩阵、验收检查 |
+| [`docs/TESTING.md`](docs/TESTING.md) | 三层测试、为什么两个会自我跳过、如何加用例 |
+| [`docs/T5-RUNBOOK.md`](docs/T5-RUNBOOK.md) | 针对绑定仓库的真实往返步骤：门禁、停止条件、清理 |
+| [`docs/OPERATIONS-SYNC.md`](docs/OPERATIONS-SYNC.md) | 谁负责让 `AGENTS.md` 和 binding 保持一致 |
+| [`docs/INCREMENT-3-CHECKLIST.md`](docs/INCREMENT-3-CHECKLIST.md) | 按工具列出的加固规格 |
+| [`docs/INCREMENT-3-DESIGN.md`](docs/INCREMENT-3-DESIGN.md) | MCP 工具实际做什么 |
+| [`docs/INCREMENT-4-CHECKLIST.md`](docs/INCREMENT-4-CHECKLIST.md) | `mmw_tools_run` 契约，以及为什么它不驱动 LLM |
+| [`docs/INCREMENT-5-DESIGN.md`](docs/INCREMENT-5-DESIGN.md) | 审计事件、存储和有意省略 |
+| [`docs/INCREMENT-2-VERIFICATION.md`](docs/INCREMENT-2-VERIFICATION.md) | client-bundle 构建决策，对照 DSH 源码验证 |
+| [`docs/PUBLISHING.md`](docs/PUBLISHING.md) | 发布清单和两个分发渠道 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 按 increment 的历史 |
+| [`docs/NEXT-STEPS.md`](docs/NEXT-STEPS.md) | 还没建什么，以及为什么每个省略都是故意的 |
 
-## License
+## 许可证
 
 [MIT](LICENSE) © 2026 mmw-devs

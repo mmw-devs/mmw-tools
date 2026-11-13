@@ -1318,7 +1318,21 @@ export function apply(ctx, config) {
                             // `json` that derivation yields undefined - every call died
                             // on `reading '_zod'` before the result could be rendered.
                             // The two tools that work (status, run) use object specs.
-                            schema: { type: "object", properties: {}, additionalProperties: true },
+                            // Keep the same strict shape here: one `content` block array,
+                            // a `required` list, and no unknown top-level keys. A
+                            // pass-through `additionalProperties: true` object worked,
+                            // but it does not satisfy the host's strict output contract.
+                            schema: {
+                                type: "object",
+                                properties: {
+                                    content: {
+                                        type: "array",
+                                        items: { type: "object", additionalProperties: true },
+                                        required: true,
+                                    },
+                                },
+                                additionalProperties: false,
+                            },
                             render(_args, value) {
                                 const v = (value ?? {});
                                 return [{ type: "text", text: extractText(v.content, tool.name) }];

@@ -11,8 +11,14 @@
 
 ## Why this document exists
 
-The plugin's `repoBinding` section in `cordis.patch.yml` mirrors four
-rules that also live in `mmw-devs/ffxiv-race-ops/AGENTS.md`:
+`repoBinding` is the **default** entry. A profile may also list
+`config.repos`; each session binds one with `select_repo`, and the broker
+reads that repository's own `.dsh-mmw-tools.yaml`. The comments in
+`cordis.patch.yml` are bootstrap documentation, not a second rule source.
+The unused `repoBinding.pr` block was removed on 2026-11-14.
+
+The default entry mirrors four rules that also live in
+`mmw-devs/ffxiv-race-ops/AGENTS.md`:
 
 | cordis.patch.yml field | AGENTS.md source rule |
 |---|---|
@@ -32,6 +38,14 @@ authority. The tradeoff is:
 - ⚠️ When `AGENTS.md` changes, the YAML and `cordis.patch.yml` do
   **not** update automatically. A mismatch logs a warning at
   `mmw_tools_run` startup.
+
+`repoBinding` is the default entry, not the only repository. A profile
+can add `config.repos` entries; the session binds one with
+`select_repo`, and the broker reads that repository's own
+`.dsh-mmw-tools.yaml` from its base branch. Comments in
+`cordis.patch.yml` describe the default/fallback; they are not a second
+rule source. The unused `repoBinding.pr` block was removed on
+2026-11-14 rather than left as dead configuration.
 
 ---
 
