@@ -66,6 +66,7 @@ because they need the MCP build output.
 | `tests/contract-gate.test.mjs` | op-log command extraction (CRLF, multi-block, malformed JSON) and the `agentMerge` verdict: L2 allowed; L3, L1, unknown, missing and mixed cases refused |
 | `tests/repo-status.test.mjs` | remote URL credential redaction (`redactRemoteUrl`) |
 | `tests/tools-list-schema.test.mjs` | the advertised `tools/list` input schemas |
+| `tests/broker-read.test.mjs` | the broker read path against a local fake broker: bundle clone/pull, base-SHA edit, PR list mapping, preview parsing; needs `git` and skips clone/pull when the sandbox blocks subprocesses |
 
 ### `pnpm test:smoke`
 
