@@ -46,6 +46,7 @@ import {
   LIMITS,
 } from "../guard.js";
 import { brokerWrite, brokerWriteEnabled } from "../broker-write.js";
+import { brokerRead, brokerReadEnabled } from "../broker-read.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -298,6 +299,21 @@ interface BrokerRepoEditResult {
 async function resolveBranchHead(cfg: RepoEditConfig, branch: string): Promise<string | null> {
   const owner = cfg.repoOwner ?? "";
   const repo = cfg.repoName ?? "";
+
+  if (brokerReadEnabled({ brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" })) {
+    try {
+      const data = await brokerRead<{ sha?: unknown }>(
+        { brokerUrl: cfg.brokerUrl ?? "", writeAuthFile: cfg.writeAuthFile ?? "" },
+        "/v1/read/base-sha",
+        { repo: `${owner}/${repo}`, ref: branch }
+      );
+      return typeof data.sha === "string" ? data.sha : null;
+    } catch (err) {
+      if (err instanceof GithubRefusedError && err.code === "ref-not-found") return null;
+      throw err;
+    }
+  }
+
   const token = cfg.githubToken ?? "";
   if (!owner || !repo || !token) {
     throw new GithubRefusedError(

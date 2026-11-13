@@ -111,6 +111,12 @@ without parsing tool arguments.
   is not a `gate_decision` event: the call never reaches the route table. The
   current mode and reason are reported by `mmw_tools_status` (`workspace`), not by
   the audit log.
+- The broker read proxy (`/v1/read/*`: base SHA, bundle, pull, PR list, PR
+  detail, checks) is authorized per call, but it does not create a second
+  `gate_decision` event. The gate records the tool call that caused the read;
+  the broker sees only the Feishu token and the selected repository, not the
+  gate's run id. A broker read failure is therefore visible as the tool error
+  and, for bundles, the HTTP status, not as a separate audit event.
 - Credential lifecycle is not a governed tool call and emits no `gate_decision`
   event: `/installation-token`, the write-auth refresh, and the Feishu token
   refresh are visible to the user through `mmw_tools_status` and the panel, not

@@ -13,6 +13,7 @@
  */
 
 import { createServer } from "node:http";
+import { createReadStream } from "node:fs";
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { BrokerCore, BrokerRefused } from "./core.mjs";
@@ -98,6 +99,8 @@ function loadConfig() {
     // token without a GitHub login (docs/AUTH-BROKER.md).
     authUrl: (process.env.MMW_TOOLS_AUTH_URL ?? "").trim().replace(/\/+$/, ""),
     writeEnabled: process.env.BROKER_WRITE_ENABLED === "true",
+    readEnabled: process.env.BROKER_READ_ENABLED === "true",
+    readCacheDir: (process.env.BROKER_READ_CACHE_DIR ?? "").trim(),
     allowlistPaths: splitList(process.env.BROKER_ALLOWLIST_PATHS),
     denylistPaths: splitList(process.env.BROKER_DENYLIST_PATHS),
     baseBranch: process.env.BROKER_BASE_BRANCH ?? "main",
@@ -333,6 +336,86 @@ export function createBrokerServer(core, opts = {}) {
         log("repo_policy_read", { repository: policy.repository, sha: policy.sha });
         sendJson(res, 200, policy);
         return;
+      }
+
+      /* --- read proxy --- */
+      if (pathname.startsWith("/v1/read/") && req.method === "GET") {
+        const op = pathname.slice("/v1/read/".length);
+        const repoKey = url.searchParams.get("repo") ?? undefined;
+        const ref = url.searchParams.get("ref") ?? undefined;
+        const credentials = {
+          feishuToken: headerValue(req, "x-mmw-feishu-token"),
+          sessionToken: bearer(req),
+        };
+
+        if (op === "base-sha") {
+          const sha = await core.readBaseSha({ repo: repoKey, ref, ...credentials });
+          sendJson(res, 200, sha);
+          return;
+        }
+
+        if (op === "bundle" || op === "pull") {
+          const result = await core.readBundle({
+            repo: repoKey,
+            ref,
+            operation: op === "pull" ? "race-ops.repo_pull" : "race-ops.repo_clone",
+            ...credentials,
+          });
+          let cleaned = false;
+          const cleanup = () => {
+            if (cleaned) return;
+            cleaned = true;
+            result.cleanup?.();
+          };
+          res.writeHead(200, {
+            "content-type": "application/x-git-bundle",
+            "content-length": result.size,
+            "cache-control": "no-store",
+            "x-commit-sha": result.sha ?? "",
+            "x-repository": result.repository,
+          });
+          const stream = createReadStream(result.path);
+          stream.on("error", () => {
+            cleanup();
+            res.destroy();
+          });
+          res.on("close", cleanup);
+          stream.pipe(res);
+          return;
+        }
+
+        if (op === "pulls") {
+          const pulls = await core.readPulls({
+            repo: repoKey,
+            state: url.searchParams.get("state") ?? "open",
+            base: url.searchParams.get("base") ?? undefined,
+            ...credentials,
+          });
+          sendJson(res, 200, pulls);
+          return;
+        }
+
+        if (op === "pr") {
+          const pr = await core.readPr({
+            repo: repoKey,
+            number: url.searchParams.get("number"),
+            ...credentials,
+          });
+          sendJson(res, 200, pr);
+          return;
+        }
+
+        if (op === "checks") {
+          const checks = await core.readChecks({
+            repo: repoKey,
+            number: url.searchParams.get("number"),
+            ...credentials,
+          });
+          sendJson(res, 200, checks);
+          return;
+        }
+
+        throw new BrokerRefused("not-found", "no such read endpoint", 404);
       }
 
       /* --- step 3: mint --- */
