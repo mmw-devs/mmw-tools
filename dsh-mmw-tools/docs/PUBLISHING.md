@@ -101,6 +101,8 @@ pnpm check
 #    base-branch contract/ownership cases, and the read-cache mirror
 #    (which needs git on PATH). A release that only passes the old tool
 #    tests is not enough. Broker tests are not packed into the tarball.
+#
+#    The MCP suites also include broker-read.test.mjs, which needs git.
 (cd mcp-server && pnpm test)
 
 # 4. Confirm the tarball contains what the manifest promises.
