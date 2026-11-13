@@ -28,10 +28,6 @@ window.__ModuleLoader__.load({
      */
     const API = {
         status: "/api/mmw-tools/status",
-        oauthStart: "/api/mmw-tools/oauth/start",
-        oauthFinish: "/api/mmw-tools/oauth/finish",
-        oauthRefresh: "/api/mmw-tools/oauth/refresh",
-        revoke: "/api/mmw-tools/revoke",
         feishuStatus: "/api/mmw-tools/feishu/status",
         feishuLoginStart: "/api/mmw-tools/feishu/login/start",
         feishuLoginPoll: "/api/mmw-tools/feishu/login/poll",
@@ -43,16 +39,17 @@ window.__ModuleLoader__.load({
      * Browser-side API client for dsh-mmw-tools.
      *
      * Thin fetch wrapper around the loopback routes registered by the host
-     * bundle (src/routes.ts). Each method maps 1:1 to a route.
+     * bundle (src/routes.ts). The only user-facing credential is Feishu; the
+     * broker owns the GitHub App identity.
      *
      * The routes already gate on loopback origin, so this client can be
      * called from `fetch('/api/...')` without explicit CORS preflight.
      */
     
-    class GithubApiError extends Error {
+    class ApiError extends Error {
         constructor(message) {
             super(message);
-            this.name = "GithubApiError";
+            this.name = "ApiError";
         }
     }
     async function readJson(response) {
@@ -61,13 +58,13 @@ window.__ModuleLoader__.load({
             body = await response.json();
         }
         catch {
-            throw new GithubApiError(`HTTP ${response.status}: invalid JSON response`);
+            throw new ApiError(`HTTP ${response.status}: invalid JSON response`);
         }
         if (!response.ok) {
             const errField = typeof body === "object" && body !== null && typeof body.error === "string"
                 ? body.error
                 : `HTTP ${response.status}`;
-            throw new GithubApiError(errField);
+            throw new ApiError(errField);
         }
         return body;
     }
@@ -77,45 +74,10 @@ window.__ModuleLoader__.load({
             response = await fetch(path, init);
         }
         catch (err) {
-            throw new GithubApiError("网络请求失败: " + (err instanceof Error ? err.message : String(err)));
+            throw new ApiError("网络请求失败: " + (err instanceof Error ? err.message : String(err)));
         }
         return readJson(response);
     }
-    class GithubApi {
-        getStatus() {
-            return request(API.status);
-        }
-        oauthStart() {
-            return request(API.oauthStart, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({}),
-            });
-        }
-        oauthFinish() {
-            return request(API.oauthFinish, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({}),
-            });
-        }
-        oauthRefresh() {
-            return request(API.oauthRefresh, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({}),
-            });
-        }
-        revoke() {
-            return request(API.revoke, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({}),
-            });
-        }
-    }
-    /** Singleton shared by the panel component. */
-    const githubApi = new GithubApi();
     class FeishuApi {
         getStatus() {
             return request(API.feishuStatus);
@@ -146,16 +108,11 @@ window.__ModuleLoader__.load({
 
     // ── inlined: src/client/index.js (panel body) ──
     /**
-     * Settings panel — implementation of docs/PANEL-CONTRACT.md.
+     * Settings panel — one section, one credential.
      *
-     * The contract is the specification; this file is one rendering of it.
-     * Two rules govern everything here:
-     *
-     *   1. At most two controls are visible at any time, and only the ones
-     *      the action-by-state table permits. A control that would be inert
-     *      must not be rendered — that was the original complaint.
-     *   2. The user never confirms something the browser already reported.
-     *      While `phase === "authorizing"` this component polls by itself.
+     * MMW Tools has exactly one user-facing login: Feishu. The broker owns the
+     * GitHub App identity and mints repository tokens after verifying the Feishu
+     * role, so there is no second GitHub login UI to render.
      */
     
     const inject = ["slots"];
@@ -185,16 +142,7 @@ window.__ModuleLoader__.load({
         font: "inherit",
       },
       disabled: { opacity: 0.5, cursor: "default" },
-      warn: { margin: 0, color: "#c26a00" },
-      error: { margin: 0, color: "#c62828" },
     };
-    
-    function mmss(totalSeconds) {
-      const secs = Math.max(0, Math.floor(totalSeconds));
-      const m = Math.floor(secs / 60);
-      const rest = secs % 60;
-      return `${m}:${String(rest).padStart(2, "0")}`;
-    }
     
     function formatRemaining(totalSeconds) {
       const secs = Math.max(0, Math.floor(totalSeconds));
@@ -206,216 +154,6 @@ window.__ModuleLoader__.load({
       return `${m} 分钟`;
     }
     
-    /** The one-line state sentence for each of the four phases (contract §6). */
-    function stateLine(view) {
-      switch (view.phase) {
-        case "authorizing":
-          return `等待浏览器授权 · 剩余 ${mmss(view.session.secondsRemaining)}`;
-        case "signed_in":
-          return view.mode === "feishu"
-            ? `已登录（飞书）· ${view.session.login || "飞书成员"} · 仓库令牌剩余 ${formatRemaining(view.session.secondsRemaining)}`
-            : `已登录 · ${view.session.login} · 会话剩余 ${formatRemaining(view.session.secondsRemaining)}`;
-        case "expired":
-          return "会话已过期，请重新登录";
-        default:
-          return "未登录";
-      }
-    }
-    
-    function buildPanel(runtime) {
-      // `react` / `react_jsx_runtime` are declared by the bundle wrapper in
-      // this same scope (build-client.mjs: `let react = require("react")`).
-      const resolved =
-        runtime ??
-        (typeof react !== "undefined" && react
-          ? { react, jsxRuntime: typeof react_jsx_runtime !== "undefined" ? react_jsx_runtime : react }
-          : null);
-      if (!resolved) {
-        throw new Error("react runtime unavailable in the client bundle scope");
-      }
-      const { useState, useEffect, useCallback } = resolved.react;
-      const { jsx: _jsx, jsxs: _jsxs } = resolved.jsxRuntime;
-    
-      return function MmwToolsPanel() {
-        const [view, setView] = useState(null);
-        const [busy, setBusy] = useState(false);
-        const [msg, setMsg] = useState(null);
-        const [msgKind, setMsgKind] = useState("info");
-    
-        const load = useCallback(async () => {
-          try {
-            const next = await githubApi.getStatus();
-            setView(next);
-            return next;
-          } catch (err) {
-            setMsg(`读取状态失败：${err.message}`);
-            setMsgKind("error");
-            return null;
-          }
-        }, []);
-    
-        useEffect(() => {
-          void load();
-        }, [load]);
-    
-        // §5.1: while authorizing, poll by ourselves. No confirm button exists.
-        const phase = view && view.phase;
-        useEffect(() => {
-          if (phase !== "authorizing") return undefined;
-          let stopped = false;
-          const timer = setInterval(async () => {
-            if (stopped) return;
-            try {
-              const result = await githubApi.oauthFinish();
-              if (result.ok) {
-                stopped = true;
-                clearInterval(timer);
-                setMsg("登录完成。");
-                setMsgKind("info");
-              }
-              await load();
-            } catch {
-              /* keep polling until the deadline; the state line shows progress */
-            }
-          }, 2000);
-          return () => {
-            stopped = true;
-            clearInterval(timer);
-          };
-        }, [phase, load]);
-    
-        const run = async (label, fn) => {
-          setBusy(true);
-          setMsg(null);
-          try {
-            await fn();
-          } catch (err) {
-            setMsg(`${label}失败：${err.message}`);
-            setMsgKind("error");
-          } finally {
-            setBusy(false);
-            await load();
-          }
-        };
-    
-        const signIn = () =>
-          run("发起登录", async () => {
-            const started = await githubApi.oauthStart();
-            if (!started.verificationUri) throw new Error("broker 没有返回登录链接");
-            window.open(started.verificationUri, "_blank", "noopener,noreferrer");
-            setMsg("已在浏览器打开授权页，完成后这里会自动继续。");
-            setMsgKind("info");
-          });
-    
-        const cancel = () => run("取消", () => githubApi.revoke());
-        const reacquire = () =>
-          run("获取仓库权限", async () => {
-            const r = await githubApi.oauthRefresh();
-            if (!r.ok) throw new Error(r.message || "broker 拒绝了请求");
-            setMsg("仓库权限已就绪。");
-            setMsgKind("info");
-          });
-        const signOut = () => run("退出登录", () => githubApi.revoke());
-    
-        if (!view) {
-          return _jsx("div", {
-            style: s.root,
-            children: _jsx("p", { style: s.dim, children: "读取状态…" }),
-          });
-        }
-    
-        const btn = busy ? Object.assign({}, s.button, s.disabled) : s.button;
-        const btnPrimary = busy ? Object.assign({}, s.primary, s.disabled) : s.primary;
-    
-        // §4: the action-by-state table, expressed as data. Nothing outside it
-        // is rendered, which is the whole point of having the table.
-        const actions = [];
-        if (view.phase === "signed_out" || view.phase === "expired") {
-          actions.push(
-            _jsx(
-              "button",
-              { type: "button", style: btnPrimary, disabled: busy, onClick: signIn, children: "登录 GitHub（可选）" },
-              "in"
-            )
-          );
-        } else if (view.phase === "authorizing") {
-          actions.push(
-            _jsx("button", { type: "button", style: btn, disabled: busy, onClick: cancel, children: "取消" }, "cancel")
-          );
-        } else if (view.phase === "signed_in") {
-          // A Feishu identity has no GitHub session to refresh or revoke here;
-          // its logout lives in the Feishu panel.
-          if (view.mode !== "feishu" && view.repoAccess.state !== "ready") {
-            actions.push(
-              _jsx(
-                "button",
-                { type: "button", style: btnPrimary, disabled: busy, onClick: reacquire, children: "重新获取仓库权限" },
-                "reacquire"
-              )
-            );
-          }
-          if (view.mode !== "feishu") {
-            actions.push(
-              _jsx("button", { type: "button", style: btn, disabled: busy, onClick: signOut, children: "退出登录" }, "out")
-            );
-          }
-        }
-    
-        const children = [
-          _jsx("p", { style: s.title, children: "MMW Tools" }, "t"),
-          _jsx("p", { style: s.state, children: stateLine(view) }, "state"),
-        ];
-    
-        if (view.phase === "authorizing") {
-          children.push(
-            _jsx("p", { style: s.dim, children: "请在浏览器完成授权，完成后会自动继续。" }, "hint")
-          );
-        }
-        if (view.phase === "signed_out" || view.phase === "expired") {
-          children.push(
-            _jsx(
-              "p",
-              { style: s.dim, children: "优先在下方「飞书授权」登录；GitHub 账号不是必需的。" },
-              "feishu-hint"
-            )
-          );
-        }
-        if (view.phase === "signed_in") {
-          const ready = view.repoAccess.state === "ready";
-          children.push(
-            _jsx(
-              "p",
-              {
-                style: ready ? s.dim : s.warn,
-                children: ready ? "仓库权限：就绪" : `仓库权限：不可用 · ${view.repoAccess.reason}`,
-              },
-              "repo"
-            )
-          );
-          if (view.mode === "feishu") {
-            children.push(
-              _jsx(
-                "p",
-                { style: s.dim, children: "当前使用飞书身份授权，不需要 GitHub 账号。" },
-                "feishu-mode"
-              )
-            );
-          }
-        }
-        if (msg) {
-          children.push(_jsx("p", { style: msgKind === "error" ? s.error : s.dim, children: msg }, "msg"));
-        }
-        children.push(_jsx("div", { style: s.row, children: actions }, "actions"));
-    
-        return _jsx("div", { style: s.root, children });
-      };
-    }
-    
-    /**
-     * Feishu authorization section. Kept separate from the GitHub panel so the
-     * two credentials cannot be confused; both are registered into the same
-     * settings slot.
-     */
     function buildFeishuPanel(runtime) {
       const resolved =
         runtime ??
@@ -426,7 +164,7 @@ window.__ModuleLoader__.load({
       const { useState, useEffect, useCallback } = resolved.react;
       const { jsx: _jsx } = resolved.jsxRuntime;
     
-      return function FeishuPanel() {
+      return function MmwToolsPanel() {
         const [view, setView] = useState(null);
         const [pending, setPending] = useState(false);
         const [busy, setBusy] = useState(false);
@@ -505,10 +243,10 @@ window.__ModuleLoader__.load({
     
         if (!view) return _jsx("p", { style: s.dim, children: "读取飞书授权状态…" });
     
-        const children = [_jsx("p", { style: s.title, children: "MMW Tools 授权" }, "t")];
+        const children = [_jsx("p", { style: s.title, children: "MMW Tools" }, "t")];
         if (view.signedIn) {
           children.push(
-            _jsx("p", { style: s.state, children: `已登录 · ${view.member?.name || ""}` }, "who"),
+            _jsx("p", { style: s.state, children: `已登录（飞书）· ${view.member?.name || ""}` }, "who"),
             _jsx("p", { style: s.dim, children: `角色：${view.roles?.length ? view.roles.join(", ") : "(无)"}` }, "roles"),
             _jsx(
               "p",
@@ -550,8 +288,7 @@ window.__ModuleLoader__.load({
     function apply(ctx, opts) {
       try {
         const runtime = (opts && opts.runtime) || (ctx && ctx.__mmwToolsRuntime) || null;
-        const GithubPanel = buildPanel(runtime);
-        const FeishuPanel = buildFeishuPanel(runtime);
+        const Panel = buildFeishuPanel(runtime);
         ctx.slots.inject("settings.section", () =>
           ctx.slots.register(
             {
@@ -560,21 +297,10 @@ window.__ModuleLoader__.load({
               order: 240,
               label: () => "MMW Tools",
             },
-            GithubPanel
+            Panel
           )
         );
-        ctx.slots.inject("settings.section", () =>
-          ctx.slots.register(
-            {
-              name: "settings.section",
-              id: "mmw-tools-feishu",
-              order: 241,
-              label: () => "MMW Tools 授权",
-            },
-            FeishuPanel
-          )
-        );
-        console.info("[dsh-mmw-tools] client apply ok — settings sections registered");
+        console.info("[dsh-mmw-tools] client apply ok — settings section registered");
       } catch (err) {
         console.error("[dsh-mmw-tools] settings panel registration FAILED:", err);
         throw err;
@@ -585,7 +311,6 @@ window.__ModuleLoader__.load({
     
     exports.apply = apply;
     exports.inject = inject;
-    exports.buildPanel = buildPanel;
     exports.buildFeishuPanel = buildFeishuPanel;
     exports.name = name;
     

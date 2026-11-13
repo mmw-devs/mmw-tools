@@ -10,10 +10,6 @@
  */
 export const API = {
     status: "/api/mmw-tools/status",
-    oauthStart: "/api/mmw-tools/oauth/start",
-    oauthFinish: "/api/mmw-tools/oauth/finish",
-    oauthRefresh: "/api/mmw-tools/oauth/refresh",
-    revoke: "/api/mmw-tools/revoke",
     feishuStatus: "/api/mmw-tools/feishu/status",
     feishuLoginStart: "/api/mmw-tools/feishu/login/start",
     feishuLoginPoll: "/api/mmw-tools/feishu/login/poll",

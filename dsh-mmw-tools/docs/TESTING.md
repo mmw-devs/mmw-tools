@@ -11,7 +11,7 @@ subprocess, which not every sandbox permits.
 | Pure logic and shape | `pnpm check` | nothing | anywhere |
 | MCP server handshake | `pnpm test:smoke` | `child_process.spawn` with piped stdio | CI, normal terminal |
 | Real git | `pnpm test:integration` | `git` on `PATH`, spawn with piped stdio | CI, normal terminal |
-| Real GitHub | none | a scratch repository + a device-flow authorization | manual, see below |
+| Real GitHub | none | a scratch repository, a Feishu login, and the broker | manual, see below |
 
 ### `pnpm check`
 
@@ -36,7 +36,7 @@ and it is what a contributor should run before every commit.
 | `tests/github-app.test.mjs` | installation-token flow and repository access |
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior, including repo-scoped installation-token queries |
-| `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credential, GitHub fallback, cache-hit write-auth refresh |
+| `tests/broker-auth.test.mjs` | Feishu-only credential exchange, repo mismatch, cache-hit write-auth refresh |
 | `broker/tests/core.test.mjs` | broker core state and policy, read-only client tokens, write authorization, idempotency, `pr_close`, merge approval, base-branch contract gate, close ownership, path allow/deny |
 | `broker/tests/server.test.mjs` | the broker HTTP surface, both credential headers, `/v1/write/*` routing for edit/create/close/merge |
 | `scripts/check-namespace-consistency.mjs` | the plugin id agrees across the manifest, source and built client bundle |
@@ -83,11 +83,14 @@ calls `gh`, so it needs no network and no credentials.
 
 ### Real GitHub
 
-Not automated. A full round trip needs a scratch repository and a human to
-complete the Device Flow in a browser. The manual procedure is in
+Not automated. A full round trip needs a scratch repository, a Feishu login, and
+the deployed broker. A human opens the `MMW Tools` settings section, completes
+the Feishu browser round trip, and then the agent opens a draft PR. There is no
+GitHub user login in this path. The manual procedure is in
 [`PUBLISHING.md`](PUBLISHING.md) under "After release" — install into a clean
 profile, run `mmw_tools_status`, then one `mmw_tools_run`, and confirm a draft PR
-appears.
+appears. For a manual GitHub-side intervention, use `gh`; it is not part of the
+plugin.
 
 ## Why two suites self-skip
 

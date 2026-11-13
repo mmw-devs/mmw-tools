@@ -34,7 +34,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { PLUGIN_ID, PLUGIN_DISPLAY_NAME, PLUGIN_NAMESPACE, CORDIS_INJECT, SYSTEM_PROMPT_SECTION_ORDER, mcpServerEntryPath, } from "./const.js";
 import { checkAgentsMd, fetchAgentsMd } from "./agents-md-check.js";
 import { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
-import { SessionStore } from "./auth/session-store.js";
 import { FeishuAuth } from "./auth/feishu-auth.js";
 import { PolicyGate, installToolGate } from "./gate/gate.js";
 import { RepoRegistry, repoKey } from "./gate/repo-registry.js";
@@ -447,7 +446,6 @@ const STATUS_OUTPUT_SCHEMA = {
                 scope: { type: "string" },
                 accessTokenMasked: { type: "string" },
                 accessTokenExpiresAt: { type: "number" },
-                refreshTokenExpiresAt: { type: "number" },
                 tokenUpdatedAt: { type: "string" },
             },
             required: true,
@@ -526,11 +524,11 @@ function makeStatusTool(deps) {
                                 ? `工作区: mismatch — ${workspace.reason}。请让用户确认仓库与规则文件。`
                                 : `工作区: unknown — ${workspace.reason}。`
                 : "工作区: 未检查";
-            // Mint/refresh the repository credential before reading the view: a
-            // Feishu login only becomes visible through the issued token, so a
-            // view-first order would report the stale GitHub session instead.
+            // Mint before reading the view: a Feishu login only becomes visible
+            // through the issued token, so a view-first order would report an
+            // empty identity next to "signed_in".
             await deps.flow.repoAccess();
-            const view = await deps.store.view();
+            const view = await deps.flow.view();
             const status = await deps.flow.resolvedStatus();
             const driftLine = deps.agentsMdDrift
                 ? deps.agentsMdDrift.unavailable
@@ -541,28 +539,18 @@ function makeStatusTool(deps) {
                 : "AGENTS.md drift: 未检查";
             const authLines = [`Auth 状态: ${status}`];
             if (status === "authorized") {
-                authLines.push(view.mode === "feishu" ? "登录方式: 飞书（无需 GitHub 账号）" : "登录方式: GitHub");
+                authLines.push("登录方式: 飞书（无需 GitHub 账号）");
                 authLines.push(`登录身份: ${view.login || "(unknown)"}`);
-                authLines.push(`${view.mode === "feishu" ? "仓库令牌剩余" : "会话剩余"}: ${formatExpiry(view.accessTokenExpiresAt)}`);
-                if (view.mode === "feishu") {
-                    authLines.push("飞书授权剩余: 见面板「飞书授权」一栏（默认 7 天）");
-                }
+                authLines.push(`仓库令牌剩余: ${formatExpiry(view.accessTokenExpiresAt)}`);
+                authLines.push("飞书授权剩余: 见面板「飞书授权」一栏（默认 7 天）");
                 authLines.push("仓库写入由 broker 按 operation 代理；客户端 token 只读");
             }
-            else if (status === "reauth_needed") {
-                authLines.push("⚠️ 会话已过期 — 请在面板里重新登录（飞书或 GitHub）");
-            }
-            else if (status === "device_pending") {
-                authLines.push("等待浏览器完成授权 — 面板会自动继续，无需操作");
-            }
             else {
-                authLines.push("未登录 — 请先在面板完成飞书登录；GitHub 登录也可用");
+                authLines.push("未登录 — 请先在面板完成飞书登录");
             }
             const nextStep = status === "authorized"
                 ? "可直接使用仓库工具；写操作会走 broker 代理。"
-                : status === "device_pending"
-                    ? "等待浏览器完成授权 — 面板会自动继续，无需操作。"
-                    : "请用户在面板完成飞书登录（有 GitHub 账号也可用 GitHub 登录；agent 不参与登录）。";
+                : "请用户在面板完成飞书登录（agent 不参与登录）。";
             return {
                 ok: true,
                 message: `${PLUGIN_DISPLAY_NAME} 已挂载（plugin_id=${PLUGIN_ID}）。\n` +
@@ -587,7 +575,6 @@ function makeStatusTool(deps) {
                     scope: view.scope,
                     accessTokenMasked: view.accessTokenMasked,
                     accessTokenExpiresAt: view.accessTokenExpiresAt,
-                    refreshTokenExpiresAt: view.refreshTokenExpiresAt,
                     tokenUpdatedAt: view.tokenUpdatedAt,
                 },
                 ...(workspace
@@ -907,14 +894,9 @@ export function apply(ctx, config) {
     const log = createRedactingLogger(logger);
     // Construct auth services.
     // One implementation: BrokerAuth replaces both the token store and the
-    // Device Flow state machine. It is handed to the routes twice because
-    // that surface still names the two halves `store` and `flow`.
-    //
-    // FeishuAuth comes first: BrokerAuth prefers a Feishu credential, which
-    // is what lets a member with no GitHub account get a repository token.
-    // The GitHub session stays as the fallback path.
+    // Feishu is the only user-facing credential. The broker owns the GitHub
+    // App identity, so a member never needs a GitHub account.
     const feishu = new FeishuAuth({ authServiceUrl: feishuAuthUrl });
-    const sessionStore = new SessionStore();
     const defaultEntry = repos.entry(defaultRepoKey);
     const auth = new BrokerAuth({
         brokerUrl,
@@ -925,7 +907,6 @@ export function apply(ctx, config) {
         // two be compared instead of failing later as a bare 403.
         repository: defaultRepoKey,
         feishu,
-        store: sessionStore,
     });
     // One credential source per repository: each mints its own read token into
     // its own file, so two sessions bound to different repositories cannot
@@ -944,12 +925,10 @@ export function apply(ctx, config) {
             writeAuthFile: writeAuthPath(),
             repository: key,
             feishu,
-            store: sessionStore,
         });
         authByRepo.set(key, created);
         return created;
     };
-    const store = auth;
     const flow = auth;
     const gate = new PolicyGate({
         auth: feishu,
@@ -1050,7 +1029,7 @@ export function apply(ctx, config) {
     }, "mmw-tools: agents-md drift");
     // 1. Register the status tool.
     ctx.effect(() => {
-        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, store, flow, workspace: workspaceOf }));
+        return ctx.tools.register(makeStatusTool({ brokerUrl, repo, agentsMdDrift, flow, workspace: workspaceOf }));
     }, "mmw-tools: status tool");
     // 1b. Repository selection. The name lives in the MCP namespace because it
     // is part of the contract the model sees, but it is handled here: the MCP
@@ -1219,7 +1198,6 @@ export function apply(ctx, config) {
             const ws = safeAccess(serviceGetter(ctx, "webServer"));
             disposers.push(...registerSkills(ctx, logger));
             disposers = makeRoutes({
-                store,
                 flow,
                 feishu,
                 brokerUrl,
@@ -1245,10 +1223,10 @@ export function apply(ctx, config) {
             order: SYSTEM_PROMPT_SECTION_ORDER,
             text: `本机已安装 ${PLUGIN_DISPLAY_NAME} 插件（GitHub 仓库工程脚手架，plugin_id=${PLUGIN_ID}）。` +
                 "Agent tools: mmw_tools_status（查看状态）、mmw_tools_run（读取上下文）。" +
-                "GitHub 登录在 Settings → MMW Tools；飞书授权在 Settings → MMW Tools 授权；agent 不参与登录流程。" +
+                "飞书登录在 Settings → MMW Tools；agent 不参与登录流程。" +
                 (feishuEnabled
                     ? "飞书门禁已启用：业务工具调用前必须完成飞书授权，mmw_tools_status 始终可用。"
-                    : "飞书门禁未启用：当前只做 GitHub broker 鉴权。") +
+                    : "飞书门禁未启用：当前仍由 broker 的 GitHub App 身份访问仓库。") +
                 "工作区规则：插件只在纳入 mmw-tools 的仓库工作区生效，它声明支持的仓库/PR 操作才走插件；" +
                 "未纳入的工作区不要调用插件工具，也不要假定用户必须改用某个具体工具。" +
                 "不确定当前工作区是否纳入时，先看 mmw_tools_status 的 workspace 字段。" +
@@ -1405,5 +1383,4 @@ export const inject = CORDIS_INJECT;
 //  entry — see NEXT-STEPS.md "Settings web panel".)
 export { mcpServerEntryPath } from "./const.js";
 export { BrokerAuth, installationTokenPath, writeAuthPath } from "./auth/broker-auth.js";
-export { SessionStore } from "./auth/session-store.js";
 export { makeRoutes, API } from "./routes.js";

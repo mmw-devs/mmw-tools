@@ -5,6 +5,10 @@
 // DSH's `window.__ModuleLoader__`. Runs purely against the file
 // contents — no React runtime needed in the test process.
 //
+// The client has exactly one credential surface: Feishu. The GitHub user
+// login (and its second settings section) was removed deliberately; the
+// broker owns the GitHub App identity.
+//
 // Run: node tests/client-bundle.test.mjs
 
 import { readFileSync, existsSync } from "node:fs";
@@ -51,7 +55,7 @@ if (loaderMatch) {
 // 2. The factory body must:
 //    - declare `module`, `exports`
 //    - require react + react/jsx-runtime
-//    - export apply, inject (buildPanel optional but present)
+//    - export apply, inject
 const factoryMatch = src.match(/factory:\s*\(([^)]*)\)\s*=>\s*\{([\s\S]*)\n\s*\}\s*,\s*\}\)[\s;]*$/m);
 truthy(factoryMatch !== null, "factory is an arrow function");
 
@@ -75,7 +79,7 @@ if (factoryMatch) {
   truthy(/return\s+module\.exports/.test(factoryBody), "returns module.exports");
 }
 
-// 3. Panel registration uses the slot API.
+// 3. Exactly one settings section, labelled MMW Tools.
 truthy(
   /ctx\.slots\.inject\(["']settings\.section["']/.test(src),
   "panel registered into settings.section slot"
@@ -88,35 +92,35 @@ truthy(
   /ctx\.slots\.register\([\s\S]*?order:\s*240[\s\S]*?label:\s*\(\)\s*=>\s*["']MMW Tools["']/.test(src),
   "panel label = 'MMW Tools' at order 240"
 );
+truthy(!src.includes("mmw-tools-feishu"), "the second settings section is gone");
 
 // 4. The panel must use the runtime's React hooks (no top-level React imports).
 truthy(
-  /buildPanel\s*\(\s*runtime\s*\)/.test(src),
-  "panel built from runtime (no top-level React imports)"
+  /buildFeishuPanel\s*\(\s*runtime\s*\)/.test(src),
+  "Feishu panel built from runtime (no top-level React imports)"
 );
 
-// 5. api.js and the shared route table were inlined.
-truthy(
-  /class\s+GithubApiError/.test(src),
-  "GithubApiError class inlined from api.ts"
-);
+// 5. api.js and the shared route table were inlined; the GitHub API is gone.
+truthy(!src.includes("GithubApiError"), "GithubApiError no longer inlined");
+truthy(!src.includes("githubApi"), "no GitHub API client in the bundle");
 truthy(
   /const API = \{[\s\S]*?status:\s*"\/api\/mmw-tools\/status"/.test(src),
   "shared route table inlined from src/shared/api-paths.ts"
 );
 truthy(
-  /getStatus\(\)\s*\{[\s\S]*?request\(API\.status\)/.test(src),
-  "getStatus() uses the shared API.status constant"
+  /getStatus\(\)\s*\{[\s\S]*?request\(API\.feishuStatus\)/.test(src),
+  "getStatus() uses the shared Feishu status constant"
 );
+truthy(src.includes("feishuLoginStart"), "Feishu login route is inlined");
+truthy(!src.includes("/api/mmw-tools/oauth/"), "no OAuth route strings remain");
 
 /* ============================================================== */
-/*  Test: the panel renders only PANEL-CONTRACT §4 controls         */
+/*  Test: the panel renders only the Feishu controls                */
 /* ============================================================== */
 console.log("\n--- panel controls match the contract ---");
 {
-  const src = readFileSync(CLIENT_JS, "utf8");
-  const allowed = ["登录 GitHub", "重新获取仓库权限", "退出登录", "取消"];
-  const forbidden = ["我已完成授权", "Connect GitHub", "刷新", "user_code", "verification_uri"];
+  const allowed = ["使用飞书登录", "退出飞书", "等待浏览器授权"];
+  const forbidden = ["登录 GitHub", "Connect GitHub", "GithubApi", "user_code", "verification_uri"];
 
   for (const text of allowed) {
     truthy(src.includes(text), `control present: ${text}`);
@@ -125,14 +129,10 @@ console.log("\n--- panel controls match the contract ---");
     truthy(!src.includes(text), `removed control absent: ${text}`);
   }
 
-  // §5.1: authorizing polls itself, so no "I finished" step can exist.
+  // Login polls itself; there is no "I finished" step.
   truthy(/setInterval\(/.test(src), "the panel polls while authorizing");
-  truthy(/phase === "authorizing"/.test(src), "polling is gated on the authorizing phase");
-
-  // The four phases must all be handled by the renderer.
-  for (const phase of ["signed_out", "authorizing", "signed_in", "expired"]) {
-    truthy(src.includes(`"${phase}"`), `phase handled: ${phase}`);
-  }
+  truthy(/loginPoll\(\)/.test(src), "polling calls the Feishu login endpoint");
+  truthy(/view\.signedIn/.test(src), "the panel renders from the Feishu status");
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

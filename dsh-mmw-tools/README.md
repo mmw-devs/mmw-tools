@@ -2,7 +2,7 @@
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that lets a DSH agent work inside **one configured GitHub repository** under rules the repository itself publishes: read `AGENTS.md`, edit only allowlisted paths, pass a pre-flight check before every commit, open a pull request, show the hosting preview, and — only after the operator approves — merge or close it.
 
-Authentication is broker-mediated: a **Feishu login** (no GitHub account needed) or an optional GitHub login. The broker exchanges either credential for a short-lived, **read-only** installation token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging and closing happen through `pr_merge` / `pr_close`, which ask the host and require a one-time broker approval bound to the PR head SHA.
+Authentication is broker-mediated: a **Feishu login** is the only user credential (no GitHub account needed). The broker verifies the Feishu identity, then uses its own GitHub App installation to mint a short-lived, **read-only** token; writes go through the broker's `/v1/write/*` proxy, which re-checks the operation and keeps the write token in memory. No webhook and no public IP on the operator's machine. Merging and closing happen through `pr_merge` / `pr_close`, which ask the host and require a one-time broker approval bound to the PR head SHA.
 
 ```
 agent ──▶ mmw_tools_run ──▶ reads AGENTS.md / README.md, returns the operating rules
@@ -42,7 +42,7 @@ This plugin takes the rules from the repository's `AGENTS.md` (mirrored into a c
 | Node | `^22.19.0 \|\| >= 24.0.0` (the DSH desktop build ships one) |
 | `git` | on `PATH` — both for the install and for the plugin's own clones |
 | `gh` | on `PATH` (used by `pr_create` / `pr_list`) |
-| GitHub (optional) | only needed when you sign in with GitHub: the account must pass the broker's allowlist — a member of `mmw-devs`, **or** a username listed in the broker's `BROKER_ALLOWED_USERS`. A Feishu member whose roles include this repository's `repo_read` / `repo_edit` / `pr_create` / `pr_close` operations does **not** need a GitHub account |
+| GitHub account | **not required.** The broker authenticates to GitHub with its own App installation. Users only need a Feishu identity whose roles cover this repository's `repo_read` / `repo_edit` / `pr_create` / `pr_close` operations |
 | Network | `https://race-ops-broker.mmw-team.icu` and `https://mmw-tools.mmw-team.icu` reachable |
 
 No OAuth App, client id or client secret is needed on the operator's machine:
@@ -69,15 +69,12 @@ dialog at the local directory `<clone>/dsh-mmw-tools` instead — the build
 output (`lib/`, `mcp-server/dist/`) is committed, so no build step is needed
 on the operator's machine.
 
-Then open **Settings → MMW Tools 授权** and press **使用飞书登录**. This is the
-primary path: the gate denies every business tool until that login completes
+Then open **Settings → MMW Tools** and press **使用飞书登录**. This is the only
+login: the gate denies every business tool until it completes
 (`mmw_tools_status` is the exception), and the broker mints the repository token
-from the Feishu identity. No GitHub account is involved.
-
-A GitHub login remains available in **Settings → MMW Tools** (button
-**登录 GitHub（可选）**) for people who prefer it or whose Feishu roles do not
-cover the repository. Either credential yields a read-only client token; writes
-are proxied by the broker (see `docs/AUTH-BROKER.md` §13).
+from the Feishu identity. No GitHub account, OAuth grant, or client secret is
+involved. The broker's GitHub App identity performs the repository access; see
+`docs/AUTH-BROKER.md` §13 for the write proxy.
 
 ### Which profile to install into
 
@@ -236,30 +233,20 @@ Three things keep it visible:
 
 ## Settings panel
 
-**Settings → MMW Tools** (GitHub):
-
-| Control | Effect |
-|---|---|
-| **登录 GitHub（可选）** | Starts the broker login and opens the verification page |
-| **重新获取仓库权限** | Re-checks the broker's repository access (GitHub mode only) |
-| **退出登录** | Revokes the broker session and clears the local session (GitHub mode only) |
-
-**Settings → MMW Tools 授权** (Feishu):
+**Settings → MMW Tools** is the only settings section:
 
 | Control | Effect |
 |---|---|
 | **使用飞书登录** | Opens the auth core, then polls until the browser completes |
-| **退出飞书** | Revokes the plugin token and clears `~/.dsh/dsh-mmw-tools-feishu.json` |
+| **退出飞书** | Revokes the plugin token and clears the local Feishu, write-auth, and installation-token files |
 
-When a Feishu credential is active, the GitHub panel reports
-`已登录（飞书）· <member>` and hides the GitHub-only refresh/logout controls;
-**退出飞书** in the Feishu panel ends that session. `mmw_tools_status` reports
-the active `mode` (`feishu`, `github`, or `none`), labels the one-hour
-installation token as `仓库令牌剩余`, and points at the Feishu panel for the
-7-day authorization expiry.
+While signed in, the panel reports `已登录（飞书）· <member>`, labels the
+one-hour installation token as `仓库令牌剩余`, and shows the 7-day Feishu
+authorization as `飞书授权剩余`. It renders no GitHub login, refresh, or revoke
+control. `mmw_tools_status` reports the same `mode` (`feishu` or `none`).
 
-The panels are plain React with inline styles; `lib/client.js` registers both
-sections through the DSH web `__ModuleLoader__` factory contract.
+The panel is plain React with inline styles; `lib/client.js` registers the
+single section through the DSH web `__ModuleLoader__` factory contract.
 
 ## Feishu authorization
 
@@ -306,9 +293,9 @@ With `feishu.enabled: true`, a missing/expired token denies business tools.
 
 The Feishu token is also a **repository credential**, but only for the broker:
 the client never receives a GitHub write token. When a Git operation needs an
-installation token and no GitHub session is preferred, the plugin sends the
-plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it with
-`GET /v1/me` and `GET /v1/agent/routes`, then mints a **read-only** token:
+installation token, the plugin sends the plugin token to the broker in
+`X-MMW-Feishu-Token`. The broker verifies it with `GET /v1/me` and
+`GET /v1/agent/routes`, then mints a **read-only** token:
 
 | Route-table operations | Client token |
 |---|---|
@@ -317,15 +304,14 @@ plugin token to the broker in `X-MMW-Feishu-Token`. The broker verifies it with
 
 Writes are proxied per call, never minted for the client: `repo_edit`,
 `pr_create`, `pr_close`, and `pr_merge` go to `POST /v1/write/*`, which re-checks
-the exact operation (and, for GitHub, the session plus allowlist) before using a
-write token that exists only in broker memory. The plugin stores the credential used
-for those calls in `~/.dsh/dsh-mmw-tools-write-auth.json` (mode `0600`); the MCP
-child reads it and sends `X-MMW-Feishu-Token` or `Authorization: Bearer`. See
-`docs/AUTH-BROKER.md` §13 for the request shapes and the approval nonce.
+the exact operation before using a write token that exists only in broker
+memory. The plugin stores the Feishu plugin token used for those calls in
+`~/.dsh/dsh-mmw-tools-write-auth.json` (mode `0600`); the MCP child reads it and
+sends `X-MMW-Feishu-Token`. See `docs/AUTH-BROKER.md` §13 for the request shapes
+and the approval nonce.
 
-The Feishu credential is preferred when both exist; a valid GitHub session is
-the fallback when the Feishu token is stale. The broker-side check is what makes
-the Feishu login a security boundary rather than just a client-side gate.
+The broker-side check is what makes the Feishu login a security boundary rather
+than just a client-side gate.
 
 ### Scope of the Feishu gate
 
@@ -433,7 +419,7 @@ local git/`gh` behavior for standalone use.
 
 **Guards, applied before any I/O.** Path traversal and symlink escape; allowlist/denylist with deny-over-allow precedence; branch-prefix and base-branch rejection; token-shaped string detection on commit messages, PR titles, PR bodies, and `user_request`; byte caps per file, per commit, and per PR body; `execFile` (no shell) for the pre-flight command.
 
-**Tokens.** The GitHub session lives in `~/.dsh/dsh-mmw-tools-session.json` at mode `0600`, and the one-hour client installation token in `~/.dsh/dsh-mmw-tools-installation.json` (also `0600`) because the MCP child reads it from disk. That client token is always read-only, whether minted from a GitHub session or a Feishu plugin token. Writes use `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`), which holds the Feishu pluginToken or GitHub sessionToken — never a GitHub write token; the broker keeps that token in memory. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. The panel's revoke wipes the local copies and tells the broker/auth core to drop the session.
+**Tokens.** The one-hour client installation token lives in `~/.dsh/dsh-mmw-tools-installation.json` (`0600`) because the MCP child reads it from disk. It is always read-only. Writes use `~/.dsh/dsh-mmw-tools-write-auth.json` (`0600`), which holds the Feishu pluginToken — never a GitHub token; the broker keeps the write token in memory. The Feishu plugin token lives in `~/.dsh/dsh-mmw-tools-feishu.json` (`0600`). All are masked in every view the agent can read and never written to logs, commit messages, PR bodies, or the audit trail. 退出飞书 wipes the local copies and tells the auth core to drop the session.
 
 **Audit.** `mmw_tools_run` appends `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` events to `~/.dsh/dsh-mmw-tools-audit.jsonl` (mode `0600`, 1 MiB rotation). Every string field is recursively redacted; the request text itself is never logged, only its byte length. A failed audit write warns once and then goes silent — it never blocks work.
 
@@ -473,7 +459,7 @@ pnpm test:integration      # the MCP tool bodies against a real git repo
 | `tests/github-app.test.mjs` | installation-token flow and repository access | — |
 | `tests/session-store.test.mjs` | credential persistence, masking, clearing | — |
 | `tests/broker-client.test.mjs` | broker HTTP client behavior | — |
-| `tests/broker-auth.test.mjs` | broker auth handshake, Feishu-first credentials, cache-hit write-auth refresh | — |
+| `tests/broker-auth.test.mjs` | Feishu-only credential exchange, repo mismatch, cache-hit write-auth refresh | — |
 | `broker/tests/core.test.mjs` | broker core, read-only client tokens, base-branch contract gate, close ownership | — |
 | `broker/tests/server.test.mjs` | broker HTTP surface and `/v1/write/*` routing | — |
 | `mcp-server/tests/guard.test.mjs` | every cross-cutting guard | — |

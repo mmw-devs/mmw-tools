@@ -1,34 +1,37 @@
 # AUTH-BROKER — GitHub App + token broker
 
-Status: target design (topology B). The GitHub path is deployed; the Feishu
-direct path (§12) is implemented in the broker and plugin, but stays off until
-the broker sets `MMW_TOOLS_AUTH_URL`. See §12 for what is shipped and what is
-still a gap.
+Status: target design (topology B). The broker is deployed. Since 2026-11-13 the
+plugin has **one user credential: Feishu**. The user never signs in to GitHub;
+the broker acts with its own GitHub App installation. The broker's
+`/session/*` GitHub OAuth endpoints remain for manual/legacy use, but the plugin
+no longer calls them. See §12 for what is shipped and what is still a gap.
 Supersedes the Device Flow design in `OAUTH-FLOW.md` for repo access.
-Device Flow is not deleted: it is re-scoped to *identity only* (see §3).
 
 ---
 
 ## 1. 目标
 
-让若干使用者能用**自己的 GitHub 账号**登录，然后**以 bot 身份**操作
-`mmw-devs/ffxiv-race-ops`。使用者不需要是该仓库的协作者，也不需要
-`repo` scope；仓库的写权限只由一次性的 App 安装提供。
+让使用者在自己的机器上只做一次**飞书登录**，然后由 broker **以 bot 身份**
+操作 `mmw-devs/ffxiv-race-ops`。使用者不需要有 GitHub 账号，也不需要是该
+仓库的协作者；仓库的写权限只由一次性的 App 安装提供。
 
 three properties that matter:
 
 1. **写入身份是 bot**，不是使用者。PR 作者是 `mmw-tools-app[bot]`。
-2. **user 与 repo 权限解耦**。使用者登录只证明"他是谁"，不产生任何仓库权限。
-3. **撤销是单点的**。从允许名单移除某人，或卸载 App，立即生效；不需要
-   逐个仓库改权限。
+2. **user 与 repo 权限解耦**。飞书登录只证明"他是谁、能做什么 operation"，
+   不产生任何 GitHub 账号权限。
+3. **撤销是单点的**。在 auth core 移除某人的仓库角色，或卸载 App，立即生效；
+   不需要逐个仓库改权限。
 
-Since 2026-11-11 there is a second, GitHub-free route: a **Feishu member** whose
-roles include this repository's operations signs in only to the auth core, and
-the broker mints the same kind of installation token from that plugin token
-(§12). The bot identity, the user/repo permission split, and single-point
-revocation are unchanged; what changes is who can ask the broker for a token.
+The older GitHub-user login path (`/session/*`, a user OAuth round trip) is
+retained in the broker for manual break-glass use but is no longer part of the
+plugin. The bot identity, the user/repo permission split, and single-point
+revocation are unchanged; only the user-facing credential is Feishu.
 
 ## 2. 拓扑
+
+The first diagram is the broker's legacy GitHub-user OAuth path. The plugin no
+longer calls it; it remains available for manual/break-glass sessions.
 
 ```
 ┌─────────────┐   1. 登录（浏览器）      ┌──────────────────┐
@@ -80,14 +83,17 @@ do"; the broker does not keep a second role table.
 
 | 层 | 证明什么 | 凭据 | 存放 | 有效期 |
 |---|---|---|---|---|
-| 使用者身份 | 你是 `mmw-devs` 成员 / 在白名单里，**或**是有本仓库 operation 的飞书成员 | GitHub user token（只用于 `/user`，不落盘）**或**飞书 pluginToken（auth core 签发，插件 0600 保存） | broker 内存 / 插件本机 | GitHub：校验结果缓存 10 分钟；飞书：pluginToken 自身 TTL |
-| 插件会话 | 这个插件实例已被 broker 认可 | session token（32 字节随机，sha256 存库） | 插件本机 0600 | 12 小时 |
-| 仓库写入 | App 被安装在仓库上且具备权限 | installation token | 插件本机内存（可选缓存 ≤ 50 分钟） | 1 小时 |
+| 飞书成员身份 | 你是有本仓库 operation 的飞书成员 | 飞书 pluginToken（auth core 签发） | 插件本机 0600 | pluginToken 自身 TTL（默认 7 天） |
+| 仓库写入 | App 被安装在仓库上且具备权限 | read-only installation token（客户端）/ write token（仅 broker 内存） | 客户端 0600 / broker 内存 | 1 小时 |
 
-关键性质：**session token 不能直接写仓库**。它只能向 broker 换一个 1 小时的
-installation token，而 broker 每次都会重新检查该 session 仍然有效且使用者
-仍在允许名单里。踢人不需要等 token 过期。Feishu 签发的 token 还会按路由表
-收窄 `permissions`，不是 App 的完整权限集。
+关键性质：**飞书 pluginToken 不能直接写仓库**。broker 用它换一个只读的
+installation token；写操作每次调用都重新向 auth core 核对 operation，并通过
+`/v1/write/*` 使用只在 broker 内存里的写 token。撤销角色后下一次调用即拒绝，
+不需要等 token 过期。
+
+The legacy GitHub-user session (`/session/*`) is not a plugin credential. It
+still exists in the broker for manual sessions, with its own 12-hour session
+token, but the panel neither creates nor displays it.
 
 ## 4. GitHub App 注册清单
 
@@ -377,10 +383,10 @@ Properties worth stating:
 
 | 威胁 | 缓解 |
 |---|---|
-| 插件机器被入侵 | 只有 12 小时 session + 1 小时 installation token；`/session/revoke` 立即失效；私钥不在本机 |
-| 浏览器 URL 泄漏（历史记录、截图） | `state` ≠ `pollSecret`，只泄漏 `state` 拿不到 session |
-| 回调被重放 | `state` 一次性，用后即焚；5 分钟未回调则过期 |
-| 允许名单里的账号被盗 | 客户端 token 只有 Contents/PR 读；写操作要经过 broker 的 `/v1/write/*`，每次重新校验 session 与允许名单；GitHub 侧审计可见 bot 操作时间线 |
+| 插件机器被入侵 | 只有飞书 pluginToken + 1 小时只读 installation token；撤销飞书角色后下一次调用即拒绝；私钥不在本机 |
+| 浏览器 URL 泄漏（历史记录、截图） | `state` ≠ `pollSecret`，只泄漏 `state` 拿不到 session（legacy GitHub 路径） |
+| 回调被重放 | `state` 一次性，用后即焚；5 分钟未回调则过期（legacy GitHub 路径） |
+| legacy GitHub OAuth 会话 (`/session/*`) 被盗 | 客户端已不再创建这种会话；broker 侧仍把它当作可信写者，只应作为人工 break-glass 使用 |
 | 飞书 pluginToken 被盗 | 只在该 token 的 TTL 内可用；broker 每次 mint 与每次写调用都向 auth core 复核；撤销角色后下一次调用即拒绝；客户端 token 只读 |
 | 本机进程自行调用 `/v1/write/pr_merge/approval` | **部分防**：approval 绑定 member、PR、head SHA，5 分钟过期且一次性；但它不区分“用户在宿主里点了确认”与“agent 自己发 HTTP”。宿主对 `pr_merge` 的 ask 是 UI 门，不是服务端边界；彻底隔离需要 host-only secret |
 | 私钥泄漏 | 只能重签：GitHub App 删旧 key、生成新 key、重启 broker；已发 installation token 自然 1 小时内过期 |
@@ -390,29 +396,29 @@ Properties worth stating:
 
 **明确不防的**：broker 内存里的 write token 可以在 1 小时内任意写仓库
 （这正是它的用途），但它不再下发到客户端。客户端拿到的
-`~/.dsh/dsh-mmw-tools-write-auth.json`（0600）只含飞书 pluginToken 或
-GitHub sessionToken，不含 GitHub write token；能读该文件、又能发 HTTP 的
-本地进程可以自行申请 approval 并触发合并，宿主确认拦不住这条路。
-文件权限和机器账户是这一层的边界。
+`~/.dsh/dsh-mmw-tools-write-auth.json`（0600）只含飞书 pluginToken，不含
+任何 GitHub token；能读该文件、又能发 HTTP 的本地进程可以自行申请 approval
+并触发合并，宿主确认拦不住这条路。文件权限和机器账户是这一层的边界。
 
-## 8. 插件侧改动
+## 8. 插件侧现状（2026-11-13）
 
-新增：
+客户端只有飞书凭据，没有 GitHub 用户 OAuth：
 
-- `src/auth/broker-client.ts` — `startSession()`, `pollSession()`, `getInstallationToken()`, `revoke()`
-- `src/auth/installation-token-cache.ts` — 内存缓存，提前 10 分钟刷新
-
-修改：
-
-- `config.authMode: "broker" | "device"`，默认 `broker`
-- `routes.ts` — `/oauth/*` 保留给 `device` 模式；新增 `/broker/*` 面板动作
-- `src/client/index.js` — 面板按钮文案按模式切换（「Sign in via broker」）
-- `TokenStore` — broker 模式下只存 `sessionToken` + `expiresAt`，**不存** installation token
-- `mmw_tools_status` — 显示 `authMode`、`login`、session 剩余时间、installation token 是否已缓存
+- `src/auth/feishu-auth.ts` — 飞书登录、`/v1/me`、`/v1/agent/routes`、token 刷新；
+  `credential()` 返回当前 pluginToken。
+- `src/auth/broker-auth.ts` — 用 `FeishuAuth.credential()` 调
+  `broker.getInstallationTokenForFeishu()`；把只读 installation token 写到
+  0600 文件，把飞书 pluginToken 写到 `dsh-mmw-tools-write-auth.json`（0600）。
+  没有 GitHub session、没有 fallback、没有 `reauth_needed`。
+- `src/routes.ts` — 只有 `GET /api/mmw-tools/status` 与四条
+  `/api/mmw-tools/feishu/*` 路由；没有 `/oauth/*`。
+- `src/client/index.js` — 只注册一个 `MMW Tools` section，面板只有飞书登录/退出。
+- `mmw_tools_status` — 报告 `phase`（`signed_out`/`signed_in`）、`mode`
+  （`none`/`feishu`）、仓库权限与 workspace。
 
 **不变**：`mcp-server/src/guard.ts` 全套、`repo_edit` 状态机、
 `allowlist/denylist/branchPrefix/preflight/bootstrap`、审计日志、脱敏。
-认证方式与这些正交，这是现有 10 个守卫能直接复用的原因。
+broker 的 GitHub App 铸造、`/v1/write/*` 写代理、契约门与 close 归属均不变。
 
 ## 9. 部署（腾讯云）
 
@@ -647,18 +653,18 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 - broker 接受 `X-MMW-Feishu-Token`；用 `/v1/me` 取身份、`/v1/agent/routes` 取
   `allowedOperations`。`/installation-token` 只发只读客户端 token；写操作改为
   每次调用都校验 operation 的 `/v1/write/*` 代理（§13）。
-- 插件先试飞书凭据（`FeishuAuth.credential()`），失败才回退 GitHub session；
-  `/api/mmw-tools/status` 与 `mmw_tools_status` 返回 `mode`。
-- 插件把当前凭据写入 `~/.dsh/dsh-mmw-tools-write-auth.json`（0600），MCP 子进程
-  用它调用 broker；文件里是飞书 pluginToken 或 GitHub sessionToken，不是 GitHub
-  write token。
-- 面板：飞书模式显示「已登录（飞书）」，隐藏「重新获取仓库权限」「退出登录」，
-  GitHub 按钮降级为「登录 GitHub（可选）」。
+- 插件只用飞书凭据（`FeishuAuth.credential()`）调用 broker；没有 GitHub session，
+  没有 fallback。`/api/mmw-tools/status` 与 `mmw_tools_status` 返回 `mode`。
+- 插件把飞书 pluginToken 写入 `~/.dsh/dsh-mmw-tools-write-auth.json`（0600），
+  MCP 子进程用它调用 broker；文件里只有飞书 pluginToken，不是任何 GitHub token。
+- 面板只有一个 `MMW Tools` section，内容是飞书登录/退出；没有 GitHub 按钮，
+  也没有第二栏位。
 - MCP 的 `repo_edit` / `pr_create` / `pr_close` / `pr_merge` 在有写认证时走 broker；
   没有写认证时保留旧的本地 git / `gh` 路径，供独立使用与旧测试。
 - 测试：`broker/tests/core.test.mjs` 覆盖只读 token、写授权、幂等、approval、
   路径 allow/deny、base 分支契约门与 close 归属；`broker/tests/server.test.mjs`
-  覆盖 HTTP 路由；`tests/broker-auth.test.mjs` 覆盖凭据回退。
+  覆盖 HTTP 路由；`tests/broker-auth.test.mjs` 覆盖飞书-only 凭据交换、repo
+  不匹配与缓存命中刷新 write-auth。
 
 **上线步骤**
 
@@ -705,12 +711,14 @@ GHOST_BROKER_URL=http://127.0.0.1:8787 dsh --profile <profile>
 
 ### 凭据与授权
 
-- 飞书：`X-MMW-Feishu-Token: <pluginToken>`；GitHub：`Authorization: Bearer
-  <sessionToken>`。凭据只从 header 读，body 里的同名字段被忽略。
+- 飞书：`X-MMW-Feishu-Token: <pluginToken>`。broker 仍接受
+  `Authorization: Bearer <sessionToken>` 作为 legacy/manual GitHub session
+  入口，但插件不再发送，也不在面板创建这种 session。凭据只从 header 读，
+  body 里的同名字段被忽略。
 - 飞书每次调用都重新取 `/v1/agent/routes`，缺对应 operation 返回
   `feishu-operation-denied`（403），不依赖上一次 mint 的 scope。
-- GitHub session 走 `#sessionFor` + `#checkAllowlist`；组织成员/白名单用户被视为
-  可信写者，不再区分读/写角色。
+- legacy GitHub session 走 `#sessionFor` + `#checkAllowlist`；组织成员/白名单
+  用户被视为可信写者，不再区分读/写角色。这是人工 break-glass 路径，不是插件路径。
 - `BROKER_WRITE_ENABLED` 不是 `true` 时所有 `/v1/write/*` 返回
   `write-disabled`（503）。没有凭据返回 `write-credential-required`（401）。
 - write token 由 broker 以 `contents: write` + `pull_requests: write` mint，

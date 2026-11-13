@@ -1,24 +1,15 @@
 /**
  * dsh-mmw-tools — loopback HTTP routes.
  *
- * Exposes the OAuth Device Flow lifecycle to the DSH web UI:
+ * The browser surface is intentionally small: one status endpoint and the
+ * Feishu login/logout endpoints. The broker owns the GitHub App identity, so
+ * there is no user-facing GitHub OAuth route to expose.
  *
- *   GET  /api/mmw-tools/status       — public, secret-free state
- *   POST /api/mmw-tools/oauth/start  — request a device_code
- *   POST /api/mmw-tools/oauth/finish — exchange the code manually
- *   POST /api/mmw-tools/oauth/refresh — refresh the access_token
- *   POST /api/mmw-tools/revoke       — wipe credentials
- *
- * Every route enforces loopback-only access (the same way
- * dsh-feishu-mcp does): only 127.0.0.1 / ::1, host header must be
- * loopback, sec-fetch-site=cross-site is rejected.
- *
- * In v1 there is NO browser-redirect callback route — Device Flow
- * doesn't need one. The user copies the user_code into their browser
- * themselves, then we either poll in the background or let the user
- * paste the callback URL into a "finish" form.
+ * Every route enforces loopback-only access (the same way dsh-feishu-mcp
+ * does): only 127.0.0.1 / ::1, host header must be loopback,
+ * sec-fetch-site=cross-site is rejected.
  */
-import type { BrokerAuth, FlowResult, OpResult } from "./auth/broker-auth.js";
+import type { BrokerAuth } from "./auth/broker-auth.js";
 import type { FeishuAuth } from "./auth/feishu-auth.js";
 import { API } from "./shared/api-paths.js";
 
@@ -133,7 +124,6 @@ function guard(
 }
 
 export interface RouteDeps {
-  store: BrokerAuth;
   flow: BrokerAuth;
   /** Optional so the original route tests can drive makeRoutes without it. */
   feishu?: FeishuAuth;
@@ -152,7 +142,7 @@ export function makeRoutes(deps: RouteDeps): Array<{
   path: string;
   handler: (req: IncomingMessageLike & AsyncIterable<Buffer>, res: ServerResponseLike) => Promise<void>;
 }> {
-  const { store, flow } = deps;
+  const { flow } = deps;
   const routes: Array<{
     kind: "exact";
     path: string;
@@ -163,15 +153,11 @@ export function makeRoutes(deps: RouteDeps): Array<{
       path: API.status,
       handler: async (req, res) => {
         if (!guard(req, res, "GET")) return;
-        // docs/PANEL-CONTRACT.md §8. The OAuth-era fields (configured,
-        // accessTokenMasked, scope, ...) are deliberately gone: they
-        // described one credential where there are now two, which is what
-        // let the panel show "configured: true" next to "no_token".
+        // Mint before reading the view: the Feishu identity arrives with the
+        // installation token, so this order keeps the panel from flashing an
+        // empty login next to "signed_in".
         const repoAccess = await flow.repoAccess();
-        // Mint before reading the view: for a Feishu-only login the identity
-        // arrives with the installation token, so this order keeps the panel
-        // from flashing an empty login next to "signed_in".
-        const view = await store.view();
+        const view = await flow.view();
         const phase = await flow.phase();
         writeJson(res, 200, {
           phase,
@@ -187,70 +173,7 @@ export function makeRoutes(deps: RouteDeps): Array<{
           repoAccess,
           binding: deps.binding,
           brokerUrl: deps.brokerUrl,
-          sessionPath: view.configPath,
         });
-      },
-    },
-    {
-      kind: "exact",
-      path: API.oauthStart,
-      handler: async (req, res) => {
-        if (!guard(req, res, "POST")) return;
-        try {
-          const pending = await flow.begin();
-          writeJson(res, 200, {
-            ok: true,
-            userCode: pending.userCode,
-            verificationUri: pending.verificationUri,
-            expiresAt: pending.expiresAt,
-            interval: pending.interval,
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          writeJson(res, 200, { ok: false, error: message });
-        }
-      },
-    },
-    {
-      kind: "exact",
-      path: API.oauthFinish,
-      handler: async (req, res) => {
-        if (!guard(req, res, "POST")) return;
-        // No body is required. The poll has all the state it needs, and the
-        // panel sends none — requiring JSON here turned a button click into
-        // "HTTP 400: invalid JSON response". A body is still accepted and
-        // ignored, so an older panel keeps working.
-        await readJsonBody(req).catch(() => undefined);
-        const result = await flow.poll();
-        if (result.ok) {
-          writeJson(res, 200, {
-            ok: true,
-            message: "授权完成。access_token 已保存。",
-            login: result.tokens.login,
-            scope: result.tokens.scope,
-          });
-          return;
-        }
-        writeJson(res, 200, { ok: false, error: result.message });
-      },
-    },
-    {
-      kind: "exact",
-      path: API.oauthRefresh,
-      handler: async (req, res) => {
-        if (!guard(req, res, "POST")) return;
-        const result: OpResult = await flow.refresh();
-        writeJson(res, 200, { ok: result.ok, message: result.message });
-      },
-    },
-    {
-      kind: "exact",
-      path: API.revoke,
-      handler: async (req, res) => {
-        if (!guard(req, res, "POST")) return;
-        await flow.clearAll();
-        const view = await store.view();
-        writeJson(res, 200, { ok: true, message: "凭据已清空。", ...view });
       },
     },
   ];

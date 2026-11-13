@@ -15,6 +15,9 @@
 > 用该 token 调 auth core 路由表；客户端只拿只读 installation token，写操作在
 > 2026-11-12 起走 broker `/v1/write/*` 逐次校验，不需要 GitHub session；
 > 第 4 节的 `LOGIN_PENDING` 轮询仍只描述 GitHub 往返。
+> 2026-11-13 补记：插件客户端现在只有飞书凭据，不再注册 GitHub 用户登录，
+> 也不创建 GitHub session 或 `LOGIN_PENDING`；broker 的 `/session/*` 只是
+> 人工/legacy 入口。下面的 GitHub 往返图仅用于理解历史路径。
 > 2026-11-12 补记：状态投影（`mmw_tools_status` / 面板）必须先 mint 当前仓库令牌
 > 再读视图；installation token 缓存命中时也要重写 `write-auth`，否则重新登录后
 > 的写操作会继续沿用旧身份的凭据。
