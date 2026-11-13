@@ -72,8 +72,8 @@ const apiSource = stripExports(readFileSync(API_BUILD, "utf8"))
 // 2. Read panel source (plain JS).
 let panelSource = readFileSync(PANEL_SRC, "utf8");
 
-// 3. Strip the `import { githubApi, GithubApiError } from "./api.js";`
-//    line — the symbols it provided are now inlined above.
+// 3. Strip the `import { ... } from "./api.js";` line — the symbols it
+//    provided are now inlined above.
 panelSource = panelSource.replace(
   /^\s*import\s+\{[^}]+\}\s+from\s+["']\.\/api\.js["'];?\s*$/m,
   ""

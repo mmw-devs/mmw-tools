@@ -8,6 +8,11 @@ Two distribution channels. They differ in one important way: **whether the build
 | git | `dsh plugin --profile web add "git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools"` | **Yes** — `dsh plugin add` does not run a build |
 | source | `dsh plugin --profile web add file:/abs/path/to/dsh-mmw-tools` | No — you build first |
 
+`description` and `keywords` are discovery metadata, not release gates; the
+tarball contents are checked by `pnpm check:pack`. `private: true` is
+intentional for the git/file channel and blocks `npm publish` until it is
+removed for an actual npm release.
+
 `dsh plugin add` installs a package and mounts its `dsh.bundle`; it never runs a build step. So a git install only works if the artifacts the manifest points at already exist in the tree:
 
 - `lib/index.js` — the host bundle (`main`)
@@ -25,6 +30,12 @@ The trap is the other direction: `git add` silently skips a *newly
 generated* file under an ignored directory, so a build that emits a new
 module needs `git add -f`. Rebuild and commit the output in the same
 commit as the source change, always.
+
+`package.json` carries `"private": true`: npm publishing is disabled while the
+plugin is git/file-installed. Remove it only when an npm release is intended.
+`description` and `keywords` are discovery metadata, not publish gates; the
+`check:pack` assertion is what proves the tarball contains the manifest's entry
+points.
 
 To refresh an existing install after a new commit lands on `main`, re-run
 the same add command; `dsh plugin add` re-resolves the branch head. The

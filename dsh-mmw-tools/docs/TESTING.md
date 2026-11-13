@@ -16,8 +16,16 @@ subprocess, which not every sandbox permits.
 ### `pnpm check`
 
 Typecheck, namespace consistency, the in-process suites, and a pack-contents
-assertion. No subprocess, no network, no repository. Safe to run anywhere,
+assertion. No subprocess, no network, no repository. Package metadata changes
+are covered by `check:namespace` (id/name/version) and `check:pack` (shipped
+file list); no runtime suite asserts `description` or `keywords`. Safe to run anywhere,
 and it is what a contributor should run before every commit.
+
+Manifest metadata changes (`description`, `keywords`, `private`) are not
+behavioral tests; `check:pack` covers packaging and `check:namespace` covers
+the names. The MCP bridge's strict output schema is enforced by the host at
+call time; the in-process suite covers registration and routing, not a live
+host validation.
 
 | Suite | Asserts |
 |---|---|

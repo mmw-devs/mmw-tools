@@ -1,157 +1,168 @@
 # mmw-tools
 
-Tooling for the mmw-devs operation repos. Two deliverables:
+mmw-devs 运维仓库的工具集。两个交付物：
 
-- **`dsh-mmw-tools/`** — a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-  plugin that lets a DSH agent work inside a single configured GitHub repository under
-  the rules that repository publishes in its own `AGENTS.md` — read, edit only
-  allowlisted paths, pass a pre-flight check before every commit, open a **draft** PR.
-  No auto-merge.
-- **`mmw-tools-auth/`** — the Feishu H5 authorization core. It owns members, roles,
-  and the `allowed` tool set the plugin checks on every tool call.
+- **`dsh-mmw-tools/`** —— 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+  插件，让 DSH agent 在一个已注册的 GitHub 仓库里，按仓库自己发布的
+  `AGENTS.md` 规则工作——读、只改 allowlist 中的路径、每次提交前跑
+  pre-flight、开 PR，并且只有宿主确认后才合并或关闭。会话用 `select_repo`
+  绑定一个仓库；用户用飞书登录，broker 用自己的 GitHub App 身份访问 GitHub。
+- **`mmw-tools-auth/`** —— 飞书 H5 授权核心。它拥有成员、角色，以及插件在
+  每次工具调用时检查的 operation 授权表。
 
 ```text
-dsh-mmw-tools/     the plugin (bundle + stdio MCP server)
-mmw-tools-auth/          Feishu auth core + agent route table
-contracts/               shared tool catalog / roles / golden route tables
+dsh-mmw-tools/           插件（bundle + stdio MCP server）
+mmw-tools-auth/          飞书授权核心 + agent 路由表
+contracts/               共享工具目录 / 角色 / golden 路由表
 ```
 
-## The plugin
+## 插件
 
-**`dsh-mmw-tools`** — broker-backed GitHub App auth, the MCP tools, two native
-tools (`mmw_tools_status`, `mmw_tools_run`), a Settings panel, and a hardened
-tool boundary. Version and scripts live in
-[`dsh-mmw-tools/package.json`](dsh-mmw-tools/package.json). Full description,
-configuration, and security model:
-[`dsh-mmw-tools/README.md`](dsh-mmw-tools/README.md).
+**`dsh-mmw-tools`** —— broker 中介的 GitHub App 认证、MCP 工具、两个原生工具
+（`mmw_tools_status`、`mmw_tools_run`）、唯一的飞书设置面板，以及加固过的工具
+边界。版本和脚本见
+[`dsh-mmw-tools/package.json`](dsh-mmw-tools/package.json)。完整说明、配置和
+安全模型见 [`dsh-mmw-tools/README.md`](dsh-mmw-tools/README.md)。
 
 ```sh
+# 推荐：从 monorepo 安装已提交的构建产物。
+dsh plugin --profile <profile> add "git+https://github.com/mmw-devs/mmw-tools.git#path:/dsh-mmw-tools"
+# 重启 DSH
+
+# 从本地 checkout 开发安装：先构建，再用 file: 安装。
 cd dsh-mmw-tools
 pnpm install
-pnpm --filter dsh-mmw-tools-mcp build
 pnpm build:all
-dsh plugin --profile web add link:$PWD
-# restart `dsh web`
+dsh plugin --profile <profile> add "file:$PWD"
+# 重启 `dsh web`
 ```
 
-Then open **Settings → MMW Tools** and press **Connect GitHub**.
+用 `file:`，不要用 `link:`；`link:` 可能让设置面板静默不加载。然后打开
+**Settings → MMW Tools**，点击 **使用飞书登录**。不需要 GitHub 账号、OAuth
+App 或 client secret：broker 持有 GitHub App 身份，在验证飞书成员后签发仓库
+token。
 
-## The auth core
+第一次业务调用之前，管理员必须已经在 auth core 注册仓库、给成员授予
+`select_repo` 和需要的 operations，并且仓库 base 分支上要有
+`.dsh-mmw-tools.yaml`。工作区必须是已注册仓库的 clone；如果不是，
+`mmw_tools_status` 会报告对应的 `workspace` 模式。
 
-**`mmw-tools-auth` Phase 1 MVP** — Feishu OAuth (PKCE), members/roles, plugin tokens,
-and `GET /v1/agent/routes`. The plugin does not mount or unmount tools based on these
-routes; it registers all tools statically and checks the `allowed` set on every call.
+在受管工作区里，可以直接让 agent 绑定并工作，例如：“选择这个仓库，读规则，
+把 `public/data.json` 里的某处改掉，跑 validation，然后开一个 PR。” agent 会
+调用 `select_repo`、`mmw_tools_run`、`repo_read`、`repo_edit` 和 `pr_create`。
+合并或关闭仍然需要宿主确认；`pr_merge` 还需要 broker approval。
+
+## 授权核心
+
+**`mmw-tools-auth` Phase 1 MVP** —— 飞书 OAuth（PKCE）、成员/角色、plugin
+token，以及 `GET /v1/agent/routes`。插件不根据这些路由动态挂载或卸载工具；
+它静态注册所有工具，并在每次调用时检查 `allowed` / `allowedOperations`。
 
 ```sh
 cd mmw-tools-auth
 cp .env.example .env
 node --env-file=.env src/main.mjs   # http://127.0.0.1:4326
-node tests/run.mjs                  # auth-core test suite
+node tests/run.mjs                  # auth-core 测试套件
 ```
 
-Configuration, bootstrap-admin flow, endpoints, and limitations:
-[`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). Deployment steps are in
-[`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md).
+配置、bootstrap-admin 流程、端点和限制见
+[`mmw-tools-auth/README.md`](mmw-tools-auth/README.md)。部署步骤见
+[`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md)。
 
-**Deployment:** host layout, TLS, and verification steps are in
-[`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md). The auth
-core listens on loopback only; nginx terminates TLS.
+**部署：** 主机布局、TLS 和验证步骤见
+[`mmw-tools-auth/deploy/README.md`](mmw-tools-auth/deploy/README.md)。auth core
+只监听 loopback；由 nginx 终止 TLS。
 
-## First customer: [`mmw-devs/ffxiv-race-ops`](https://github.com/mmw-devs/ffxiv-race-ops)
+## 第一个客户：[`mmw-devs/ffxiv-race-ops`](https://github.com/mmw-devs/ffxiv-race-ops)
 
-The plugin is built around that repository's `AGENTS.md` contract:
+插件是围绕这个仓库的 `AGENTS.md` 契约构建的：
 
-- **Only** `public/data.json` may be modified.
-- Branches use the `content/*` prefix — direct pushes to `main` are refused.
-- `npm run validate` must pass before a commit lands.
-- The PR opens as a draft; merging happens on GitHub after CI and human review.
+- **只有** `public/data.json` 可以修改。
+- 分支使用 `content/*` 前缀——直接向 `main` push 会被拒绝。
+- 提交落地前必须通过 `npm run validate`。
+- PR 默认以 draft 打开。`pr_merge` 和 `pr_close` 需要宿主确认；`pr_merge`
+  还需要绑定 PR head SHA 的 broker approval，GitHub 的分支保护仍然决定是否
+  允许合并。
 
-The binding mirrors those rules into `dsh-mmw-tools/cordis.patch.yml` so they can
-be enforced without parsing Markdown. That duplication is deliberate and documented:
-see [`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md).
+binding 把这些规则镜像到 `dsh-mmw-tools/cordis.patch.yml`，从而不需要解析
+Markdown 就能执行。这种重复是故意的，也有文档记录：见
+[`docs/OPERATIONS-SYNC.md`](dsh-mmw-tools/docs/OPERATIONS-SYNC.md)。
 
-## Layout
+## 目录布局
 
-| Path | What |
+| 路径 | 内容 |
 |---|---|
-| `AGENTS.md` | Agent hard rules and the pointer to the document map. |
-| `.dsh/skills/docs-ssot/SKILL.md` | Semantic document-update procedure and `Doc-Impact` record format. |
-| `scripts/doc-map.json` | Document-to-source map and status labels used by the impact check. |
-| `dsh-mmw-tools/` | The plugin: DSH bundle, stdio MCP server, Settings panel, tests. |
-| `mmw-tools-auth/` | Feishu H5 authorization core: OAuth, members, roles, plugin tokens, route table. See [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md). |
-| `mmw-tools-auth/deploy/` | systemd/nginx/TLS install, verified SQLite snapshots, health timer, rollback. See [`deploy/README.md`](mmw-tools-auth/deploy/README.md). |
-| `dsh-mmw-tools/README.md` | Plugin README — install, configure, tools, security model. |
-| `dsh-mmw-tools/CHANGELOG.md` | Per-increment history. |
-| `dsh-mmw-tools/docs/` | OAuth walkthrough, operations sync, per-increment design records, release checklist. |
-| `dsh-mmw-tools-design.md` | Architecture and business-logic design (v2, aligned to the `ffxiv-race-ops` `AGENTS.md`). |
-| `contracts/` | Shared tool catalog, roles, route-table schema, and golden examples. See [`contracts/README.md`](contracts/README.md). Current role/operation matrix: [`contracts/REFERENCE.md`](contracts/REFERENCE.md) (generated). |
-| `scripts/check-contracts.mjs` | Validates the catalog, regenerates the golden route tables and `contracts/REFERENCE.md`. |
-| `scripts/check-docs.mjs` | Rejects stale identifiers in living docs and missing status labels on long-lived docs. See [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md). |
-| `scripts/doc-impact.mjs` | Maps changed source files to the documents that define them; fails when the document was not updated. |
-| `docs/OBSERVABILITY.md` | Run ids, audit events, and why trace storage is a bounded JSONL file rather than a collector. |
-| `docs/CONFORMANCE.md` | 2026-11-11 snapshot of claims vs. evidence; historical, not current behaviour. |
-| `docs/MULTI-REPO-ROUTING.md` | Target design for multi-repo authorization; not implemented. |
-| `docs/ADR-0001-MULTI-REPO.md` | Decision proposal for a multi-repo registry and one-repo-per-session binding; the 2026-11-13 amendment switches to explicit `select_repo`; not implemented. |
-| `docs/TOOL-NAMING.md` | Tool/operation naming rules: repositories never appear in names, and CI checks the format. |
-| `scripts/prune-merged-branches.mjs` | Deletes remote branches only after every dependency and retention check passes. |
-| `mmw-tools-routing-layer-plan.md` | Feature-routing plan centered on Feishu H5 auth: the auth core owns the catalog and policy; the DSH plugin registers tools statically and authorizes each call. |
-| `mmw-tools-routing-state-machine.md` | Auth, policy, transport, and tool-call state machines for static registration plus call-time authorization. |
-| `dsh-plugin-api-cheatsheet.md` | DSH 0.1.5 plugin API reference, distilled from `zhengjy01/dsh-feishu-mcp` and checked against DSH source. |
-| `github-oauth-app-checklist.md` | GitHub OAuth App registration with Device Flow enabled. |
-| `lark-vs-dsh.md` | Research notes: DSH's Feishu-related plugins vs. the official `lark-cli`. |
+| `AGENTS.md` | Agent 硬规则和文档地图入口。 |
+| `.dsh/skills/docs-ssot/SKILL.md` | 语义化文档更新流程和 `Doc-Impact` 记录格式。 |
+| `scripts/doc-map.json` | 文档到源码的映射，以及影响检查使用的状态标签。 |
+| `dsh-mmw-tools/` | 插件：DSH bundle、stdio MCP server、设置面板、测试。 |
+| `mmw-tools-auth/` | 飞书 H5 授权核心：OAuth、成员、角色、plugin token、路由表。见 [`mmw-tools-auth/README.md`](mmw-tools-auth/README.md)。 |
+| `mmw-tools-auth/deploy/` | systemd/nginx/TLS 安装、经验证的 SQLite 快照、健康检查 timer、回滚。见 [`deploy/README.md`](mmw-tools-auth/deploy/README.md)。 |
+| `dsh-mmw-tools/README.md` | 插件 README——安装、配置、工具、安全模型。 |
+| `dsh-mmw-tools/CHANGELOG.md` | 按 increment 的历史。 |
+| `dsh-mmw-tools/docs/` | OAuth 走查、operations sync、按 increment 的设计记录、发布清单。 |
+| `dsh-mmw-tools-design.md` | 架构和业务逻辑设计（v2，对齐 `ffxiv-race-ops` 的 `AGENTS.md`）。 |
+| `contracts/` | 共享工具目录、角色、路由表 schema 和 golden 示例。见 [`contracts/README.md`](contracts/README.md)。当前角色/操作矩阵：[`contracts/REFERENCE.md`](contracts/REFERENCE.md)（生成的）。 |
+| `scripts/check-contracts.mjs` | 校验目录，重新生成 golden 路由表和 `contracts/REFERENCE.md`。 |
+| `scripts/check-docs.mjs` | 拒绝 living 文档里的过期标识符，以及长期文档缺失状态标签。见 [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)。 |
+| `scripts/doc-impact.mjs` | 把改动源码映射到定义它们的文档；文档未更新时失败。 |
+| `docs/OBSERVABILITY.md` | run id、审计事件，以及为什么 trace 存储是有界 JSONL 而不是 collector。 |
+| `docs/CONFORMANCE.md` | 2026-11-11 的“声明 vs 证据”快照；historical，不代表当前行为。 |
+| `docs/MULTI-REPO-ROUTING.md` | 多仓库授权的目标设计；已实现的部分记录在 `docs/ADR-0001-MULTI-REPO.md`。 |
+| `docs/ADR-0001-MULTI-REPO.md` | 仓库注册表和“一会话一仓库”绑定的决策记录，包括 2026-11-13 的 `select_repo` 修正。 |
+| `docs/TOOL-NAMING.md` | 工具/operation 命名规则：仓库不进名字，CI 检查格式。 |
+| `scripts/prune-merged-branches.mjs` | 只有所有依赖和保留检查都通过后，才删除远端分支。 |
+| `mmw-tools-routing-layer-plan.md` | 以飞书 H5 授权为中心的功能路由计划：auth core 拥有目录和策略；DSH 插件静态注册工具并逐次授权。 |
+| `mmw-tools-routing-state-machine.md` | 静态注册 + 调用时授权的 Auth、Policy、Transport、Tool Call 状态机。 |
+| `dsh-plugin-api-cheatsheet.md` | DSH 0.1.5 插件 API 参考，摘自 `zhengjy01/dsh-feishu-mcp` 并对照 DSH 源码。 |
+| `github-oauth-app-checklist.md` | 旧 GitHub 用户 OAuth 笔记；插件不再使用这条登录路径。 |
+| `lark-vs-dsh.md` | 研究笔记：DSH 的飞书相关插件 vs 官方 `lark-cli`。 |
 
-## Tool contract
+## 工具契约
 
-`contracts/tools.json` is the shared tool catalog between the Feishu authorization
-core and the DSH plugin. It defines each tool's `roles`, `requiredPermissions`,
-operations, and `risk`. The core owns the catalog; the plugin implements every
-operation statically and checks the core's `allowed` / `allowedOperations` on each
-call.
+`contracts/tools.json` 是飞书授权核心和 DSH 插件共享的工具目录。它定义每个
+工具的 `roles`、`requiredPermissions`、operations 和 `risk`。目录由 core 拥有；
+插件静态实现每个 operation，并在每次调用时检查 core 的 `allowed` /
+`allowedOperations`。
 
-There is no role → permission table: roles decide who may consume a tool;
-`requiredPermissions` describes what the tool itself needs.
+没有 role → permission 表：角色决定谁可以使用工具；`requiredPermissions`
+描述工具本身需要什么。
 
 ```sh
 node scripts/check-contracts.mjs
-node scripts/check-contracts.mjs --update   # after an intentional catalog change
+node scripts/check-contracts.mjs --update   # 有意改动目录之后
 node scripts/check-docs.mjs
 ```
 
-The golden route tables live in `contracts/examples/`; the human-readable matrix
-is `contracts/REFERENCE.md`, both generated. Do not hand-edit either. See
-[`contracts/README.md`](contracts/README.md) for the v2 model, the
-[`ERRORS.md`](contracts/ERRORS.md) for stable error codes, and
-[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) for which document is
-authoritative.
+golden 路由表在 `contracts/examples/`；人类可读的矩阵是
+`contracts/REFERENCE.md`，两者都是生成的。不要手改。v2 模型见
+[`contracts/README.md`](contracts/README.md)，稳定错误码见
+[`ERRORS.md`](contracts/ERRORS.md)，权威文档见
+[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md)。
 
-## Documentation
+## 文档
 
-[`AGENTS.md`](AGENTS.md) holds the hard rules and links the map;
-[`scripts/doc-map.json`](scripts/doc-map.json) says what each document defines and
-which source changes require touching it;
-[`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md) is the semantic
-update procedure. Before committing:
+[`AGENTS.md`](AGENTS.md) 持有硬规则并链接地图；
+[`scripts/doc-map.json`](scripts/doc-map.json) 说明每个文档定义什么、哪些源码
+改动需要触碰它；[`.dsh/skills/docs-ssot/SKILL.md`](.dsh/skills/docs-ssot/SKILL.md)
+是语义更新流程。提交前：
 
 ```sh
 node scripts/doc-impact.mjs --base origin/main --worktree
 ```
 
-CI runs the same check against the pull request base, so a source change whose
-document is untouched fails the build. Generated documents list only their
-generation inputs as sources; runtime code that consumes them is covered by
-the living document that defines the behavior, not by the generated snapshot. It also rejects a map that omits a
-tracked markdown file or contains a source glob that matches nothing. With
-`--worktree`, an untracked new markdown that is not in the map is reported
-before it reaches CI. `AGENTS.md` links to the map instead of copying it, so
-there is only one table to maintain.
+CI 对 PR base 跑同样的检查，所以改了源码却没更新文档会导致构建失败。生成文档
+只把生成输入列为 sources；消费它们的运行时代码由定义行为的 living 文档覆盖，
+而不是由生成快照覆盖。它还会拒绝漏掉 tracked markdown 的 map，或匹配不到任何
+文件的 source glob。`--worktree` 会在进入 CI 前报告未登记的新 markdown。
+`AGENTS.md` 链接地图而不是复制它，所以只有一张表要维护。
 
-## Branch cleanup
+## 分支清理
 
-`scripts/prune-merged-branches.mjs` deletes a remote branch only when all of these
-are true: its PR is merged, it has no commits outside the base branch, no open PR
-uses it as head or base, it is unprotected, no workflow/config references it, and
-the merge is older than the retention window (7 days by default). The script is a
-dry run unless `--apply` is passed, and unknown/unreadable signals keep the branch.
+`scripts/prune-merged-branches.mjs` 只有在以下条件全部满足时才删除远端分支：
+PR 已合并；它没有 base 分支之外的提交；没有 open PR 把它当 head 或 base；它
+没有受保护；没有 workflow/config 引用它；合并时间早于保留窗口（默认 7 天）。
+脚本默认 dry run，除非传 `--apply`；未知或不可读的信号会保留分支。
 
 ```sh
 GITHUB_TOKEN="$(gh auth token)" node scripts/prune-merged-branches.mjs
@@ -159,10 +170,10 @@ GITHUB_TOKEN="$(gh auth token)" node scripts/prune-merged-branches.mjs --apply
 node --test scripts/prune-merged-branches.test.mjs
 ```
 
-`.github/workflows/branch-cleanup.yml` runs weekly with `--apply`; manual runs
-default to a dry run. Add long-lived exceptions with `--keep <pattern>`.
+`.github/workflows/branch-cleanup.yml` 每周带 `--apply` 运行；手动运行默认
+dry run。用 `--keep <pattern>` 添加长期例外。
 
-## Verify
+## 验证
 
 ```sh
 node scripts/check-contracts.mjs
@@ -172,10 +183,10 @@ node --test scripts/doc-impact.test.mjs
 node mmw-tools-auth/tests/run.mjs
 node --test scripts/prune-merged-branches.test.mjs
 cd dsh-mmw-tools
-pnpm check                    # typecheck, namespace, and the full test suite
-cd mcp-server && pnpm test    # MCP guard and schema suites
+pnpm check                    # typecheck、namespace 和全量测试
+cd mcp-server && pnpm test    # MCP guard 和 schema 套件
 ```
 
-## License
+## 许可证
 
-MIT © 2026 mmw-devs. See [`dsh-mmw-tools/LICENSE`](dsh-mmw-tools/LICENSE).
+MIT © 2026 mmw-devs。见 [`dsh-mmw-tools/LICENSE`](dsh-mmw-tools/LICENSE)。

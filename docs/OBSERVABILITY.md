@@ -48,6 +48,11 @@ A **run id** is created when the gate is about to decide a call to an
    event. The auth core records member-role and repository-grant changes in
    its own audit table (`member-update`), not in this file.
 
+Every MCP-backed tool result is normalized by the bridge to a single
+`{ content: ContentBlock[] }` envelope, and the registered output schema only
+allows that field. The bridge is therefore the visible unit for a trace: the
+MCP server's richer internal result is not what the host records or renders.
+
 The id is not a security token. It is generated locally, is not signed, and the
 MCP server trusts the plugin that spawned it. Its job is correlation, not
 authentication.
@@ -110,6 +115,11 @@ without parsing tool arguments.
   event: `/installation-token`, the write-auth refresh, and the Feishu token
   refresh are visible to the user through `mmw_tools_status` and the panel, not
   through the audit log.
+- The MCP bridge republishes every MCP-backed tool with a strict result
+  envelope: only `{ content: ContentBlock[] }` reaches the host, and an MCP
+  tool error is thrown rather than returned as `isError`. That envelope is the
+  visible unit of a trace; structured fields the MCP server may add are not
+  forwarded.
 - The local JSONL file is per plugin host. Two hosts do not share a trace store.
 
 ## If central storage becomes necessary

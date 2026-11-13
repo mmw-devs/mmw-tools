@@ -11,8 +11,10 @@
 # Authentication is delegated to the broker: no OAuth App, no client id and
 # no scope list on this machine. See docs/AUTH-BROKER.md.
 #
-# repoBinding — the SINGLE repository this plugin operates on. Editing
-#   this does not affect GitHub; it is purely a client-side guard rail.
+# repoBinding — the DEFAULT repository. A profile can host more than one
+#   registered repository; `config.repos` adds selectable entries and the
+#   session binds one with `select_repo`. Editing this block does not affect
+#   GitHub; it is a client-side default and guard rail.
 #
 # ⚠️  SSOT WARNING — MIRRORED FACTS
 # ─────────────────────────────────
@@ -74,26 +76,29 @@
 
         # Which sessions may use these tools.
         #
-        # The plugin is loaded per PROFILE, but it belongs to ONE repository,
-        # and a profile hosts every workspace opened in it. Without this guard
-        # a session started in an unrelated directory still lists all eleven
-        # tools and can drive the bound repository from there.
+        # The plugin is loaded per PROFILE, and a profile hosts every
+        # workspace opened in it. Without this guard a session started in an
+        # unrelated directory still lists the plugin's tools and can drive a
+        # registered repository from there.
         #
-        # The guard reads the SESSION's working directory on every call (a
-        # mid-session `cd` is respected) and refuses calls made outside the
-        # checkout. Roots are derived from `workingDir` below, or from the
-        # built-in default ~/.dsh/workspaces/<owner>/<name> — this file does
-        # NOT carry a second copy of that path.
+        # A workspace is managed only when BOTH facts agree:
+        #   - the repository registered in auth core, and
+        #   - the checkout's `origin` remote resolves to that repository.
+        # `.dsh-mmw-tools.yaml` at the repository root is the rule marker and
+        # a hint for an otherwise unregistered checkout; it is not an
+        # identity. Missing/invalid rules, or a remote/registry mismatch,
+        # fail closed (`mismatch`).
         #
         #   onUnavailable: deny  — default: the host gives no working directory
         #     (old profile / an execution with no agent), so refuse the
-        #     business tools. `mmw_tools_status` stays callable.
+        #     business tools. `mmw_tools_status` stays callable and reports
+        #     the workspace mode and reason.
         #   onUnavailable: allow — explicit fail-open; only for a host whose
         #     service support has been verified.
         #
-        # `repo_clone` is the one business exception: outside the checkout it
-        # may run while the root has no `.git`, so the first session can create
-        # the checkout. A live checkout is never cloned over.
+        # `repo_clone` is the one business exception: it may run in a
+        # registered checkout that has no `.git` yet, so the first session can
+        # create the checkout. A live checkout is never cloned over.
         workspaceGuard:
           enabled: true
           onUnavailable: deny
@@ -127,6 +132,3 @@
             cmd: npm ci
             whenMissing: node_modules
             timeoutSeconds: 300
-          pr:
-            defaultDraft: true
-            titlePrefix: "[ops]"

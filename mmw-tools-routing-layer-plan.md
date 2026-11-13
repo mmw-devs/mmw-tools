@@ -113,7 +113,9 @@ auth core 拥有成员、角色、插件 token 和路由表；插件只消费路
 DSH agent
   → workspace guard（管辖范围：注册表 + 工作区 Git remote + 规则标记，防误用）
   → Feishu gate（token、路由表、operation 级判定、会话仓库选择）
-  → MCP transport（stdio，独立子进程；`_meta.mmwRepo` 选工作副本与仓库配置）
+  → MCP transport（stdio，独立子进程；`_meta.mmwRepo` 选工作副本与仓库配置；
+      结果收敛为 `{content: ContentBlock[]}`，工具错误抛出而不是塞进 `isError`）
+  → MCP bridge（结果收敛为 `{ content: ContentBlock[] }`；严格输出 schema 拒绝额外顶层字段）
   → race-ops tool（读走本地 git；写请求转发到 broker）
   → GitHub broker（读 token 只读；写操作逐次校验 operation 与 base 分支契约；
      插件只发飞书 token；legacy GitHub session 仅人工 break-glass；
