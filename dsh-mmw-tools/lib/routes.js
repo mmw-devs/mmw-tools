@@ -87,7 +87,7 @@ function guard(req, res, method) {
 }
 /** Build all /api/mmw-tools/* routes. */
 export function makeRoutes(deps) {
-    const { store, flow } = deps;
+    const { flow } = deps;
     const routes = [
         {
             kind: "exact",
@@ -95,15 +95,11 @@ export function makeRoutes(deps) {
             handler: async (req, res) => {
                 if (!guard(req, res, "GET"))
                     return;
-                // docs/PANEL-CONTRACT.md §8. The OAuth-era fields (configured,
-                // accessTokenMasked, scope, ...) are deliberately gone: they
-                // described one credential where there are now two, which is what
-                // let the panel show "configured: true" next to "no_token".
+                // Mint before reading the view: the Feishu identity arrives with the
+                // installation token, so this order keeps the panel from flashing an
+                // empty login next to "signed_in".
                 const repoAccess = await flow.repoAccess();
-                // Mint before reading the view: for a Feishu-only login the identity
-                // arrives with the installation token, so this order keeps the panel
-                // from flashing an empty login next to "signed_in".
-                const view = await store.view();
+                const view = await flow.view();
                 const phase = await flow.phase();
                 writeJson(res, 200, {
                     phase,
@@ -116,75 +112,7 @@ export function makeRoutes(deps) {
                     repoAccess,
                     binding: deps.binding,
                     brokerUrl: deps.brokerUrl,
-                    sessionPath: view.configPath,
                 });
-            },
-        },
-        {
-            kind: "exact",
-            path: API.oauthStart,
-            handler: async (req, res) => {
-                if (!guard(req, res, "POST"))
-                    return;
-                try {
-                    const pending = await flow.begin();
-                    writeJson(res, 200, {
-                        ok: true,
-                        userCode: pending.userCode,
-                        verificationUri: pending.verificationUri,
-                        expiresAt: pending.expiresAt,
-                        interval: pending.interval,
-                    });
-                }
-                catch (err) {
-                    const message = err instanceof Error ? err.message : String(err);
-                    writeJson(res, 200, { ok: false, error: message });
-                }
-            },
-        },
-        {
-            kind: "exact",
-            path: API.oauthFinish,
-            handler: async (req, res) => {
-                if (!guard(req, res, "POST"))
-                    return;
-                // No body is required. The poll has all the state it needs, and the
-                // panel sends none — requiring JSON here turned a button click into
-                // "HTTP 400: invalid JSON response". A body is still accepted and
-                // ignored, so an older panel keeps working.
-                await readJsonBody(req).catch(() => undefined);
-                const result = await flow.poll();
-                if (result.ok) {
-                    writeJson(res, 200, {
-                        ok: true,
-                        message: "授权完成。access_token 已保存。",
-                        login: result.tokens.login,
-                        scope: result.tokens.scope,
-                    });
-                    return;
-                }
-                writeJson(res, 200, { ok: false, error: result.message });
-            },
-        },
-        {
-            kind: "exact",
-            path: API.oauthRefresh,
-            handler: async (req, res) => {
-                if (!guard(req, res, "POST"))
-                    return;
-                const result = await flow.refresh();
-                writeJson(res, 200, { ok: result.ok, message: result.message });
-            },
-        },
-        {
-            kind: "exact",
-            path: API.revoke,
-            handler: async (req, res) => {
-                if (!guard(req, res, "POST"))
-                    return;
-                await flow.clearAll();
-                const view = await store.view();
-                writeJson(res, 200, { ok: true, message: "凭据已清空。", ...view });
             },
         },
     ];

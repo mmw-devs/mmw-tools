@@ -3,15 +3,11 @@
 //
 // End-to-end test for the loopback HTTP routes registered by the host
 // bundle. Spins up a real http.Server on a free port, mounts the
-// bundle's makeRoutes() onto it, then issues real http.request()
-// calls as the DSH web UI would.
+// bundle's makeRoutes() onto it, then issues real http.request() calls.
 //
-// Covers (per INCREMENT-3-CHECKLIST §1, §2):
-//   - loopback guard (rejects non-127.0.0.1)
-//   - method guard (GET vs POST)
-//   - /oauth/finish takes no input: no body, empty body and malformed
-//     body all reach the handler (a strict body guard broke the panel)
-//   - happy path: GET /status returns a secret-free view
+// The surface is deliberately small: status + Feishu login/logout. The
+// GitHub user OAuth routes were removed; the broker owns the GitHub App
+// identity, so the client only ever authenticates with Feishu.
 
 import { pathToFileURL } from "node:url";
 import path from "node:path";
@@ -88,29 +84,19 @@ apply(ctx, {
   },
 });
 
-// The routes take `store` and `flow` from one implementation
-// (BrokerAuth). For HTTP-behaviour tests the broker is stubbed: no
-// network, no session file, and the two halves are plain objects that
-// implement exactly the methods the route handlers call.
 const emptyView = {
-  configured: false,
+  mode: "none",
   login: "",
-  scope: "",
   accessTokenMasked: "",
   accessTokenExpiresAt: 0,
-  refreshTokenExpiresAt: 0,
   tokenUpdatedAt: "",
-  configPath: "C:\\x\\.dsh\\dsh-mmw-tools-session.json",
 };
 
-const store = {
+// HTTP-behaviour tests stub the broker; no network and no session file.
+const flow = {
   async view() {
     return { ...emptyView };
   },
-};
-
-const flow = {
-  status: () => "no_token",
   async phase() {
     return "signed_out";
   },
@@ -120,26 +106,36 @@ const flow = {
   async resolvedStatus() {
     return "no_token";
   },
-  async begin() {
-    return {
-      userCode: "",
-      verificationUri: "https://race-ops-broker.mmw-team.icu/auth/github/start?state=stub",
-      expiresAt: Date.now() + 300_000,
-      interval: 5,
-    };
-  },
-  async poll() {
-    return { ok: false, message: "等待浏览器完成授权…" };
-  },
   async refresh() {
-    return { ok: false, message: "尚未登录，请先完成浏览器授权。" };
+    return { ok: false, message: "尚未登录，请先完成飞书登录。" };
   },
   async clearAll() {},
 };
 
+const feishu = {
+  async view() {
+    return {
+      signedIn: false,
+      authServiceUrl: "https://mmw-tools.mmw-team.icu",
+      member: null,
+      roles: [],
+      expiresAt: 0,
+      secondsRemaining: 0,
+      tokenMasked: "",
+    };
+  },
+  async begin() {
+    return { loginId: "stub", loginUrl: "https://mmw-tools.mmw-team.icu/feishu/start?state=stub", expiresAt: Date.now() + 300_000 };
+  },
+  async poll() {
+    return { status: "pending" };
+  },
+  async logout() {},
+};
+
 const routeDeps = {
-  store,
   flow,
+  feishu,
   brokerUrl: "https://race-ops-broker.mmw-team.icu",
   binding: {
     owner: "mmw-devs",
@@ -150,8 +146,6 @@ const routeDeps = {
 };
 
 const server = http.createServer(async (req, res) => {
-  // Manually re-implement the loopback guard so the test exercises the
-  // exact same guard the bundle uses.
   const addr = req.socket.remoteAddress;
   if (addr !== "127.0.0.1" && addr !== "::1" && addr !== "::ffff:127.0.0.1") {
     res.writeHead(403, { "content-type": "application/json" });
@@ -171,10 +165,6 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const port = server.address().port;
 const BASE = `http://127.0.0.1:${port}`;
 
-/* ============================================================== */
-/*  HTTP client helper                                             */
-/* ============================================================== */
-
 function request(opts) {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -182,8 +172,6 @@ function request(opts) {
       {
         method: opts.method || "GET",
         headers: opts.headers || {},
-        // No keep-alive: a pooled socket would outlive the test and
-        // leave the event loop open after the assertions finish.
         agent: false,
       },
       (res) => {
@@ -199,11 +187,7 @@ function request(opts) {
 }
 
 /* ============================================================== */
-/*  Test 1: GET /api/mmw-tools/status                          */
-/* ============================================================== */
-
-console.log("\n--- Test 1: GET /status matches PANEL-CONTRACT §8 ---");
-
+console.log("\n--- Test 1: GET /status ---");
 {
   const r = await request({ method: "GET", path: API.status });
   eq(r.status, 200, "status code");
@@ -211,101 +195,57 @@ console.log("\n--- Test 1: GET /status matches PANEL-CONTRACT §8 ---");
 
   eq(typeof data.phase, "string", "phase is a string");
   eq(data.phase, "signed_out", "phase is signed_out when no session");
+  eq(data.mode, "none", "mode is none when signed out");
   eq(typeof data.session, "object", "session is an object");
   eq(data.session.login, "", "no login when signed out");
   eq(typeof data.session.secondsRemaining, "number", "secondsRemaining is numeric");
   eq(typeof data.repoAccess, "object", "repoAccess is an object");
   eq(data.repoAccess.state, "unavailable", "repoAccess is unavailable when signed out");
   eq(typeof data.brokerUrl, "string", "brokerUrl present");
-  truthy(
-    typeof data.sessionPath === "string" && data.sessionPath.endsWith("dsh-mmw-tools-session.json"),
-    "sessionPath names the session file"
-  );
   eq(typeof data.binding, "object", "binding present");
   eq(data.binding.owner, "mmw-devs", "binding owner");
 
-  // The OAuth-era fields are gone by contract.
-  for (const gone of ["configured", "accessTokenMasked", "accessTokenExpiresAt", "scope", "refreshTokenExpiresAt", "status"]) {
+  for (const gone of ["sessionPath", "configured", "accessTokenMasked", "accessTokenExpiresAt", "scope", "refreshTokenExpiresAt", "status"]) {
     eq(Object.prototype.hasOwnProperty.call(data, gone), false, `field '${gone}' is not in the payload`);
   }
   truthy(!r.body.includes("gho_") && !r.body.includes("ghs_"), "no token material in the payload");
 }
 
-/* ============================================================== */
-/*  Test 2: POST /status is refused (GET only)                      */
-/* ============================================================== */
-
 console.log("\n--- Test 2: POST /status is method-rejected ---");
-
 {
   const r = await request({ method: "POST", path: API.status, body: {} });
-  // Method guard returns 405 BEFORE running the handler body, so this
-  // is a clean "method not allowed" — handler throws aren't relevant.
   eq(r.status, 405, "method not allowed");
   truthy(r.body === "" || /method not allowed/i.test(r.body), "body indicates method");
 }
 
-/* ============================================================== */
-/*  Test 3: POST /oauth/start returns user_code shape                */
-/* ============================================================== */
-
-console.log("\n--- Test 3: POST /oauth/start ---");
-
+console.log("\n--- Test 3: Feishu status ---");
 {
-  const r = await request({ method: "POST", path: API.oauthStart, body: {} });
-  truthy(r.headers["content-type"]?.includes("application/json"), "content-type is JSON");
+  const r = await request({ method: "GET", path: API.feishuStatus });
   eq(r.status, 200, "status code");
   const data = JSON.parse(r.body);
-  eq(data.ok, true, "ok is true");
-  eq(data.userCode, "", "broker flows carry no user code");
-  truthy(
-    data.verificationUri?.startsWith("https://race-ops-broker.mmw-team.icu/auth/github/start"),
-    "verificationUri is the broker login URL"
-  );
-  truthy(typeof data.expiresAt === "number", "expiresAt returned");
-  truthy(typeof data.interval === "number", "interval returned");
+  eq(data.signedIn, false, "signedIn is false");
+  eq(data.authServiceUrl, "https://mmw-tools.mmw-team.icu", "auth service surfaced");
 }
 
-/* ============================================================== */
-/*  Test 4: /oauth/finish does not require a body                    */
-/* ============================================================== */
-
-console.log("\n--- Test 4: /oauth/finish does not require a body ---");
-
+console.log("\n--- Test 4: Feishu login start / poll / logout ---");
 {
-  // The poll needs no input. Requiring parseable JSON here is what turned
-  // the panel's "我已完成授权" button into "HTTP 400: invalid JSON
-  // response"; the body is now accepted and ignored. A malformed body must
-  // therefore reach the handler, not be rejected by the route.
-  const r = await new Promise((resolve, reject) => {
-    const req = http.request(
-      `${BASE}${API.oauthFinish}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        agent: false,
-      },
-      (res) => {
-        let body = "";
-        res.on("data", (c) => (body += c));
-        res.on("end", () => resolve({ status: res.statusCode, body }));
-      }
-    );
-    req.on("error", reject);
-    req.write("this is not valid JSON {{{");
-    req.end();
-  });
-  eq(r.status, 200, "a malformed body is ignored, not rejected");
-  const parsed = JSON.parse(r.body);
-  truthy("ok" in parsed, "the handler answered, so the body was not a gate");
-}
+  const start = await request({ method: "POST", path: API.feishuLoginStart, body: {} });
+  eq(start.status, 200, "start status");
+  const started = JSON.parse(start.body);
+  eq(started.ok, true, "start ok");
+  truthy(started.loginUrl?.startsWith("https://mmw-tools.mmw-team.icu/"), "loginUrl returned");
 
-/* ============================================================== */
-/*  Test 5: routes map (sanity)                                     */
-/* ============================================================== */
+  const poll = await request({ method: "POST", path: API.feishuLoginPoll, body: {} });
+  eq(poll.status, 200, "poll status");
+  const polled = JSON.parse(poll.body);
+  eq(polled.status, "pending", "poll reports pending");
+
+  const out = await request({ method: "POST", path: API.feishuLogout, body: {} });
+  eq(out.status, 200, "logout status");
+  eq(JSON.parse(out.body).ok, true, "logout ok");
+}
 
 console.log("\n--- Test 5: routes map shape ---");
-
 {
   const routes = makeRoutes(routeDeps);
   eq(routes.length, 5, "5 routes defined");
@@ -313,15 +253,10 @@ console.log("\n--- Test 5: routes map shape ---");
     eq(r.kind, "exact", `${r.path} is exact match`);
     truthy(typeof r.handler === "function", `${r.path} has handler`);
   }
+  truthy(!routes.some((r) => r.path.includes("/oauth/")), "no OAuth routes remain");
 }
 
 server.close();
-// Free sockets deterministically, then exit. `server.close()` alone only
-// stops accepting new connections; it waits for existing ones to drain,
-// and a lingering socket keeps the event loop — and therefore the suite —
-// alive. That is what hung this step on the Linux CI runner. `agent:
-// false` on the requests already avoids pooling; this is the belt to that
-// braces.
 server.closeAllConnections?.();
 
 console.log(`\n${pass} pass, ${fail} fail`);

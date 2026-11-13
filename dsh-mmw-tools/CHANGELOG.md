@@ -2,6 +2,16 @@
 
 ## Unreleased — Feishu members can open and close PRs without a GitHub account, through a write proxy
 
+### Removed
+
+- **The plugin no longer has a GitHub user login.** The `MMW Tools` panel has
+  one section and one action: Feishu login. The old GitHub OAuth round trip,
+  its `/api/mmw-tools/oauth/*` routes, the second `MMW Tools 授权` settings
+  section, and the GitHub-session fallback in `BrokerAuth` are gone. The broker
+  still has `/session/*` for manual/break-glass use, but the plugin neither
+  calls nor displays it. The broker's GitHub App installation, Feishu checks,
+  write proxy, contract gate, and close ownership are unchanged.
+
 ### Added
 
 - **Tools are scoped by workspace relevance, not by a profile-wide switch.**

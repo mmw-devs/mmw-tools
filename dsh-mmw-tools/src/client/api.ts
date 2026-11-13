@@ -2,7 +2,8 @@
  * Browser-side API client for dsh-mmw-tools.
  *
  * Thin fetch wrapper around the loopback routes registered by the host
- * bundle (src/routes.ts). Each method maps 1:1 to a route.
+ * bundle (src/routes.ts). The only user-facing credential is Feishu; the
+ * broker owns the GitHub App identity.
  *
  * The routes already gate on loopback origin, so this client can be
  * called from `fetch('/api/...')` without explicit CORS preflight.
@@ -10,40 +11,15 @@
 
 import { API } from "../shared/api-paths.js";
 
-export interface StatusView {
-  phase: "signed_out" | "authorizing" | "signed_in" | "expired";
-  /** Which credential is active; `feishu` means no GitHub account is involved. */
-  mode: "feishu" | "github" | "none";
-  session: { login: string; expiresAt: number; secondsRemaining: number };
-  repoAccess: { state: "ready" | "unavailable"; reason: string };
-  binding: {
-    owner: string;
-    name: string;
-    baseBranch: string;
-    allowlistPaths: string[];
-  };
-  brokerUrl: string;
-  sessionPath: string;
-}
-
-export interface OauthStartResult {
-  ok: boolean;
-  userCode?: string;
-  verificationUri?: string;
-  expiresAt?: number;
-  interval?: number;
-  error?: string;
-}
-
 export interface SimpleResult {
   ok: boolean;
   message: string;
 }
 
-export class GithubApiError extends Error {
+class ApiError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "GithubApiError";
+    this.name = "ApiError";
   }
 }
 
@@ -52,14 +28,14 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     body = await response.json();
   } catch {
-    throw new GithubApiError(`HTTP ${response.status}: invalid JSON response`);
+    throw new ApiError(`HTTP ${response.status}: invalid JSON response`);
   }
   if (!response.ok) {
     const errField =
       typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string"
         ? (body as { error: string }).error
         : `HTTP ${response.status}`;
-    throw new GithubApiError(errField);
+    throw new ApiError(errField);
   }
   return body;
 }
@@ -69,53 +45,12 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   try {
     response = await fetch(path, init);
   } catch (err) {
-    throw new GithubApiError(
+    throw new ApiError(
       "网络请求失败: " + (err instanceof Error ? err.message : String(err))
     );
   }
   return readJson(response);
 }
-
-export class GithubApi {
-  getStatus(): Promise<StatusView> {
-    return request(API.status) as Promise<StatusView>;
-  }
-
-  oauthStart(): Promise<OauthStartResult> {
-    return request(API.oauthStart, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }) as Promise<OauthStartResult>;
-  }
-
-  oauthFinish(): Promise<SimpleResult> {
-    return request(API.oauthFinish, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }) as Promise<SimpleResult>;
-  }
-
-  oauthRefresh(): Promise<SimpleResult> {
-    return request(API.oauthRefresh, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }) as Promise<SimpleResult>;
-  }
-
-  revoke(): Promise<SimpleResult> {
-    return request(API.revoke, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }) as Promise<SimpleResult>;
-  }
-}
-
-/** Singleton shared by the panel component. */
-export const githubApi = new GithubApi();
 
 export interface FeishuStatusView {
   signedIn: boolean;

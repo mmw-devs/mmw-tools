@@ -1,6 +1,6 @@
 # 工具命名规范
 
-Status: living — 命名规则由 `scripts/check-contracts.mjs` 强制；`select_repo`、会话锁定、`_meta` 传仓库与按仓库授权（`GET /v1/agent/routes?repo=`）已落地（2026-11-13）。工作区管辖（注册表 + `origin` remote + 规则标记）也只影响调用是否允许，不改变任何工具名；剩余缺口见第 6 节。
+Status: living — 命名规则由 `scripts/check-contracts.mjs` 强制；`select_repo`、会话锁定、`_meta` 传仓库与按仓库授权（`GET /v1/agent/routes?repo=`）已落地（2026-11-13）。工作区管辖（注册表 + `origin` remote + 规则标记）也只影响调用是否允许，不改变任何工具名；2026-11-13 移除 GitHub 用户登录只改变凭据来源，同样不改变工具名；剩余缺口见第 6 节。
 
 这份文档定义本插件暴露给模型的工具名、契约里的 operation 名，以及新增仓库/工具时必须遵守的规则。命名不是风格问题：注册表、授权、审计和模型看到的工具列表都以这些名字为键，改名等同于换身份。
 

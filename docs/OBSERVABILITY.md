@@ -87,7 +87,7 @@ without parsing tool arguments.
   the session's selected repository; that value travels in `_meta.mmwRepo` and in
   the broker write audit for routed writes. Joining the two requires the run id,
   which the broker does not receive yet (point above).
-- The broker (GitHub App session exchange, installation tokens, the Feishu
+- The broker (GitHub App token mint, installation tokens, the Feishu
   `/v1/me` + `/v1/agent/routes` checks, and the `/v1/write/*` proxy) does not
   receive the run id, so broker-side events cannot be joined to a gate decision.
   The write proxy appends its own JSONL audit with a broker-generated request id;

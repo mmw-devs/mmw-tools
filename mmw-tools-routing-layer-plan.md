@@ -116,8 +116,8 @@ DSH agent
   → MCP transport（stdio，独立子进程；`_meta.mmwRepo` 选工作副本与仓库配置）
   → race-ops tool（读走本地 git；写请求转发到 broker）
   → GitHub broker（读 token 只读；写操作逐次校验 operation 与 base 分支契约；
-     GitHub session 另过允许名单；按 operation 使用内存中的 write token；
-     close 另查分支归属）
+     插件只发飞书 token；legacy GitHub session 仅人工 break-glass；
+     按 operation 使用内存中的 write token；close 另查分支归属）
   → 审计（auth core events + 插件本地记录 + broker 写审计）
 ```
 

@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 // tests/broker-auth.test.mjs
 //
-// The broker decides which repository an installation token can write to;
-// this plugin decides which repository it edits. They are configured in two
-// different places, so BrokerAuth compares them when a token is minted.
-//
-// Without that check a drifted deployment fails much later, as a bare 403 in
-// the middle of an edit.
+// BrokerAuth has one user credential: Feishu. The broker owns the GitHub App
+// identity, so there is no GitHub session to fall back to. These tests pin
+// the remaining contract: repository agreement, Feishu-only minting, failure
+// clearing, and the write-credential refresh on a cache hit.
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,7 +16,6 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const load = async (rel) => import(pathToFileURL(path.join(ROOT, "lib", rel)).href);
 
 const { BrokerAuth } = await load("auth/broker-auth.js");
-const { SessionStore } = await load("auth/session-store.js");
 const { BrokerError } = await load("auth/broker-client.js");
 
 let pass = 0;
@@ -30,35 +27,24 @@ const truthy = (v, label) => (v ? ok(label) : bad(label, "expected truthy"));
 
 const NOW = 1_800_000_000_000;
 const work = mkdtempSync(path.join(tmpdir(), "mmw-broker-auth-"));
-const sessionFile = path.join(work, "session.json");
 const tokenFile = path.join(work, "installation.json");
 
 async function makeAuth({
   repository,
   issuedRepository,
   feishu,
-  session = true,
   writeAuthFile,
   broker: brokerOverrides,
 } = {}) {
-  const store = new SessionStore({ file: sessionFile });
-  await store.clear();
-  if (session) {
-    await store.save({
-      sessionToken: "session-token",
-      login: "operator",
-      expiresAt: NOW + 6 * 3600 * 1000,
-      brokerUrl: "",
-      updatedAt: NOW,
-    });
-  }
   if (existsSync(tokenFile)) rmSync(tokenFile);
   const broker = {
-    getInstallationToken: async () => ({
+    getInstallationTokenForFeishu: async () => ({
       token: "ghs_installation_token",
       expiresAt: NOW + 3600 * 1000,
       repository: issuedRepository,
-      permissions: { contents: "write" },
+      permissions: { contents: "read", pull_requests: "read" },
+      authMode: "feishu",
+      login: "张三",
     }),
     ...brokerOverrides,
   };
@@ -68,11 +54,10 @@ async function makeAuth({
     repository,
     ...(feishu ? { feishu } : {}),
     ...(writeAuthFile ? { writeAuthFile } : {}),
-    store,
     broker,
     now: () => NOW,
   });
-  return { auth, store };
+  return { auth };
 }
 
 console.log("\n--- the broker signs for another repository ---");
@@ -80,6 +65,7 @@ console.log("\n--- the broker signs for another repository ---");
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
     issuedRepository: "mmw-devs/some-other-repo",
+    feishu: { credential: async () => "fs-token" },
   });
   let caught = null;
   try {
@@ -105,6 +91,7 @@ console.log("\n--- the repositories agree ---");
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
     issuedRepository: "mmw-devs/ffxiv-race-ops",
+    feishu: { credential: async () => "fs-token" },
   });
   const token = await auth.ensureInstallationToken(true);
   eq(token, "ghs_installation_token", "the token is returned");
@@ -118,19 +105,24 @@ console.log("\n--- older broker / older config ---");
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
     issuedRepository: "",
+    feishu: { credential: async () => "fs-token" },
   });
   eq(await auth.ensureInstallationToken(true), "ghs_installation_token", "an empty repository field is tolerated");
 }
 {
-  const { auth } = await makeAuth({ repository: "", issuedRepository: "mmw-devs/whatever" });
+  const { auth } = await makeAuth({
+    repository: "",
+    issuedRepository: "mmw-devs/whatever",
+    feishu: { credential: async () => "fs-token" },
+  });
   eq(await auth.ensureInstallationToken(true), "ghs_installation_token", "no configured binding means nothing to compare");
 }
 
-console.log("\n--- a Feishu member with no GitHub session ---");
+console.log("\n--- a Feishu member mints without a GitHub session ---");
 {
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
-    session: false,
+    issuedRepository: "mmw-devs/ffxiv-race-ops",
     feishu: { credential: async () => "fs-token" },
     broker: {
       getInstallationTokenForFeishu: async (token) => {
@@ -147,97 +139,38 @@ console.log("\n--- a Feishu member with no GitHub session ---");
     },
   });
 
-  eq(
-    await auth.ensureInstallationToken(true),
-    "ghs_feishu_token",
-    "a Feishu login mints a token without any GitHub session"
-  );
+  eq(await auth.ensureInstallationToken(true), "ghs_feishu_token", "a Feishu login mints a token");
   truthy(existsSync(tokenFile), "the child receives the Feishu-scoped token");
   eq(await auth.phase(), "signed_in", "phase reports signed_in from Feishu alone");
-  eq(await auth.resolvedStatus(), "authorized", "status is authorized without a GitHub session");
+  eq(await auth.resolvedStatus(), "authorized", "status is authorized");
   const view = await auth.view();
   eq(view.mode, "feishu", "the view names the Feishu mode");
   eq(view.login, "张三", "the view carries the Feishu identity");
 }
 
-console.log("\n--- Feishu is preferred when both credentials exist ---");
+console.log("\n--- a rejected Feishu token clears the credential ---");
 {
-  let github = 0;
-  let feishu = 0;
-  const { auth } = await makeAuth({
-    repository: "mmw-devs/ffxiv-race-ops",
-    issuedRepository: "mmw-devs/ffxiv-race-ops",
-    feishu: { credential: async () => "fs-token" },
-    broker: {
-      getInstallationToken: async () => {
-        github++;
-        return {
-          token: "ghs_github",
-          expiresAt: NOW + 3600 * 1000,
-          repository: "mmw-devs/ffxiv-race-ops",
-          permissions: { contents: "write" },
-          authMode: "github",
-        };
-      },
-      getInstallationTokenForFeishu: async () => {
-        feishu++;
-        return {
-          token: "ghs_feishu",
-          expiresAt: NOW + 3600 * 1000,
-          repository: "mmw-devs/ffxiv-race-ops",
-          permissions: { contents: "write", pull_requests: "write" },
-          authMode: "feishu",
-          login: "张三",
-        };
-      },
-    },
-  });
-
-  eq(await auth.ensureInstallationToken(true), "ghs_feishu", "the Feishu credential wins");
-  eq(feishu, 1, "the Feishu path was used");
-  eq(github, 0, "the GitHub session was not consulted");
-}
-
-console.log("\n--- a rejected Feishu token falls back to a valid GitHub session ---");
-{
-  let github = 0;
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
     issuedRepository: "mmw-devs/ffxiv-race-ops",
     feishu: { credential: async () => "stale-feishu-token" },
     broker: {
-      getInstallationToken: async () => {
-        github++;
-        return {
-          token: "ghs_github_fallback",
-          expiresAt: NOW + 3600 * 1000,
-          repository: "mmw-devs/ffxiv-race-ops",
-          permissions: { contents: "write" },
-          authMode: "github",
-        };
-      },
       getInstallationTokenForFeishu: async () => {
         throw new BrokerError("session-rejected", "Feishu session expired", 401);
       },
     },
   });
-
-  eq(
-    await auth.ensureInstallationToken(true),
-    "ghs_github_fallback",
-    "the GitHub session still works when Feishu is stale"
-  );
-  eq(github, 1, "the fallback was used exactly once");
+  eq(await auth.ensureInstallationToken(true), null, "a rejected token yields no token");
+  truthy(!existsSync(tokenFile), "the stale token file is removed");
 }
 
 console.log("\n--- no credential at all ---");
 {
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
-    session: false,
     feishu: { credential: async () => null },
   });
-  eq(await auth.ensureInstallationToken(true), null, "no Feishu and no GitHub means no token");
+  eq(await auth.ensureInstallationToken(true), null, "no Feishu credential means no token");
   eq(await auth.phase(), "signed_out", "phase reports signed_out");
   eq(await auth.resolvedStatus(), "no_token", "status reports no_token");
   eq((await auth.view()).mode, "none", "the view names no mode");
@@ -252,7 +185,6 @@ console.log("\n--- a cache hit still refreshes the write credential ---");
   const { auth } = await makeAuth({
     repository: "mmw-devs/ffxiv-race-ops",
     issuedRepository: "mmw-devs/ffxiv-race-ops",
-    session: false,
     writeAuthFile,
     feishu: { credential: async () => current },
     broker: {

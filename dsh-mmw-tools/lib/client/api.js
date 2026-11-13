@@ -2,16 +2,17 @@
  * Browser-side API client for dsh-mmw-tools.
  *
  * Thin fetch wrapper around the loopback routes registered by the host
- * bundle (src/routes.ts). Each method maps 1:1 to a route.
+ * bundle (src/routes.ts). The only user-facing credential is Feishu; the
+ * broker owns the GitHub App identity.
  *
  * The routes already gate on loopback origin, so this client can be
  * called from `fetch('/api/...')` without explicit CORS preflight.
  */
 import { API } from "../shared/api-paths.js";
-export class GithubApiError extends Error {
+class ApiError extends Error {
     constructor(message) {
         super(message);
-        this.name = "GithubApiError";
+        this.name = "ApiError";
     }
 }
 async function readJson(response) {
@@ -20,13 +21,13 @@ async function readJson(response) {
         body = await response.json();
     }
     catch {
-        throw new GithubApiError(`HTTP ${response.status}: invalid JSON response`);
+        throw new ApiError(`HTTP ${response.status}: invalid JSON response`);
     }
     if (!response.ok) {
         const errField = typeof body === "object" && body !== null && typeof body.error === "string"
             ? body.error
             : `HTTP ${response.status}`;
-        throw new GithubApiError(errField);
+        throw new ApiError(errField);
     }
     return body;
 }
@@ -36,45 +37,10 @@ async function request(path, init) {
         response = await fetch(path, init);
     }
     catch (err) {
-        throw new GithubApiError("网络请求失败: " + (err instanceof Error ? err.message : String(err)));
+        throw new ApiError("网络请求失败: " + (err instanceof Error ? err.message : String(err)));
     }
     return readJson(response);
 }
-export class GithubApi {
-    getStatus() {
-        return request(API.status);
-    }
-    oauthStart() {
-        return request(API.oauthStart, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-        });
-    }
-    oauthFinish() {
-        return request(API.oauthFinish, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-        });
-    }
-    oauthRefresh() {
-        return request(API.oauthRefresh, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-        });
-    }
-    revoke() {
-        return request(API.revoke, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-        });
-    }
-}
-/** Singleton shared by the panel component. */
-export const githubApi = new GithubApi();
 export class FeishuApi {
     getStatus() {
         return request(API.feishuStatus);
