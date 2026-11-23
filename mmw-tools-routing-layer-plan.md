@@ -250,6 +250,14 @@ PR 不算安全修复。
   approval 与 merge 前从 base 分支校验 `contract/operations.json`，PR 改契约
   直接拒绝；close 增加 `<repo>#<branch> → login` 归属账本，非作者且非
   operator/admin 返回 `pr-not-owned`。工作区模式是相关性判断，不是安全边界。
+- **v14（2026-11-24）**：macOS 兼容性收尾。工作区归属与仓库内路径包含改为
+  先解析真实路径（`realpath`）再比较，并在默认大小写不敏感的文件系统
+  （macOS APFS / Windows NTFS）上折叠大小写；denylist 同样折叠。这修掉了
+  符号链接或大小写拼写差异导致的“合法工作区被拒”，以及 `.GITHUB/...` 绕过
+  `.github/workflows/**` 的路径写法；allowlist 仍按字面匹配（大小写变体继续
+  拒绝，fail closed）。凭据文件改为同目录临时文件 + `rename` 原子写入。
+  `t5-*` 脚本改用 `os.homedir()`，不再依赖 Windows 的 `USERPROFILE`。CI 矩阵
+  加入 `macos-latest`。范围仍受第 3 节的边界约束：guard 不是安全边界。
 
 ## 9. 相关文档
 

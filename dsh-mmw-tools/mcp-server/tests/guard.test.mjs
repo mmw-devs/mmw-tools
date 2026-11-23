@@ -165,6 +165,32 @@ throws(
   "non-allowlisted path rejected"
 );
 
+// Case-insensitive filesystems (APFS on macOS, NTFS on Windows) treat
+// `.GITHUB/...` as the same file as `.github/...`, so a different spelling
+// must not slip past the deny rules. The allowlist is deliberately literal,
+// so this case uses a broad allowlist to isolate the deny check.
+{
+  const broadCfg = { allowlistPaths: ["**"], denylistPaths: [".github/workflows/**"] };
+  const caseInsensitiveFs = process.platform === "win32" || process.platform === "darwin";
+  if (caseInsensitiveFs) {
+    throws(
+      () => guard.assertAllowlisted(".GITHUB/workflows/ci.yml", broadCfg),
+      "denylisted",
+      "deny-match folds case on a case-insensitive filesystem"
+    );
+  } else {
+    // A case-sensitive filesystem really has two distinct paths; the literal
+    // spelling is the documented behaviour there.
+    let outcome = "allowed";
+    try {
+      guard.assertAllowlisted(".GITHUB/workflows/ci.yml", broadCfg);
+    } catch (err) {
+      outcome = err.code ?? err.message;
+    }
+    eq(outcome, "allowed", "deny-match stays literal on a case-sensitive filesystem");
+  }
+}
+
 // Deny > Allow: AGENTS.md is in denylist AND not in allowlist
 throws(
   () => guard.assertAllowlisted("AGENTS.md", allowCfg),

@@ -18,6 +18,7 @@
  */
 
 import path from "node:path";
+import { homedir } from "node:os";
 import { existsSync, rmSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -39,7 +40,7 @@ if (!token) {
 }
 
 const workingDir =
-  process.env.E2E_WORKING_DIR ?? path.join(process.env.USERPROFILE ?? "", ".dsh", "workspaces", owner, name);
+  process.env.E2E_WORKING_DIR ?? path.join(homedir(), ".dsh", "workspaces", owner, name);
 const repoUrl = `https://github.com/${owner}/${name}.git`;
 
 const load = async (file) =>

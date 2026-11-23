@@ -37,7 +37,7 @@ host validation.
 | `tests/repo-selection.test.mjs` | repository registry (case, idempotence, switching refused), gate before/after `select_repo`, `select_repo` allowed while the route table lags, no-registry compatibility, `buildRepoEntries` and the `MMW_REPOS` table, registry-cache overlay and round-trip, scoped grant table selection and cross-repository `[mmw_contract_mismatch]` |
 | `broker/tests/core.test.mjs` (policy section) | `.dsh-mmw-tools.yaml` parsing: quoted/bare/inline lists, preflight/bootstrap, `prDefaultDraft`, non-v1 and missing-`/` rejection |
 | `broker/tests/server.test.mjs` (policy section) | `GET /repo-policy?repo=` returns the parsed rules and forwards the Feishu token |
-| `tests/workspace-guard.test.mjs` | workspace relevance, status/`select_repo` exemptions, `repo_clone` bootstrap, neutral refusals |
+| `tests/workspace-guard.test.mjs` | workspace relevance, status/`select_repo` exemptions, `repo_clone` bootstrap, neutral refusals, symlinked and case-variant spellings of one directory |
 | `tests/workspace-mode.test.mjs` | registry + `origin` remote + policy-file marker: managed/unmanaged/mismatch/bootstrap/unknown, scp/https remotes, `.git` file/worktree |
 | `tests/routes-integration.test.mjs` | real HTTP against the loopback routes (loopback fence, method, malformed body) |
 | `tests/mmw-tools-run.test.mjs` | input validation, branch slug, excerpts, redaction, truncation |
@@ -117,12 +117,17 @@ silently pass — each suite probes for the capability first and prints a loud
 
 A skip exits `0`. That is deliberate: the suite cannot distinguish "broken" from
 "cannot run here", and a red signal for an environment limitation trains people
-to ignore red. CI runs both suites on `ubuntu-latest` and `windows-latest`, so a
-skip in a developer sandbox never means a gap in the project.
+to ignore red. CI runs both suites on `ubuntu-latest`, `windows-latest` and
+`macos-latest`, so a skip in a developer sandbox never means a gap in the
+project.
 
-Windows is in the matrix on purpose: path handling differs (this repository has
-already tripped over backslashes in a `configPath` assertion), and `git` behaves
-differently around line endings.
+Each OS is in the matrix on purpose. Windows: path handling differs (this
+repository has already tripped over backslashes in a `configPath` assertion),
+and `git` behaves differently around line endings. macOS: the client runs
+there, APFS is case-insensitive by default, and `/tmp` / `/var` are symlinks —
+so workspace containment (realpath comparison) and denylist case folding need a
+real macOS leg. Linux keeps a case-sensitive filesystem in the matrix, which is
+what the literal semantics are tested against.
 
 ## Adding a test
 
@@ -139,3 +144,9 @@ differently around line endings.
 5. Every gate refusal code must have a case that asserts the `[mmw_*]` prefix,
    not just the Chinese explanation. The prefix is the stable part agents branch
    on; see `contracts/ERRORS.md`.
+6. An assertion whose answer depends on the filesystem must assert both
+   branches rather than skipping: path-containment and denylist-case tests
+   assert literal semantics on Linux and folded semantics on macOS / Windows,
+   and the label says which. The only unconditional skip is a capability the
+   sandbox may deny (symlink creation on Windows without developer mode,
+   `child_process.spawn` with piped stdio).

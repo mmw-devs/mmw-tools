@@ -15,12 +15,12 @@
  * presents a Feishu credential to the broker, which mints and keeps the write
  * token itself.
  */
-import { mkdir, writeFile, chmod, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 import { BrokerClient, BrokerError } from "./broker-client.js";
-import { maskToken } from "./session-store.js";
+import { maskToken, writePrivateJson } from "./session-store.js";
 /** Refresh the installation token this long before GitHub expires it. */
 const INSTALLATION_MARGIN_MS = 10 * 60 * 1000;
 export class BrokerAuth {
@@ -222,14 +222,7 @@ export class BrokerAuth {
     }
     async writeTokenFile(issued) {
         const payload = JSON.stringify({ accessToken: issued.token, expiresAt: issued.expiresAt, scope: "broker" }, null, 2);
-        await mkdir(path.dirname(this.tokenFile), { recursive: true });
-        await writeFile(this.tokenFile, payload, { mode: 0o600 });
-        try {
-            await chmod(this.tokenFile, 0o600);
-        }
-        catch {
-            /* Windows / FAT */
-        }
+        await writePrivateJson(this.tokenFile, payload);
     }
     /**
      * A broker-proxied write presents the credential that proved *who* the
@@ -244,14 +237,7 @@ export class BrokerAuth {
             return;
         }
         const payload = JSON.stringify({ kind: "feishu", token: feishuToken, expiresAt: 0 }, null, 2);
-        await mkdir(path.dirname(this.writeAuthFile), { recursive: true });
-        await writeFile(this.writeAuthFile, payload, { mode: 0o600 });
-        try {
-            await chmod(this.writeAuthFile, 0o600);
-        }
-        catch {
-            /* Windows / FAT */
-        }
+        await writePrivateJson(this.writeAuthFile, payload);
     }
     async removeWriteAuth() {
         if (!this.writeAuthFile || !existsSync(this.writeAuthFile))

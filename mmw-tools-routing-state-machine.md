@@ -360,7 +360,7 @@ v2 的核心变化：
 | From | 事件 | Guard | 动作 | To |
 |---|---|---|---|---|
 | `RECEIVED` | `CALL` | — | 记录 toolId；不启动 MCP | `CHECK_WORKSPACE` |
-| `CHECK_WORKSPACE` | `MANAGED` | 注册表 + 工作区 `origin` remote + `.dsh-mmw-tools.yaml` 三者一致；`mmw_tools_status` 始终豁免 | — | `CHECK_AUTH` |
+| `CHECK_WORKSPACE` | `MANAGED` | 注册表 + 工作区 `origin` remote + `.dsh-mmw-tools.yaml` 三者一致（包含判断先按真实路径比较，macOS/Windows 上折叠大小写）；`mmw_tools_status` 始终豁免 | — | `CHECK_AUTH` |
 | `CHECK_WORKSPACE` | `BOOTSTRAP` | 注册仓库的 checkout 尚未 clone（根无 `.git`） | 只放行 `select_repo` / `repo_clone` | `CHECK_AUTH`（仅这两个工具） |
 | `CHECK_WORKSPACE` | `NOT_MANAGED` | `unmanaged` / `mismatch` / `unknown` | 返回中性的 `[mmw_route_denied]`；不推荐替代工具 | `DENIED` |
 | `CHECK_AUTH` | `VALID` | Auth ∈ {`AUTHENTICATED`, `REFRESHING`} | — | `CHECK_POLICY` |
@@ -412,6 +412,7 @@ v2 的核心变化：
 ### 7.3 关键规则
 - **检查顺序**：业务工具 Workspace → Auth → Policy → Repo → Transport；`select_repo` 是 Workspace → Auth → Repo（不查授权表，避免表滞后阻塞选仓）。未登录/无权限/未选仓库/工作区不归它管都不能启动 MCP。
 - **工作区是管辖范围，不是安全边界**：`managed` 只说明“这个仓库/PR 操作由 mmw-tools 承接”，不意味着禁止别的工具，也不替用户指定替代工具；`unmanaged`/`mismatch`/`unknown` 中性拒绝。`.dsh-mmw-tools.yaml` 是规则标记，仓库身份来自工作区 `origin` remote 与注册表。
+- **包含判断按真实路径**：会话目录与注册表 `workingDir` 先解析 symlink（`realpath`），在默认大小写不敏感的文件系统（macOS APFS / Windows NTFS）上折叠大小写后比较；Linux 保持字面语义。只改变“是否归它管”，不改变状态与拒绝码。
 - **仓库显式选择**：业务工具要求会话已 `select_repo`；未选择不落默认仓库。同一会话不可改选；`select_repo` 本身豁免仓库检查，但仍受工作区管辖与“不能选择与当前工作区不一致的仓库”约束。
 - **规则文件 fail closed**：仓库路径/分支规则以 base 分支的 `.dsh-mmw-tools.yaml` 为准；读取失败不得退回 profile 副本，也不得放行写操作。
 - **最多刷新一次**：`NEED_REFRESH` 只允许一次；刷新后仍不允许就拒绝。

@@ -13,7 +13,7 @@
  * The module is pure apart from reading the working tree, so it can be tested
  * without a DSH host.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export type WorkspaceMode = "managed" | "unmanaged" | "mismatch" | "bootstrap" | "unknown";
@@ -36,10 +36,72 @@ export interface WorkspaceRegistryEntry {
   workingDir: string;
 }
 
-function isInsidePath(child: string, parent: string): boolean {
+/**
+ * Resolve a path to the spelling the filesystem actually uses, for
+ * containment comparison only.
+ *
+ * A literal `path.resolve` comparison is wrong on real machines for two
+ * reasons:
+ *
+ *   - symlinks — macOS puts `/tmp` -> `/private/tmp` and `/var` ->
+ *     `/private/var`, and a checkout can sit behind a symlinked home,
+ *     `~/Developer`, or a mounted volume. The same directory then has two
+ *     spellings.
+ *   - case — APFS and NTFS are case-insensitive by default, so a session
+ *     directory and a configured root can differ in letter case while
+ *     naming the same directory.
+ *
+ * The longest existing prefix is realpath'd; a suffix that does not exist yet
+ * (the `repo_clone` bootstrap target) is kept lexically. Callers report the
+ * path they were given — this value is only ever compared.
+ */
+export function canonicalPathForCompare(input: string): string {
+  let resolved: string;
+  try {
+    resolved = path.resolve(input);
+  } catch {
+    return input;
+  }
+  const suffix: string[] = [];
+  let current = resolved;
+  for (;;) {
+    try {
+      const real = realpathSync.native(current);
+      resolved = suffix.length === 0 ? real : path.join(real, ...suffix.reverse());
+      break;
+    } catch {
+      const parent = path.dirname(current);
+      // Nothing on this path exists; the lexical form is the best comparison
+      // available.
+      if (parent === current) break;
+      suffix.push(path.basename(current));
+      current = parent;
+    }
+  }
+  // Case folding is comparison-only and only on platforms whose default
+  // filesystem is case-insensitive. A case-sensitive Linux checkout keeps
+  // literal semantics.
+  return process.platform === "win32" || process.platform === "darwin"
+    ? resolved.toLowerCase()
+    : resolved;
+}
+
+/**
+ * True when `child` is `parent` itself or lives underneath it.
+ *
+ * `path.relative` alone is not enough even with canonical paths: it reports
+ * `..\\repo-evil` (or `../repo-evil`) for a sibling whose name merely starts
+ * with the parent's name, and `..` for the parent's own parent. Both are
+ * handled explicitly. The comparison uses {@link canonicalPathForCompare}, so
+ * symlinked and case-variant spellings of one directory count as equal.
+ */
+export function isInsidePath(child: string, parent: string): boolean {
   let rel: string;
   try {
-    rel = path.relative(path.resolve(parent), path.resolve(child));
+    rel = path.relative(
+      canonicalPathForCompare(parent),
+      canonicalPathForCompare(child)
+    );
   } catch {
     return false;
   }

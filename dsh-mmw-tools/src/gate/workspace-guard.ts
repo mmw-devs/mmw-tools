@@ -27,7 +27,10 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { isMmwTool } from "./tool-map.js";
+import { isInsidePath } from "./workspace-mode.js";
 import type { WorkspaceMode } from "./workspace-mode.js";
+
+export { isInsidePath };
 
 export type WorkspaceVerdict = { ok: true } | { ok: false; reason: string };
 
@@ -80,23 +83,11 @@ export interface WorkspaceGuardOptions {
 }
 
 /**
- * True when `child` is `parent` itself or lives underneath it.
- *
- * `path.relative` is not enough on its own: it reports `..\\repo-evil` for a
- * sibling whose name merely starts with the parent's name, and it reports `..`
- * for the parent's own parent. Both are handled explicitly. On Windows the
- * comparison is case-insensitive, which `path.relative` already accounts for.
+ * True when `child` is `parent` itself or lives underneath it — see
+ * {@link isInsidePath} in `workspace-mode.ts`, which canonicalizes symlinks and
+ * case on case-insensitive filesystems before comparing. Re-exported here
+ * because this module was the historical home of the check.
  */
-export function isInsidePath(child: string, parent: string): boolean {
-  let rel: string;
-  try {
-    rel = path.relative(path.resolve(parent), path.resolve(child));
-  } catch {
-    return false;
-  }
-  if (rel === "") return true;
-  return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
-}
 
 /**
  * True only for the bootstrap call: `repo_clone`, from outside the bound

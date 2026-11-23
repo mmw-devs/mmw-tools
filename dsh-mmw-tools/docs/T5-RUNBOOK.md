@@ -99,19 +99,23 @@ before you next run the suites.
 
 ## 4. Point it at a working directory
 
-**Corrected 2026-10-27:** the plugin *does* ship `workingDir` in its own
-`cordis.patch.yml`, next to the repo binding. The original plan was to keep it
-out and override it per profile, but a profile-level entry **replaces** the
-plugin's config rather than merging into it — overriding only `workingDir`
-wiped `repoBinding`, and every tool then failed with an empty binding. One
-source of truth beats a merge that does not happen.
+**Corrected 2026-11-24:** the plugin does **not** ship `workingDir` in its own
+`cordis.patch.yml`. It deliberately omits it and defaults to
+`~/.dsh/workspaces/<owner>/<name>`, so one install does not inherit another
+machine's absolute path. Set `workingDir` only when that default is wrong — and
+override the whole `config` block, not one key: a profile-level entry
+**replaces** the plugin's config instead of merging into it, so overriding only
+`workingDir` wipes `repoBinding` and every tool then fails with an empty
+binding.
 
-To use a different checkout, override the whole `config` block, not one key.
-
-Quickest (per session):
+Quickest (per session) — PowerShell, then macOS / Linux shell:
 
 ```powershell
 $env:GHOST_WORKING_DIR = "$env:USERPROFILE\.dsh\workspaces\mmw-devs\ffxiv-race-ops"
+```
+
+```sh
+export GHOST_WORKING_DIR="$HOME/.dsh/workspaces/mmw-devs/ffxiv-race-ops"
 ```
 
 Durable (survives restarts): create `t5-overlay.yml` anywhere outside
@@ -122,7 +126,7 @@ the profile:
     - id: mmw-tools
       name: dsh-mmw-tools
       config:
-        workingDir: C:\Users\<you>\.dsh\workspaces\mmw-devs\ffxiv-race-ops
+        workingDir: /absolute/path/to/checkout
 ```
 
 and boot with `& $dsh web --profile t5 --patch .\t5-overlay.yml`.

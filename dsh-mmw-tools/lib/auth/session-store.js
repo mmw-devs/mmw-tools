@@ -14,10 +14,42 @@
  *   - Losing this file costs one sign-in, not a repository.
  *   - "Revoke" is a server call, not just a local file deletion.
  */
-import { readFile, writeFile, mkdir, chmod, unlink } from "node:fs/promises";
+import { readFile, writeFile, mkdir, chmod, rename, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
+/**
+ * Write a private JSON file atomically.
+ *
+ * Token files are consumed by the MCP child as soon as the host writes them,
+ * so a crash — or a concurrent read — between `writeFile` and `chmod` used to
+ * expose a truncated record. Writing a sibling temp file and renaming it into
+ * place makes the replacement atomic; the temp file is created 0600 so the
+ * final file never has a permissive window, and the rename also fixes the
+ * mode of a pre-existing file (a plain `writeFile` keeps the old mode).
+ *
+ * The temp file must live in the same directory as the target: rename is only
+ * atomic within one filesystem.
+ */
+export async function writePrivateJson(file, payload) {
+    await mkdir(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
+    try {
+        await writeFile(tmp, payload, { mode: 0o600 });
+        try {
+            await chmod(tmp, 0o600);
+        }
+        catch {
+            // Windows and FAT filesystems may not support chmod; the write above
+            // already used 0600 where it was honoured.
+        }
+        await rename(tmp, file);
+    }
+    catch (err) {
+        await unlink(tmp).catch(() => { });
+        throw err;
+    }
+}
 const DEFAULT_SESSION_FILE = path.join(homedir(), ".dsh", "dsh-mmw-tools-session.json");
 /** Overridable for tests and for multi-profile machines. */
 export function sessionPath() {
@@ -64,18 +96,7 @@ export class SessionStore {
         return record.expiresAt > now ? record : null;
     }
     async save(record) {
-        await mkdir(path.dirname(this.file), { recursive: true });
-        await writeFile(this.file, JSON.stringify(record, null, 2), { mode: 0o600 });
-        // `mode` on write only applies when the file is created; an existing
-        // file keeps its old mode. Set it explicitly so a file created by an
-        // older version (or by hand) cannot be world-readable.
-        try {
-            await chmod(this.file, 0o600);
-        }
-        catch {
-            // Windows and FAT filesystems may not support chmod; the write
-            // above already used 0600 where it was honoured.
-        }
+        await writePrivateJson(this.file, JSON.stringify(record, null, 2));
     }
     async clear() {
         try {
