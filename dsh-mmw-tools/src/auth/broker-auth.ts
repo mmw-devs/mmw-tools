@@ -16,13 +16,13 @@
  * token itself.
  */
 
-import { mkdir, writeFile, chmod, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 
 import { BrokerClient, BrokerError } from "./broker-client.js";
-import { maskToken } from "./session-store.js";
+import { maskToken, writePrivateJson } from "./session-store.js";
 import type { InstallationTokenResult, RepoPolicy } from "./broker-client.js";
 
 export type AuthStatus = "no_token" | "authorized";
@@ -298,13 +298,7 @@ export class BrokerAuth {
       null,
       2
     );
-    await mkdir(path.dirname(this.tokenFile), { recursive: true });
-    await writeFile(this.tokenFile, payload, { mode: 0o600 });
-    try {
-      await chmod(this.tokenFile, 0o600);
-    } catch {
-      /* Windows / FAT */
-    }
+    await writePrivateJson(this.tokenFile, payload);
   }
 
   /**
@@ -326,13 +320,7 @@ export class BrokerAuth {
       null,
       2
     );
-    await mkdir(path.dirname(this.writeAuthFile), { recursive: true });
-    await writeFile(this.writeAuthFile, payload, { mode: 0o600 });
-    try {
-      await chmod(this.writeAuthFile, 0o600);
-    } catch {
-      /* Windows / FAT */
-    }
+    await writePrivateJson(this.writeAuthFile, payload);
   }
 
   private async removeWriteAuth(): Promise<void> {

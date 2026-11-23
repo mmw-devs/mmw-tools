@@ -15,6 +15,7 @@
  */
 
 import path from "node:path";
+import { homedir } from "node:os";
 import { existsSync, rmSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -34,7 +35,7 @@ if (!token) {
 }
 
 const workingDir =
-  process.env.E2E_WORKING_DIR ?? path.join(process.env.USERPROFILE ?? "", ".dsh", "workspaces", owner, name);
+  process.env.E2E_WORKING_DIR ?? path.join(homedir(), ".dsh", "workspaces", owner, name);
 
 const load = async (f) => (await import(pathToFileURL(path.join(TOOLS, f)).href));
 const { repoEdit } = await load("repo-edit.js");

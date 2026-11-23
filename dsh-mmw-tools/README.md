@@ -42,6 +42,7 @@ agent 对运维仓库的修改通常以两种方式失败：改了不该改的�
 | DSH | `>= 0.1.5-rc.1` |
 | Node | `^22.19.0 \|\| >= 24.0.0`（DSH 桌面版自带一个） |
 | `git` | 在 `PATH` 中——安装和插件自己的 clone 都需要 |
+| `npm` | 默认 pre-flight / bootstrap 命令是 `npm run validate` / `npm ci`。macOS 和 Linux 上由 `execFile` 直接执行（POSIX 的 shebang 可执行）；Windows 上通过 shell 执行，因为那里的 `npm` 是 `npm.cmd` |
 | `gh` | 仅在没有 broker 读/写凭据的本地回退路径中使用。正常飞书路径不需要 `gh` |
 | GitHub 账号 | **不需要。** broker 用自己的 App installation 认证到 GitHub。用户只需要一个飞书身份，其角色覆盖要用的 operation：编辑工作用 `repo_read` / `repo_edit` / `pr_create` / `pr_close`，合并用 `pr_merge` |
 | 网络 | 运行时只需访问 `https://race-ops-broker.mmw-team.icu` 和 `https://mmw-tools.mmw-team.icu`。`repo_clone` / `repo_pull` / base SHA / `pr_list` / `pr_preview` 都由 broker 代做，客户端不需要 `github.com` 或 `api.github.com`；只有浏览器里的飞书登录仍会跳转 GitHub |
@@ -336,9 +337,9 @@ plugin token 进入最后一天后会自动轮换：一个六小时一次的 wat
 
 ## 安全模型
 
-**任何 I/O 之前应用的 guard。** 路径穿越和 symlink 逃逸；allowlist/denylist，deny 优先于 allow；分支前缀和 base 分支拒绝；commit message、PR 标题、PR 正文和 `user_request` 中的 token 形状字符串检测；单文件、单 commit 和 PR 正文的字节上限；pre-flight 命令通过 `execFile` 执行（不经 shell）。
+**任何 I/O 之前应用的 guard。** 路径穿越、symlink 逃逸和大小写变体：工作区归属先把两侧解析成真实路径（`realpath`）再比较，默认大小写不敏感的文件系统（macOS APFS / Windows NTFS）上 denylist 也按大小写折叠匹配；allowlist/denylist，deny 优先于 allow；分支前缀和 base 分支拒绝；commit message、PR 标题、PR 正文和 `user_request` 中的 token 形状字符串检测；单文件、单 commit 和 PR 正文的字节上限；pre-flight 命令通过 `execFile` 执行（不经 shell）。
 
-**Token。** 1 小时的客户端 installation token 放在 `~/.dsh/dsh-mmw-tools-installation.json`（`0600`），因为 MCP 子进程从磁盘读它。它始终只读。写操作使用 `~/.dsh/dsh-mmw-tools-write-auth.json`（`0600`），里面是飞书 pluginToken——绝不是 GitHub token；broker 把写 token 留在内存。飞书 plugin token 放在 `~/.dsh/dsh-mmw-tools-feishu.json`（`0600`）。所有这些在 agent 能读到的视图里都会脱敏，也从不写入日志、commit message、PR 正文或审计轨迹。退出飞书会清除本地副本，并让 auth core 丢弃会话。
+**Token。** 1 小时的客户端 installation token 放在 `~/.dsh/dsh-mmw-tools-installation.json`（`0600`），因为 MCP 子进程从磁盘读它。它始终只读。写操作使用 `~/.dsh/dsh-mmw-tools-write-auth.json`（`0600`），里面是飞书 pluginToken——绝不是 GitHub token；broker 把写 token 留在内存。飞书 plugin token 放在 `~/.dsh/dsh-mmw-tools-feishu.json`（`0600`）。三个文件都用同目录临时文件 + `rename` 原子写入，读者不会看到半截 JSON。所有这些在 agent 能读到的视图里都会脱敏，也从不写入日志、commit message、PR 正文或审计轨迹。退出飞书会清除本地副本，并让 auth core 丢弃会话。
 
 **审计。** `mmw_tools_run` 把 `mmw_tools_run_start` / `mmw_tools_run_created` / `refused` 事件追加到 `~/.dsh/dsh-mmw-tools-audit.jsonl`（模式 `0600`，1 MiB 轮换）。每个字符串字段都会递归脱敏；请求正文本身从不记录，只记录字节长度。审计写入失败只警告一次，然后静默——绝不阻塞工作。
 
@@ -347,7 +348,7 @@ plugin token 进入最后一天后会自动轮换：一个六小时一次的 wat
 - 只有本地回退路径才会把 token 放在 git 命令行上（正常飞书路径的 `repo_clone` / `repo_pull` 用的是 broker bundle，不接触 GitHub）；因此它可能在进程列表中短暂可见。它从不写入 `.git/config`：`repo_clone` 在克隆后立即把 `origin` 重置为无凭据 URL，`pr_create` 向显式 URL push 且不加 `-u`，因为 `-u <url>` 会把该 URL（含 token）存成 `branch.<name>.remote`。未来版本应该用 `GIT_ASKPASS`，把 argv 暴露也去掉。
 - broker approval nonce 绑定成员、PR 和 head SHA，且只能使用一次。它不能证明有人点了宿主提示：能读 write-auth 文件并发送 HTTP 的本地进程可以自己请求 approval 并合并。宿主 `pr_merge` / `pr_close` 的确认是 UI 门，不是安全边界；要关闭这个缺口需要宿主持有的 secret。
 - `repo_edit` 的 `find` 是逐字节匹配。在启用 `core.autocrlf` 的 Windows checkout 上，工作树里是 CRLF，所以用 LF 写的多行 `find` 不会匹配；编辑会被拒绝为 `find-not-found`，而不是应用一半。先用 `repo_read` 读文件，并复用它的精确字节。
-- Windows 上 `preflight` 和 `bootstrap` 命令通过 shell 运行，因为那里的 `npm` 是 `npm.cmd`，而 `execFile` 不查询 `PATHEXT`。没有这一点，所有基于 npm 的 pre-flight 在这个插件最常用的平台上都会以 `ENOENT` 失败。命令字符串来自你自己的插件配置，从不来自 agent。
+- Windows 上 `preflight` 和 `bootstrap` 命令通过 shell 运行，因为那里的 `npm` 是 `npm.cmd`，而 `execFile` 不查询 `PATHEXT`。没有这一点，所有基于 npm 的 pre-flight 在 Windows 上都会以 `ENOENT` 失败。命令字符串来自你自己的插件配置，从不来自 agent。macOS 和 Linux 没有这个问题，走 `execFile` 直接执行。
 - `repo_edit` 的 `patch` 模式尚未实现；用 `replace` 或 `insert`。
 - 尚未实现限流。
 
@@ -368,7 +369,7 @@ pnpm test:integration      # 针对真实 git 仓库运行 MCP 工具体
 | `tests/client-bundle.test.mjs` | `lib/client.js` 的 `__ModuleLoader__` 形状 | — |
 | `tests/bundle-apply.test.mjs` | `apply()` 注册、路由、prompt、disposer、幂等 | — |
 | `tests/feishu-gate.test.mjs` | 授权表、门禁决策、token 刷新 | — |
-| `tests/workspace-guard.test.mjs` | 工作区相关性、status/`select_repo` 豁免、`repo_clone` bootstrap | — |
+| `tests/workspace-guard.test.mjs` | 工作区相关性、status/`select_repo` 豁免、`repo_clone` bootstrap、符号链接/大小写路径归属 | — |
 | `tests/workspace-mode.test.mjs` | 注册表 + `origin` remote + 规则文件标记；managed/unmanaged/mismatch/bootstrap/unknown | — |
 | `tests/routes-integration.test.mjs` | 对 loopback 路由发起真实 HTTP | — |
 | `tests/mmw-tools-run.test.mjs` | 输入校验、分支 slug、摘录、脱敏、截断 | — |
@@ -385,7 +386,7 @@ pnpm test:integration      # 针对真实 git 仓库运行 MCP 工具体
 | `mcp-server/tests/tools-list.test.mjs` | MCP server 启动并宣告工具 | `spawn` |
 | `tests/integration-git.test.mjs` | 针对 git 的工具体，包括 `repo_edit` 回滚 | `git`、`spawn` |
 
-最后两个需要带管道 stdio 的 `child_process.spawn`。沙箱拒绝时，它们会打印 `SKIP` 说明未验证什么，并以 `0` 退出——CI 在 `ubuntu-latest` 和 `windows-latest` 上都跑，所以本地 skip 不是覆盖缺口。
+最后两个需要带管道 stdio 的 `child_process.spawn`。沙箱拒绝时，它们会打印 `SKIP` 说明未验证什么，并以 `0` 退出——CI 在 `ubuntu-latest`、`windows-latest` 和 `macos-latest` 上都跑，所以本地 skip 不是覆盖缺口。macOS 在矩阵里同样有原因：APFS 默认大小写不敏感，`/tmp` 和 `/var` 是符号链接，工作区路径归属需要真机覆盖。
 
 ## 文档
 

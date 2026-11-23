@@ -129,6 +129,7 @@ mcp__mmw-tools__select_repo
 - `select_repo` 在授权表之前按本地会话状态放行（授权表可能滞后），业务工具仍受 `allowedOperations` 约束；这一豁免不改变命名规则，名字仍必须是 `mcp__mmw-tools__select_repo`；
 - 按仓库授权：`GET /v1/agent/routes?repo=` 只按该仓库 grants 派生操作集合，无授予返回空表；选择与业务操作的名字都不变；
 - 工作区管辖：注册表 + 工作区 `origin` remote + `.dsh-mmw-tools.yaml` 标记决定调用是否允许（`managed`/`unmanaged`/`mismatch`/`bootstrap`/`unknown`），只影响拒绝原因与状态输出，不新增或改名任何工具；
+- 路径守卫（包含 symlink 解析与 macOS/Windows 大小写折叠）只影响调用是否允许，不参与命名；这三个 OS 的 CI runner 都验证同一份命名契约；
 - broker 从 **base 分支**读取 `.dsh-mmw-tools.yaml` 与 `contract/operations.json`，close 另查分支归属；这些是服务端写边界，不参与命名。
 
 仍未实现：

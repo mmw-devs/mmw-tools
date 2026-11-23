@@ -110,7 +110,9 @@ without parsing tool arguments.
 - Workspace relevance is decided by the guard before the policy gate. Its refusal
   is not a `gate_decision` event: the call never reaches the route table. The
   current mode and reason are reported by `mmw_tools_status` (`workspace`), not by
-  the audit log.
+  the audit log. Path containment resolves symlinks (`realpath`) and folds case
+  on case-insensitive filesystems (APFS, NTFS) before comparing; the denylist is
+  folded the same way. That changes which calls are refused, not the event shape.
 - The broker read proxy (`/v1/read/*`: base SHA, bundle, pull, PR list, PR
   detail, checks) is authorized per call, but it does not create a second
   `gate_decision` event. The gate records the tool call that caused the read;

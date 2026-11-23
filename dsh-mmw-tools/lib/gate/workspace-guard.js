@@ -27,6 +27,8 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { isMmwTool } from "./tool-map.js";
+import { isInsidePath } from "./workspace-mode.js";
+export { isInsidePath };
 /**
  * Diagnostic tool that must work from any session, including one outside the
  * checkout. It reports auth/binding state; refusing it there would hide the
@@ -48,25 +50,11 @@ const BOOTSTRAP_TOOL = "mcp__mmw-tools__repo_clone";
  */
 const SELECT_REPO_TOOL = "mcp__mmw-tools__select_repo";
 /**
- * True when `child` is `parent` itself or lives underneath it.
- *
- * `path.relative` is not enough on its own: it reports `..\\repo-evil` for a
- * sibling whose name merely starts with the parent's name, and it reports `..`
- * for the parent's own parent. Both are handled explicitly. On Windows the
- * comparison is case-insensitive, which `path.relative` already accounts for.
+ * True when `child` is `parent` itself or lives underneath it — see
+ * {@link isInsidePath} in `workspace-mode.ts`, which canonicalizes symlinks and
+ * case on case-insensitive filesystems before comparing. Re-exported here
+ * because this module was the historical home of the check.
  */
-export function isInsidePath(child, parent) {
-    let rel;
-    try {
-        rel = path.relative(path.resolve(parent), path.resolve(child));
-    }
-    catch {
-        return false;
-    }
-    if (rel === "")
-        return true;
-    return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
-}
 /**
  * True only for the bootstrap call: `repo_clone`, from outside the bound
  * checkout, while that checkout's primary root has no `.git`. Once a live

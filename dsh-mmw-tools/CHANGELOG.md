@@ -170,6 +170,19 @@
 - `broker-auth` covers Feishu-only minting, Feishu-over-GitHub preference,
   fallback when the Feishu token is rejected, and no-credential behaviour.
 
+### Platform
+
+- **macOS is a supported client platform.** Path containment canonicalizes
+  symlinks and folds case on case-insensitive filesystems (macOS APFS, Windows
+  NTFS), so a valid checkout reached through `/tmp` → `/private/tmp`, a
+  symlinked home, or a different letter case is no longer refused; the denylist
+  folds case the same way while the allowlist stays literal (a case variant is
+  still refused, fail closed). Credential files are written atomically (same
+  directory temp file + `rename`), the T5 helper scripts use `os.homedir()`
+  instead of `USERPROFILE`, and the CI matrix gained a `macos-latest` leg.
+  Verified on macOS arm64: every suite passes, no suite self-skips, and the
+  committed `lib/` + `mcp-server/dist/` rebuild byte-identically.
+
 ## Unreleased — the plugin stopped owning the session's tool set
 
 ### Fixed

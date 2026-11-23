@@ -5,10 +5,12 @@
  * holds the plugin token and fetches the table. The token file is 0600 and
  * contains nothing that can write a repository.
  */
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+
+import { writePrivateJson } from "./session-store.js";
 
 const DEFAULT_TOKEN_FILE = path.join(
   homedir(),
@@ -149,13 +151,7 @@ export class FeishuAuth {
   }
 
   private async saveRecord(record: FeishuRecord): Promise<void> {
-    await mkdir(path.dirname(this.file), { recursive: true });
-    await writeFile(this.file, JSON.stringify(record, null, 2), { mode: 0o600 });
-    try {
-      await chmod(this.file, 0o600);
-    } catch {
-      // Windows may not enforce POSIX modes.
-    }
+    await writePrivateJson(this.file, JSON.stringify(record, null, 2));
   }
 
   private async clear(): Promise<void> {

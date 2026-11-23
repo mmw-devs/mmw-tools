@@ -210,6 +210,22 @@ function matchRegex(re: RegExp, target: string): boolean {
 }
 
 /**
+ * Case folding for the denylist only.
+ *
+ * APFS (macOS) and NTFS (Windows) are case-insensitive by default, so
+ * `.GITHUB/workflows/ci.yml` names the same file as
+ * `.github/workflows/ci.yml`. A literal glob match lets that spelling slip
+ * through the deny rules. Folding both sides on those platforms closes it.
+ * The allowlist is deliberately left literal: a case variant of an
+ * allowlisted path is still refused, which fails closed.
+ */
+function foldCase(value: string): string {
+  return process.platform === "win32" || process.platform === "darwin"
+    ? value.toLowerCase()
+    : value;
+}
+
+/**
  * Decide whether `path` may be modified.
  *
  *   - If `denylistPaths` matches → refuse (deny wins over allow).
@@ -223,9 +239,10 @@ export function assertAllowlisted(
   cfg: AllowDenylistConfig
 ): true {
   const posixPath = path.replace(/\\/g, "/");
+  const deniedSubject = foldCase(posixPath);
 
   for (const deny of cfg.denylistPaths) {
-    if (matchGlob(deny, posixPath)) {
+    if (matchGlob(foldCase(deny), deniedSubject)) {
       throw new GithubRefusedError(
         "denylisted",
         `path ${JSON.stringify(path)} is in denylist (matches ${JSON.stringify(deny)})`

@@ -53,6 +53,7 @@ Status: living
 - `historical` 文档是快照：只追加带日期的更正说明，不改写成“当前”。`target design` 文档必须写明哪些部分尚未实现。
 - tracked markdown 未登记、source glob 命中不到任何文件，都会让 CI 失败。不要通过删除映射、放宽 glob 或注释检查来绕过。
 - CI 已经有 `Check documentation impact`，它只证明路径耦合与映射覆盖，不证明内容正确。不要为同一目的再加一遍检查；语义真假由 `docs-ssot` skill 与 review 负责。
+- 跨平台行为（路径大小写、符号链接、shell 与 `PATH` 差异）必须有对应 OS 的 CI 覆盖；本机 `SKIP` 不等于覆盖。CI 矩阵见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 - 文档定义的事实迁到别处时，改 `scripts/doc-map.json`，不要把原文档改成一句假话。
 
 ## 文档地图

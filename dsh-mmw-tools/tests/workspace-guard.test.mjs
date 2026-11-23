@@ -55,6 +55,40 @@ eq(isInsidePath(OUTSIDE, ROOT), false, "an unrelated workspace is not inside");
 eq(isInsidePath(`${ROOT}-evil`, ROOT), false, "a name-prefix sibling is not inside");
 eq(isInsidePath(`${ROOT}2`, ROOT), false, "a numeric-suffix sibling is not inside");
 
+// macOS puts /tmp -> /private/tmp and /var -> /private/var, and a checkout can
+// live behind a symlinked home or mount point. The two spellings name one
+// directory and must count as containment, or a valid workspace is refused.
+console.log("isInsidePath — canonical spellings");
+const CASE_INSENSITIVE_FS = process.platform === "win32" || process.platform === "darwin";
+{
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "mmw-canon-"));
+  try {
+    const real = path.join(base, "real-repo");
+    fs.mkdirSync(path.join(real, "public"), { recursive: true });
+    const link = path.join(base, "linked-repo");
+    try {
+      fs.symlinkSync(real, link, "dir");
+      eq(isInsidePath(path.join(link, "public", "data.json"), real), true, "a symlinked root is the same directory");
+      eq(isInsidePath(real, link), true, "a symlinked root is the same directory (reverse)");
+      eq(isInsidePath(path.join(base, "elsewhere"), link), false, "a sibling of the symlink is outside");
+    } catch (err) {
+      // Windows without developer mode cannot create symlinks; the Linux and
+      // macOS CI legs cover this assertion.
+      console.log(`  SKIP  symlink containment (${err.code ?? err.message})`);
+    }
+    // Case folding is only correct where the default filesystem is
+    // case-insensitive. A case-sensitive Linux checkout keeps literal
+    // semantics.
+    eq(
+      isInsidePath(`${ROOT}/Public`, `${ROOT}/public`),
+      CASE_INSENSITIVE_FS,
+      "case-variant spellings count as the same directory only on case-insensitive filesystems"
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
 // ------------------------------------------------------------ pure decision
 console.log("shouldAllowWorkspace");
 eq(shouldAllowWorkspace(ROOT, [ROOT]).ok, true, "session inside the root is allowed");

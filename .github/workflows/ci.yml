@@ -27,9 +27,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows is not decoration: path handling differs, and this
-        # repository's tooling has already tripped over backslashes once.
-        os: [ubuntu-latest, windows-latest]
+        # Every OS in the matrix is there for a reason. Windows: path
+        # handling differs, and this repository's tooling has already tripped
+        # over backslashes once. macOS: the client runs there, APFS is
+        # case-insensitive and `/tmp` / `/var` are symlinks, so workspace
+        # containment and case folding need a real macOS leg. Linux keeps a
+        # case-sensitive filesystem in the matrix.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         shell: bash

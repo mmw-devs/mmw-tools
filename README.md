@@ -151,7 +151,8 @@ golden 路由表在 `contracts/examples/`；人类可读的矩阵是
 node scripts/doc-impact.mjs --base origin/main --worktree
 ```
 
-CI 对 PR base 跑同样的检查，所以改了源码却没更新文档会导致构建失败。生成文档
+CI 在 [`ci.yml`](.github/workflows/ci.yml) 矩阵的每个 OS runner 上对 PR base
+跑同样的检查，所以改了源码却没更新文档会导致构建失败。生成文档
 只把生成输入列为 sources；消费它们的运行时代码由定义行为的 living 文档覆盖，
 而不是由生成快照覆盖。它还会拒绝漏掉 tracked markdown 的 map，或匹配不到任何
 文件的 source glob。`--worktree` 会在进入 CI 前报告未登记的新 markdown。

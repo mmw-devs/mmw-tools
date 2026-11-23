@@ -103,7 +103,10 @@ node scripts/doc-impact.mjs --base origin/main --worktree  # before committing
 node scripts/doc-impact.mjs --list                          # inspect the map
 ```
 
-CI runs the check against the pull request base commit. Before diffing, it
+CI runs the check against the pull request base commit on every OS in the
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) matrix. The check is
+path-based, so the platforms agree on what it sees; a document must pass on all
+of them, not just the one the author developed on. Before diffing, it
 validates the map itself: every tracked markdown file must have an entry, every
 entry must be a tracked file, and every source glob must match at least one
 tracked file. That closes the “new document” and “new module under an explicit
